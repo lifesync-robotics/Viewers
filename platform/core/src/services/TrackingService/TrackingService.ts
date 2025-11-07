@@ -219,6 +219,24 @@ class TrackingService extends PubSubService {
    */
   public setCenter(position: number[]): void {
     if (!this.isConnected) {
+      console.warn('⚠️ Not connected to tracking server. Connecting now...');
+      
+      // Auto-connect and send center after connection
+      const subscription = this.subscribe(
+        EVENTS.CONNECTION_STATUS,
+        (status: any) => {
+          if (status.connected) {
+            console.log('✅ Connected! Sending center position...');
+            this._sendCommand({
+              command: 'set_center',
+              position: position,
+            });
+            subscription.unsubscribe();
+          }
+        }
+      );
+      
+      this.connect();
       return;
     }
 
@@ -226,6 +244,8 @@ class TrackingService extends PubSubService {
       command: 'set_center',
       position: position,
     });
+    
+    console.log(`📍 Center command sent: [${position.map(v => v.toFixed(1)).join(', ')}]`);
   }
 
   /**
