@@ -1,0 +1,3 @@
+# Python requirements for Real-time Tracking Server
+websockets>=12.0
+

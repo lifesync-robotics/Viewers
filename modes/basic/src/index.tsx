@@ -207,6 +207,8 @@ export const toolbarSections = {
     'WindowLevel',
     'Capture',
     'ModelUpload',
+    'RealTimeNavigation',
+    'SetNavigationCenter',
     'Layout',
     'Crosshairs',
     'MoreTools',

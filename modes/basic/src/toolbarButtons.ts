@@ -643,6 +643,28 @@ const toolbarButtons: Button[] = [
     },
   },
   {
+    id: 'RealTimeNavigation',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'Navigation',
+      label: i18n.t('Buttons:Real-time Navigation'),
+      tooltip: i18n.t('Buttons:Enable real-time surgical navigation with tracking (20Hz)'),
+      commands: 'toggleNavigation',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SetNavigationCenter',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-crosshair',
+      label: i18n.t('Buttons:Set Center'),
+      tooltip: i18n.t('Buttons:Set navigation center to current crosshair position'),
+      commands: 'setTrackingCenter',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
     id: 'Layout',
     uiType: 'ohif.layoutSelector',
     props: {

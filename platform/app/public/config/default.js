@@ -17,7 +17,7 @@ window.config = {
   showCPUFallbackMessage: true,
   showLoadingIndicator: true,
   experimentalStudyBrowserSort: false,
-  strictZSpacingForVolumeViewport: true,
+  strictZSpacingForVolumeViewport: false,
   groupEnabledModesFirst: true,
   allowMultiSelectExport: false,
   maxNumRequests: {
@@ -89,7 +89,7 @@ window.config = {
       ],
     },
   ],
-  defaultDataSourceName: 'ohif',
+  defaultDataSourceName: 'orthanc',
   /* Dynamic config allows user to pass "configUrl" query string this allows to load config without recompiling application. The regex will ensure valid configuration source */
   // dangerouslyUseDynamicConfig: {
   //   enabled: true,
@@ -217,33 +217,33 @@ window.config = {
     configuration: {
       friendlyName: 'Local Orthanc DICOMWeb Server',
       name: 'Orthanc',
-      
+
       // Use RELATIVE URLs for webpack proxy to intercept
-      wadoUriRoot: '/pacs/wado',
-      qidoRoot: '/pacs/dicom-web',
-      wadoRoot: '/pacs/dicom-web',
-      
+      wadoUriRoot: '/dicom-web',
+      qidoRoot: '/dicom-web',
+      wadoRoot: '/dicom-web',
+
       // Orthanc does NOT support includefield=all
       qidoSupportsIncludeField: false,
-      
+
       // Orthanc doesn't support reject
       supportsReject: false,
-      
+
       dicomUploadEnabled: true,
       imageRendering: 'wadors',
       thumbnailRendering: 'wadors',
       enableStudyLazyLoad: true,
-      
+
       // Orthanc doesn't fully support fuzzy matching
       supportsFuzzyMatching: false,
-      
+
       supportsWildcard: false,
-      
+
       // Required for Orthanc
       singlepart: 'video,pdf',
-      
+
       omitQuotationForMultipartRequest: true,
-      
+
       bulkDataURI: {
         enabled: true,
         relativeResolution: 'studies',
