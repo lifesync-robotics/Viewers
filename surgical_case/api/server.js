@@ -2,20 +2,24 @@
 
 /**
  * Simple Express Server for OHIF Surgical Case CSV Storage
- * 
+ *
  * This server provides an API endpoint to save measurement CSV files
  * to the surgical_case directory structure.
- * 
+ *
  * Usage:
  *   node surgical_case/api/server.js
- * 
+ *
  * Or with environment variables:
  *   OHIF_WORKSPACE_ROOT=/path/to/Viewers PORT=3001 node surgical_case/api/server.js
  */
 
 const express = require('express');
 const path = require('path');
-const { saveMeasurementCSVRoute } = require('./saveMeasurementCSV');
+const {
+  saveMeasurementCSVRoute,
+  listMeasurementCSV,
+  getMeasurementCSV
+} = require('./saveMeasurementCSV');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -30,7 +34,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  
+
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -46,8 +50,10 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Surgical case CSV endpoint
+// Surgical case CSV endpoints
 app.post('/api/surgical-cases/save-csv', saveMeasurementCSVRoute);
+app.get('/api/surgical-cases/list-csv', listMeasurementCSV);
+app.get('/api/surgical-cases/get-csv', getMeasurementCSV);
 
 // Start server
 app.listen(PORT, () => {
@@ -71,4 +77,3 @@ app.use((err, req, res, next) => {
 });
 
 module.exports = app;
-

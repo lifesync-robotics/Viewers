@@ -95,9 +95,149 @@ function saveMeasurementCSVRoute(req, res) {
   return saveMeasurementCSV(req, res);
 }
 
+/**
+ * List all CSV files for a given study/series
+ *
+ * @param {Object} req - Express request object
+ * @param {Object} req.query - Query parameters:
+ *   - studyInstanceUID: string (required)
+ *   - seriesInstanceUID: string (optional)
+ */
+async function listMeasurementCSV(req, res) {
+  try {
+    const { studyInstanceUID, seriesInstanceUID } = req.query;
+
+    if (!studyInstanceUID) {
+      return res.status(400).json({
+        error: 'Missing required parameter: studyInstanceUID',
+      });
+    }
+
+    const workspaceRoot = process.env.OHIF_WORKSPACE_ROOT || path.join(__dirname, '..', '..');
+    const surgicalCaseDir = path.join(workspaceRoot, 'surgical_case');
+    const studiesDir = path.join(surgicalCaseDir, 'studies');
+    const studyDir = path.join(studiesDir, studyInstanceUID);
+
+    // Check if study directory exists
+    try {
+      await fs.access(studyDir);
+    } catch {
+      return res.json({ files: [] }); // No saved measurements
+    }
+
+    let csvFiles = [];
+
+    if (seriesInstanceUID) {
+      // List CSVs for specific series
+      const seriesDir = path.join(studyDir, seriesInstanceUID);
+      try {
+        const files = await fs.readdir(seriesDir);
+        csvFiles = files
+          .filter(f => f.endsWith('.csv'))
+          .map(f => ({
+            filename: f,
+            path: path.join(seriesDir, f),
+            relativePath: `surgical_case/studies/${studyInstanceUID}/${seriesInstanceUID}/${f}`,
+            studyInstanceUID,
+            seriesInstanceUID,
+          }));
+      } catch {
+        // Series directory doesn't exist
+      }
+    } else {
+      // List CSVs for all series in study
+      const seriesDirs = await fs.readdir(studyDir);
+      for (const seriesUID of seriesDirs) {
+        const seriesDir = path.join(studyDir, seriesUID);
+        const stat = await fs.stat(seriesDir);
+        if (stat.isDirectory()) {
+          try {
+            const files = await fs.readdir(seriesDir);
+            const seriesCSVs = files
+              .filter(f => f.endsWith('.csv'))
+              .map(f => ({
+                filename: f,
+                path: path.join(seriesDir, f),
+                relativePath: `surgical_case/studies/${studyInstanceUID}/${seriesUID}/${f}`,
+                studyInstanceUID,
+                seriesInstanceUID: seriesUID,
+              }));
+            csvFiles.push(...seriesCSVs);
+          } catch {
+            // Skip if can't read directory
+          }
+        }
+      }
+    }
+
+    res.json({ files: csvFiles });
+  } catch (error) {
+    console.error('Error listing CSV files:', error);
+    res.status(500).json({
+      error: 'Failed to list CSV files',
+      message: error.message,
+    });
+  }
+}
+
+/**
+ * Get a specific CSV file content
+ *
+ * @param {Object} req - Express request object
+ * @param {Object} req.query - Query parameters:
+ *   - studyInstanceUID: string (required)
+ *   - seriesInstanceUID: string (required)
+ *   - filename: string (required)
+ */
+async function getMeasurementCSV(req, res) {
+  try {
+    const { studyInstanceUID, seriesInstanceUID, filename } = req.query;
+
+    if (!studyInstanceUID || !seriesInstanceUID || !filename) {
+      return res.status(400).json({
+        error: 'Missing required parameters: studyInstanceUID, seriesInstanceUID, filename',
+      });
+    }
+
+    const workspaceRoot = process.env.OHIF_WORKSPACE_ROOT || path.join(__dirname, '..', '..');
+    const surgicalCaseDir = path.join(workspaceRoot, 'surgical_case');
+    const filePath = path.join(
+      surgicalCaseDir,
+      'studies',
+      studyInstanceUID,
+      seriesInstanceUID,
+      path.basename(filename) // Sanitize filename
+    );
+
+    // Check file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      return res.status(404).json({ error: 'CSV file not found' });
+    }
+
+    // Read and return file content
+    const csvContent = await fs.readFile(filePath, 'utf8');
+    res.json({
+      filename: path.basename(filename),
+      studyInstanceUID,
+      seriesInstanceUID,
+      csvContent,
+    });
+  } catch (error) {
+    console.error('Error getting CSV file:', error);
+    res.status(500).json({
+      error: 'Failed to get CSV file',
+      message: error.message,
+    });
+  }
+}
+
 module.exports = {
   saveMeasurementCSV,
   saveMeasurementCSVRoute,
+  listMeasurementCSV,
+  getMeasurementCSV,
 };
 
 /**
