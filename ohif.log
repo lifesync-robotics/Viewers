@@ -1,0 +1,47 @@
+yarn run v1.22.22
+$ lerna run dev:viewer --stream
+lerna notice cli v7.4.2
+
+> @ohif/app:"dev:viewer"
+
+@ohif/app: $ yarn run dev
+@ohif/app: $ cross-env NODE_ENV=development webpack serve --config .webpack/webpack.pwa.js
+@ohif/app: <i> [webpack-dev-server] [HPM] Proxy created: /dicom-web  -> http://localhost:8042
+@ohif/app: /home/asclepius/github/Viewers/node_modules/webpack-dev-server/lib/Server.js:2638
+@ohif/app:         throw error;
+@ohif/app:         ^
+@ohif/app: Error: listen EADDRINUSE: address already in use :::3000
+@ohif/app:     at Server.setupListenHandle [as _listen2] (node:net:1908:16)
+@ohif/app:     at listenInCluster (node:net:1965:12)
+@ohif/app:     at Server.listen (node:net:2067:7)
+@ohif/app:     at READ_WRITE (/home/asclepius/github/Viewers/node_modules/webpack-dev-server/lib/Server.js:3460:23)
+@ohif/app:     at new Promise (<anonymous>)
+@ohif/app:     at Server.start (/home/asclepius/github/Viewers/node_modules/webpack-dev-server/lib/Server.js:3458:7)
+@ohif/app:     at async Command.<anonymous> (/home/asclepius/github/Viewers/node_modules/webpack-cli/node_modules/@webpack-cli/serve/lib/index.js:158:21)
+@ohif/app:     at async Command.parseAsync (/home/asclepius/github/Viewers/node_modules/commander/lib/command.js:923:5)
+@ohif/app:     at async Command.<anonymous> (/home/asclepius/github/Viewers/node_modules/webpack-cli/lib/webpack-cli.js:1356:13)
+@ohif/app:     at async Command.parseAsync (/home/asclepius/github/Viewers/node_modules/commander/lib/command.js:923:5) {
+@ohif/app:   code: 'EADDRINUSE',
+@ohif/app:   errno: -98,
+@ohif/app:   syscall: 'listen',
+@ohif/app:   address: '::',
+@ohif/app:   port: 3000
+@ohif/app: }
+@ohif/app: Node.js v20.19.5
+@ohif/app: error Command failed with exit code 1.
+@ohif/app: info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
+@ohif/app: error Command failed with exit code 1.
+@ohif/app: info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
+
+ 
+
+ >  Lerna (powered by Nx)   Running target dev:viewer for project @ohif/app failed
+
+   Failed tasks:
+   
+   - @ohif/app:dev:viewer
+   
+   Hint: run the command with --verbose for more details.
+
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.

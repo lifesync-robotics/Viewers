@@ -14,7 +14,7 @@ This document describes the complete implementation of 3D fiducial markers in OH
 ### ✅ 3D World Coordinates
 - Stores true 3D world coordinates (RAS - Right, Anterior, Superior)
 - X: Left-Right axis
-- Y: Anterior-Posterior axis  
+- Y: Anterior-Posterior axis
 - Z: Superior-Inferior axis
 
 ### ✅ Slice-Aware Rendering
@@ -50,7 +50,7 @@ The measurement panel displays:
 ```
 F1
 X: 102.40 mm
-Y: 179.84 mm  
+Y: 179.84 mm
 Z: 61.50 mm
 ```
 
@@ -132,8 +132,8 @@ const dx = worldPoint[0] - focalPoint[0];
 const dy = worldPoint[1] - focalPoint[1];
 const dz = worldPoint[2] - focalPoint[2];
 const distance = Math.abs(
-  dx * viewPlaneNormal[0] + 
-  dy * viewPlaneNormal[1] + 
+  dx * viewPlaneNormal[0] +
+  dy * viewPlaneNormal[1] +
   dz * viewPlaneNormal[2]
 );
 
@@ -160,7 +160,7 @@ const canvasRadius = Math.abs(radiusPointCanvas[0] - canvasPoint[0]);
 
 All coordinates use DICOM Patient Coordinate System (RAS):
 - **X (Right)**: Increasing values go from patient's left → right
-- **Y (Anterior)**: Increasing values go from patient's posterior → anterior  
+- **Y (Anterior)**: Increasing values go from patient's posterior → anterior
 - **Z (Superior)**: Increasing values go from patient's inferior → superior
 
 ## Configuration
@@ -217,22 +217,22 @@ public static defaultColor = 'yellow'; // Change to any CSS color
 
 ### Fiducial Not at Crosshair Center
 
-**Cause**: Using `rotationPoints` instead of `toolCenter`  
+**Cause**: Using `rotationPoints` instead of `toolCenter`
 **Fix**: Ensure code checks `toolCenter` first (already fixed in current implementation)
 
 ### Fiducial Shows on All Slices
 
-**Cause**: Slice distance check disabled or threshold too high  
+**Cause**: Slice distance check disabled or threshold too high
 **Fix**: Verify slice-distance calculation is active and threshold is appropriate
 
 ### Coordinates Show NaN
 
-**Cause**: Position not properly extracted as numeric array  
+**Cause**: Position not properly extracted as numeric array
 **Fix**: Ensure `parseFloat()` conversion and proper array extraction (already fixed)
 
 ### Fiducial Not Visible
 
-**Cause**: Not added to tool groups or measurement service  
+**Cause**: Not added to tool groups or measurement service
 **Fix**: Verify tool is in passive tools list and registered with measurement service
 
 ## Use Cases
@@ -277,11 +277,10 @@ public static defaultColor = 'yellow'; // Change to any CSS color
 
 ## Author & Date
 
-Implementation completed: November 2025  
+Implementation completed: November 2025
 Branch: `navigation-viewer`
 
 ---
 
-**Status**: ✅ Complete and tested  
+**Status**: ✅ Complete and tested
 **Next Steps**: Ready for production use in surgical navigation workflows
-
