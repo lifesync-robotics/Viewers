@@ -2200,6 +2200,12 @@ function commandsModule({
       const { measurementService, displaySetService } = servicesManager.services;
       const measurements = measurementService.getMeasurements();
 
+      // Debug: Log first measurement to see available fields
+      if (measurements && measurements.length > 0) {
+        console.log('🔍 First measurement structure:', measurements[0]);
+        console.log('🔍 Available keys:', Object.keys(measurements[0]));
+      }
+
       if (!measurements || measurements.length === 0) {
         uiNotificationService?.show({
           title: 'No Measurements',
@@ -2253,7 +2259,7 @@ function commandsModule({
       console.log('📂 [loadMeasurementsJSON] Loading measurements from JSON');
 
       const { displaySetService } = servicesManager.services;
-      
+
       // Get active viewport to determine Study/Series UIDs
       const { viewport } = _getActiveViewportEnabledElement();
       if (!viewport) {

@@ -31,33 +31,46 @@ export async function saveMeasurementsJSON(measurements, studyInstanceUID, serie
     studyInstanceUID,
     seriesInstanceUID,
     measurementCount: measurements.length,
-    measurements: measurements.map(m => ({
-      // Core identification
-      uid: m.uid,
-      label: m.label,
-      type: m.type, // 'Length', 'Bidirectional', 'FiducialMarker', etc.
+    measurements: measurements.map(m => {
+      // Determine measurement type from multiple possible sources
+      let measurementType = m.type || m.toolName || m.label?.split('-')[0] || 'Unknown';
       
-      // DICOM references
-      SOPInstanceUID: m.SOPInstanceUID,
-      FrameOfReferenceUID: m.FrameOfReferenceUID,
-      referenceSeriesUID: m.referenceSeriesUID,
-      referenceStudyUID: m.referenceStudyUID,
+      // If type is still not clear, try to infer from displayText structure
+      if (measurementType === 'Unknown' && m.displayText) {
+        // FiducialMarker has X, Y, Z in secondary
+        if (m.displayText.secondary && m.displayText.secondary.some(s => s.includes('X:') && s.includes('mm'))) {
+          measurementType = 'FiducialMarker';
+        }
+      }
       
-      // Measurement data (tool-specific)
-      data: m.data, // Full data object
-      points: m.points, // Array of coordinate points
-      
-      // Display information
-      displayText: m.displayText,
-      description: m.description,
-      
-      // Metadata
-      metadata: m.metadata,
-      
-      // Rendering hints
-      isVisible: m.isVisible !== false,
-      isLocked: m.isLocked || false,
-    })),
+      return {
+        // Core identification
+        uid: m.uid,
+        label: m.label,
+        type: measurementType, // 'Length', 'Bidirectional', 'FiducialMarker', etc.
+        
+        // DICOM references
+        SOPInstanceUID: m.SOPInstanceUID,
+        FrameOfReferenceUID: m.FrameOfReferenceUID,
+        referenceSeriesUID: m.referenceSeriesUID,
+        referenceStudyUID: m.referenceStudyUID,
+        
+        // Measurement data (tool-specific)
+        data: m.data, // Full data object
+        points: m.points, // Array of coordinate points
+        
+        // Display information
+        displayText: m.displayText,
+        description: m.description,
+        
+        // Metadata
+        metadata: m.metadata,
+        
+        // Rendering hints
+        isVisible: m.isVisible !== false,
+        isLocked: m.isLocked || false,
+      };
+    }),
   };
 
   try {
@@ -142,4 +155,3 @@ export default {
   saveMeasurementsJSON,
   loadMeasurementsJSON,
 };
-
