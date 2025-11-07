@@ -63,3 +63,6 @@ tests/playwright-report/
 
 # Backup files
 *~
+
+# Surgical case data (study-specific fiducials, planning, navigation logs)
+surgical_case/
