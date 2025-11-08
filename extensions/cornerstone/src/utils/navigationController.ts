@@ -59,24 +59,21 @@ class NavigationController {
     this.updateCount = 0;
     this.lastUpdateTime = performance.now();
 
-    // Connect to tracking server and wait for connection
-    console.log('🔗 Connecting to tracking server...');
+    // Connect to SyncForge tracking API
+    console.log('🔗 Connecting to SyncForge tracking API...');
 
-    // Subscribe to connection status to know when we're connected
+    // Subscribe to connection status
     const connectionSubscription = trackingService.subscribe(
       TRACKING_EVENTS.CONNECTION_STATUS,
       (status: any) => {
         if (status.connected) {
-          console.log('✅ Connected! Starting tracking...');
-
-          // Send volume center to server if detected
+          console.log('✅ Connected! Tracking data streaming at 100Hz...');
+          
           if (volumeCenter) {
-            trackingService.setCenter(volumeCenter);
-            console.log('📤 Sent volume center to tracking server');
+            console.log(`📍 Volume center detected: [${volumeCenter.map(v => v.toFixed(1)).join(', ')}]`);
+            // Note: setCenter() no longer needed - simulator runs independently
           }
-
-          // Start tracking with specified mode
-          trackingService.startTracking(mode);
+          
           connectionSubscription.unsubscribe(); // Clean up this subscription
         } else if (status.error) {
           console.error('❌ Connection failed:', status.error);
@@ -85,10 +82,13 @@ class NavigationController {
       }
     );
 
-    // Initiate connection
-    trackingService.connect();
+    // Initiate connection (async)
+    trackingService.connect().catch(error => {
+      console.error('❌ Failed to connect to tracking API:', error);
+      this.stopNavigation();
+    });
 
-    console.log('✅ Navigation initialized, waiting for connection...');
+    console.log('✅ Navigation initialized, connecting to API...');
   }
 
   /**
@@ -116,10 +116,9 @@ class NavigationController {
       this.trackingSubscription = null;
     }
 
-    // Stop tracking and disconnect from server
+    // Disconnect from tracking server
     if (trackingService) {
       try {
-        trackingService.stopTracking();
         trackingService.disconnect();
       } catch (error) {
         console.warn('⚠️ Error disconnecting from tracking service:', error);

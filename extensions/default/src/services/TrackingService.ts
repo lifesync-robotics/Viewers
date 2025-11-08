@@ -1,7 +1,9 @@
 /**
  * TrackingService
- * Connects to Python tracking server via WebSocket
- * Updates crosshair position at 20Hz for real-time navigation
+ * Connects to SyncForge tracking API via REST + WebSocket
+ * Updates crosshair position at 100Hz for real-time navigation
+ * 
+ * Phase 2: Updated for integrated SyncForge API
  */
 
 import { PubSubService } from '@ohif/core';
@@ -28,6 +30,10 @@ class TrackingService extends PubSubService {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectDelay: number = 2000;
+  private apiUrl: string = 'http://localhost:3001';
+  private caseId: string | null = null;
+  private connectionId: string | null = null;
+  private wsUrl: string | null = null;
   private statsData = {
     framesReceived: 0,
     lastUpdate: 0,
@@ -35,34 +41,86 @@ class TrackingService extends PubSubService {
     fpsHistory: [] as number[],
   };
 
-  constructor(servicesManager) {
+  constructor(servicesManager, config: any = {}) {
     super(EVENTS);
     this.servicesManager = servicesManager;
-    console.log('🎯 TrackingService initialized');
+    this.apiUrl = config.apiUrl || 'http://localhost:3001';
+    this.caseId = config.caseId || null;
+    console.log('🎯 TrackingService initialized', { apiUrl: this.apiUrl });
   }
 
   /**
-   * Connect to tracking server
+   * Connect to SyncForge tracking API
+   * Step 1: Call REST API to get WebSocket URL
+   * Step 2: Connect to WebSocket for streaming data
    */
-  public connect(url: string = 'ws://localhost:8765'): void {
+  public async connect(apiUrl: string = this.apiUrl): Promise<void> {
     if (this.ws) {
       console.warn('⚠️ Already connected to tracking server');
       return;
     }
 
-    console.log(`🔗 Connecting to tracking server: ${url}`);
+    console.log(`🔗 Requesting WebSocket URL from SyncForge API: ${apiUrl}`);
 
     try {
-      this.ws = new WebSocket(url);
+      // Step 1: Call REST API to get WebSocket URL
+      const response = await fetch(`${apiUrl}/api/tracking/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id: this.caseId || 'OHIF_SESSION',
+          tools: ['pr', 'EE', 'pointer', 'crosshair'],
+          frequency_hz: 100
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.success || !data.websocket_url) {
+        throw new Error('API did not return WebSocket URL');
+      }
+
+      console.log(`✅ Got WebSocket URL: ${data.websocket_url}`);
+      this.connectionId = data.connection_id;
+      this.wsUrl = data.websocket_url;
+      this.apiUrl = apiUrl;
+
+      // Step 2: Connect to WebSocket
+      this._connectWebSocket(data.websocket_url);
+
+    } catch (error) {
+      console.error('❌ Failed to connect to tracking API:', error);
+      this._broadcastEvent(EVENTS.CONNECTION_STATUS, {
+        connected: false,
+        error: error.message || 'Connection failed',
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Internal method to establish WebSocket connection
+   */
+  private _connectWebSocket(wsUrl: string): void {
+    console.log(`🔗 Connecting to WebSocket: ${wsUrl}`);
+
+    try {
+      this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
-        console.log('✅ Connected to tracking server');
+        console.log('✅ WebSocket connected - tracking data streaming at 100Hz');
         this.isConnected = true;
+        this.isTracking = true; // Auto-start tracking with new API
         this.reconnectAttempts = 0;
         this._broadcastEvent(EVENTS.CONNECTION_STATUS, {
           connected: true,
           message: 'Connected to tracking server',
         });
+        this._broadcastEvent(EVENTS.TRACKING_STARTED, { mode: 'streaming' });
       };
 
       this.ws.onmessage = event => {
@@ -78,13 +136,14 @@ class TrackingService extends PubSubService {
         console.error('❌ WebSocket error:', error);
         this._broadcastEvent(EVENTS.CONNECTION_STATUS, {
           connected: false,
-          error: 'Connection error',
+          error: 'WebSocket connection error',
         });
       };
 
       this.ws.onclose = () => {
         console.log('🔌 Disconnected from tracking server');
         this.isConnected = false;
+        this.isTracking = false;
         this.ws = null;
 
         this._broadcastEvent(EVENTS.CONNECTION_STATUS, {
@@ -92,17 +151,21 @@ class TrackingService extends PubSubService {
           message: 'Disconnected from tracking server',
         });
 
-        // Attempt to reconnect
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        // Attempt to reconnect using stored URL
+        if (this.reconnectAttempts < this.maxReconnectAttempts && this.wsUrl) {
           this.reconnectAttempts++;
           console.log(
             `🔄 Reconnecting (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`
           );
-          setTimeout(() => this.connect(url), this.reconnectDelay);
+          setTimeout(() => this._connectWebSocket(this.wsUrl), this.reconnectDelay);
         }
       };
     } catch (error) {
       console.error('❌ Failed to create WebSocket connection:', error);
+      this._broadcastEvent(EVENTS.CONNECTION_STATUS, {
+        connected: false,
+        error: 'Failed to create WebSocket',
+      });
     }
   }
 
@@ -120,69 +183,40 @@ class TrackingService extends PubSubService {
   }
 
   /**
-   * Start tracking
+   * Set the case ID for tracking session
+   */
+  public setCaseId(caseId: string): void {
+    this.caseId = caseId;
+    console.log(`📋 Case ID set: ${caseId}`);
+  }
+
+  /**
+   * @deprecated No longer needed with new API - tracking starts automatically on connection
    */
   public startTracking(mode: string = 'circular'): void {
-    if (!this.isConnected) {
-      console.error('❌ Not connected to tracking server');
-      return;
-    }
-
-    console.log(`▶️ Starting tracking (mode: ${mode})`);
-
-    this._sendCommand({
-      command: 'start_tracking',
-      mode: mode,
-    });
-
-    this.isTracking = true;
-    this._broadcastEvent(EVENTS.TRACKING_STARTED, { mode });
+    console.warn('⚠️ startTracking() is deprecated - tracking starts automatically on connection');
   }
 
   /**
-   * Stop tracking
+   * @deprecated No longer needed with new API - use disconnect() instead
    */
   public stopTracking(): void {
-    if (!this.isConnected) {
-      return;
-    }
-
-    console.log('⏸️ Stopping tracking');
-
-    this._sendCommand({
-      command: 'stop_tracking',
-    });
-
-    this.isTracking = false;
-    this._broadcastEvent(EVENTS.TRACKING_STOPPED, {});
+    console.warn('⚠️ stopTracking() is deprecated - use disconnect() instead');
+    this.disconnect();
   }
 
   /**
-   * Set tracking mode
+   * @deprecated No longer supported with new API
    */
   public setMode(mode: string): void {
-    if (!this.isConnected) {
-      return;
-    }
-
-    this._sendCommand({
-      command: 'set_mode',
-      mode: mode,
-    });
+    console.warn('⚠️ setMode() is no longer supported with new API');
   }
 
   /**
-   * Set center point for tracking simulation
+   * @deprecated No longer supported with new API - simulator runs independently
    */
   public setCenter(position: number[]): void {
-    if (!this.isConnected) {
-      return;
-    }
-
-    this._sendCommand({
-      command: 'set_center',
-      position: position,
-    });
+    console.warn('⚠️ setCenter() is no longer supported with new API');
   }
 
   /**
@@ -204,34 +238,55 @@ class TrackingService extends PubSubService {
 
   /**
    * Handle incoming messages from tracking server
+   * Updated for Protocol Buffer format from integrated API
    */
   private _handleMessage(message: any): void {
-    const { type, data } = message;
+    const { type } = message;
 
     switch (type) {
       case 'connection':
-        console.log('✅ Server connection confirmed:', message.server);
+        console.log('✅ Server connection confirmed');
         break;
 
       case 'tracking_update':
-        this._handleTrackingUpdate(data);
+        // NEW FORMAT: Extract data from tools object
+        if (message.tools && message.tools.crosshair) {
+          const crosshair = message.tools.crosshair;
+          
+          // Extract position, orientation, and matrix
+          const position = crosshair.coordinates.register.position_mm;
+          const rotation = crosshair.coordinates.register.rotation_deg || [0, 0, 0];
+          const matrix = crosshair.coordinates.register.rMcrosshair;
+          
+          // Pass to tracking update handler
+          this._handleTrackingUpdate({
+            position: position,
+            orientation: rotation,
+            matrix: matrix,
+            timestamp: message.timestamp,
+            frame_id: message.frame_number,
+            quality: crosshair.quality,
+            quality_score: crosshair.quality_score,
+            visible: crosshair.visible,
+            // Include other tools if needed
+            tools: message.tools,
+          });
+        }
         break;
 
-      case 'response':
+      case 'configuration':
+      case 'subscription':
+      case 'frequency':
         console.log(`📨 Server response:`, message);
         break;
 
-      case 'pong':
-        // Handle ping response
-        break;
-
       default:
-        console.log('📨 Unknown message type:', type);
+        console.log('📨 Unknown message type:', type, message);
     }
   }
 
   /**
-   * Handle tracking update (called at 20Hz)
+   * Handle tracking update (called at 100Hz with new API)
    */
   private _handleTrackingUpdate(data: any): void {
     const { position, orientation, timestamp, frame_id } = data;
@@ -243,7 +298,7 @@ class TrackingService extends PubSubService {
       const deltaTime = now - this.statsData.lastUpdate;
       const fps = 1000 / deltaTime;
       this.statsData.fpsHistory.push(fps);
-      if (this.statsData.fpsHistory.length > 20) {
+      if (this.statsData.fpsHistory.length > 100) {
         this.statsData.fpsHistory.shift();
       }
       this.statsData.averageFPS =
@@ -251,24 +306,18 @@ class TrackingService extends PubSubService {
     }
     this.statsData.lastUpdate = now;
 
-    // Broadcast to listeners (CornerstoneViewportService will handle this)
+    // Broadcast to listeners (NavigationController will handle this)
     this._broadcastEvent(EVENTS.TRACKING_UPDATE, {
       position,
       orientation,
       timestamp,
       frame_id,
+      matrix: data.matrix,
+      quality: data.quality,
+      quality_score: data.quality_score,
+      visible: data.visible,
+      tools: data.tools,
     });
-  }
-
-  /**
-   * Send command to tracking server
-   */
-  private _sendCommand(command: any): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(command));
-    } else {
-      console.error('❌ Cannot send command: not connected');
-    }
   }
 }
 
