@@ -1,10 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
-export default function CaseSelector() {
-  const [caseId, setCaseId] = useState<string>('');
+interface CaseSelectorProps {
+  caseId?: string;
+  disabled?: boolean;
+}
+
+export default function CaseSelector({ caseId: propCaseId = '', disabled = false }: CaseSelectorProps) {
+  const [caseId, setCaseId] = useState<string>(propCaseId);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [caseInfo, setCaseInfo] = useState<any>(null);
+
+  // Update local state when prop changes
+  useEffect(() => {
+    if (propCaseId) {
+      setCaseId(propCaseId);
+    }
+  }, [propCaseId]);
 
   const handleLoadCase = async () => {
     if (!caseId.trim()) {
@@ -18,7 +30,7 @@ export default function CaseSelector() {
     try {
       // Try to load case from SyncForge API
       const response = await fetch(`http://localhost:3001/api/cases/${caseId}`);
-      
+
       if (!response.ok) {
         throw new Error(`Case not found: ${caseId}`);
       }
@@ -28,7 +40,7 @@ export default function CaseSelector() {
 
       // Extract and load transformation
       const rMd = caseData.dicom_series?.fixed_image?.rMd?.matrix;
-      
+
       if (rMd && window.__navigationController) {
         window.__navigationController.loadTransformation(rMd);
         console.log('✅ Transformation loaded from case:', caseId);
@@ -70,9 +82,14 @@ export default function CaseSelector() {
           placeholder="Enter Case ID..."
           value={caseId}
           onChange={e => setCaseId(e.target.value)}
-          disabled={loading}
+          disabled={disabled || loading}
+          title={disabled ? 'Auto-populated with current Study ID' : ''}
         />
-        <button className="case-load-button" onClick={handleLoadCase} disabled={loading}>
+        <button
+          className="case-load-button"
+          onClick={handleLoadCase}
+          disabled={disabled || loading}
+        >
           {loading ? '⏳' : '📂'} Load
         </button>
       </div>
@@ -114,9 +131,8 @@ export default function CaseSelector() {
       )}
 
       <div className="case-hint">
-        💡 Load a case.json to apply rMd transformation
+        💡 Case ID auto-filled with Study ID. Use identity matrix for testing.
       </div>
     </div>
   );
 }
-

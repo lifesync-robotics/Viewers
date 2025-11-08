@@ -26,9 +26,9 @@ function getPanelModule({ commandsManager, extensionManager, servicesManager }) 
     },
     {
       name: 'trackingPanel',
-      iconName: 'Navigation',
-      iconLabel: 'Tracking',
-      label: 'Surgical Navigation',
+      iconName: 'tool-more-menu',
+      iconLabel: 'Nav',
+      label: 'Nav',
       component: TrackingPanel,
     },
   ];

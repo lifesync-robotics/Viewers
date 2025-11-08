@@ -15,7 +15,8 @@ export const tracked = {
   measurements: '@ohif/extension-measurement-tracking.panelModule.trackedMeasurements',
   thumbnailList: '@ohif/extension-measurement-tracking.panelModule.seriesList',
   viewport: '@ohif/extension-measurement-tracking.viewportModule.cornerstone-tracked',
-  viewportState: '@ohif/extension-cornerstone.panelModule.viewport-state',  // ← ADD THIS
+  viewportState: '@ohif/extension-cornerstone.panelModule.viewport-state',
+  trackingPanel: '@ohif/extension-default.panelModule.trackingPanel',
 };
 
 export const extensionDependencies = {
@@ -30,7 +31,8 @@ export const longitudinalInstance = {
   props: {
     ...basicLayout.props,
     leftPanels: [tracked.thumbnailList],
-    rightPanels: [cornerstone.segmentation, tracked.measurements, tracked.viewportState],
+    rightPanels: [tracked.trackingPanel, cornerstone.segmentation, tracked.measurements, tracked.viewportState],
+    rightPanelClosed: false,
     viewports: [
       {
         namespace: tracked.viewport,

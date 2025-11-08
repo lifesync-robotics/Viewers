@@ -34,6 +34,8 @@ class TrackingService extends PubSubService {
   private caseId: string | null = null;
   private connectionId: string | null = null;
   private wsUrl: string | null = null;
+  private lastMessageTime: number = 0;
+  private messageThrottleMs: number = 10; // 10ms = 100Hz max
   private statsData = {
     framesReceived: 0,
     lastUpdate: 0,
@@ -44,9 +46,19 @@ class TrackingService extends PubSubService {
   constructor(servicesManager, config: any = {}) {
     super(EVENTS);
     this.servicesManager = servicesManager;
-    this.apiUrl = config.apiUrl || 'http://localhost:3001';
+
+    // Automatically determine API URL based on current hostname
+    // This allows remote access from other machines on the LAN
+    const hostname = window.location.hostname;
+    const defaultApiUrl = `http://${hostname}:3001`;
+
+    this.apiUrl = config.apiUrl || defaultApiUrl;
     this.caseId = config.caseId || null;
-    console.log('🎯 TrackingService initialized', { apiUrl: this.apiUrl });
+    console.log('🎯 TrackingService initialized', {
+      apiUrl: this.apiUrl,
+      hostname: hostname,
+      remoteAccess: hostname !== 'localhost' && hostname !== '127.0.0.1'
+    });
   }
 
   /**
@@ -125,6 +137,13 @@ class TrackingService extends PubSubService {
 
       this.ws.onmessage = event => {
         try {
+          // Throttle message processing to max 100Hz
+          const now = performance.now();
+          if (now - this.lastMessageTime < this.messageThrottleMs) {
+            return; // Skip this message to maintain 100Hz max
+          }
+          this.lastMessageTime = now;
+
           const message = JSON.parse(event.data);
           this._handleMessage(message);
         } catch (error) {

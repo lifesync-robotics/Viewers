@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSystem } from '@ohif/core';
 import ConnectionStatus from './ConnectionStatus';
 import ControlButtons from './ControlButtons';
@@ -28,7 +28,21 @@ interface TrackingStatus {
 
 export default function TrackingPanel() {
   const { servicesManager, commandsManager } = useSystem();
-  const { trackingService } = servicesManager.services;
+  const { trackingService, displaySetService } = servicesManager.services;
+
+  // Get current Study ID
+  const [caseId, setCaseId] = useState<string>('');
+
+  useEffect(() => {
+    // Get active study from displaySetService
+    const activeDisplaySets = displaySetService?.getActiveDisplaySets() || [];
+    if (activeDisplaySets.length > 0) {
+      const studyInstanceUID = activeDisplaySets[0]?.StudyInstanceUID;
+      if (studyInstanceUID) {
+        setCaseId(studyInstanceUID);
+      }
+    }
+  }, [displaySetService]);
 
   const [status, setStatus] = useState<TrackingStatus>({
     connected: false,
@@ -49,6 +63,11 @@ export default function TrackingPanel() {
 
   const [frameCount, setFrameCount] = useState(0);
   const [lastUpdateTime, setLastUpdateTime] = useState(Date.now());
+  const [lastUIUpdate, setLastUIUpdate] = useState(Date.now());
+  const UI_UPDATE_INTERVAL = 40; // 25 Hz = 1000ms / 25 = 40ms
+
+  // Store latest data without triggering re-render
+  const latestDataRef = React.useRef<any>(null);
 
   useEffect(() => {
     if (!trackingService) {
@@ -69,19 +88,30 @@ export default function TrackingPanel() {
         // Calculate actual data rate
         const dataRate = elapsed > 0 ? 1 / elapsed : 0;
 
-        setStatus(prev => ({
-          ...prev,
+        // Store latest data in ref (doesn't trigger re-render)
+        latestDataRef.current = {
           position: {
             register: data.position || [0, 0, 0],
-            dicom: data.position || [0, 0, 0], // Will be transformed by controller
+            dicom: data.position || [0, 0, 0],
           },
           quality: data.quality || null,
           qualityScore: data.quality_score || null,
           visible: data.visible !== false,
           dataHz: dataRate,
-        }));
+        };
       }
     );
+
+    // Throttled UI update interval (25 Hz)
+    const uiUpdateInterval = setInterval(() => {
+      if (latestDataRef.current) {
+        setStatus(prev => ({
+          ...prev,
+          ...latestDataRef.current,
+        }));
+        setLastUIUpdate(Date.now());
+      }
+    }, UI_UPDATE_INTERVAL);
 
     // Subscribe to connection status
     const connectionSubscription = trackingService.subscribe(
@@ -106,6 +136,7 @@ export default function TrackingPanel() {
     return () => {
       trackingSubscription?.unsubscribe();
       connectionSubscription?.unsubscribe();
+      clearInterval(uiUpdateInterval);
     };
   }, [trackingService, lastUpdateTime]);
 
@@ -173,7 +204,7 @@ export default function TrackingPanel() {
         transformation={status.transformation}
       />
 
-      <CaseSelector />
+      <CaseSelector caseId={caseId} disabled={true} />
 
       <div className="tracking-panel-footer">
         <div className="stat-row">
@@ -184,4 +215,3 @@ export default function TrackingPanel() {
     </div>
   );
 }
-
