@@ -1,5 +1,5 @@
 import { getRenderingEngine } from '@cornerstonejs/core';
-import { ToolGroupManager, annotation } from '@cornerstonejs/tools';
+import { crosshairsHandler } from './utils/crosshairsHandler';
 
 interface ViewportState {
   frameOfReferenceUID: string;
@@ -19,12 +19,18 @@ interface Snapshot {
   name: string;
   timestamp: string;
   viewports: ViewportState[];
+  radius: number;
+  length: number;
+  // 4x4 transformation matrix - can be either:
+  // - Flattened: 16-element array (row-major)
+  // - Nested: 4x4 2D array [[row0], [row1], [row2], [row3]]
+  transform: number[] | number[][];
 }
 
 class ViewportStateService {
   public static REGISTRATION = {
     name: 'viewportStateService',
-    create: () => new ViewportStateService(),
+    create: ({ servicesManager }) => new ViewportStateService({ servicesManager }),
   };
 
   private snapshots: Map<string, Snapshot>;
@@ -32,8 +38,11 @@ class ViewportStateService {
   private readonly STORAGE_KEY = 'ohif_viewport_snapshots';
   private cameraLoggingEnabled: boolean = false;
   private cameraEventListeners: Map<string, any> = new Map();
+  private servicesManager: any;
 
-  constructor() {
+  constructor({ servicesManager = null } = {}) {
+    this.servicesManager = servicesManager;
+
     // Clear all existing snapshots on initialization
     this.clearCacheOnInit();
 
@@ -114,7 +123,7 @@ class ViewportStateService {
   }
 
   // Save all orthographic viewports as one snapshot
-  saveSnapshot(name: string): Snapshot {
+  saveSnapshot(name: string, radius?: number, length?: number, transform?: number[] | number[][]): Snapshot {
     const engine = this.getEngine();
     if (!engine) throw new Error('Rendering engine not found');
 
@@ -154,17 +163,20 @@ class ViewportStateService {
       name: uniqueName,
       timestamp: new Date().toISOString(),
       viewports: viewportStates,
+      radius: radius ?? 0,
+      length: length ?? 0,
+      transform: transform ?? [],
     };
 
     this.snapshots.set(uniqueName, snapshot);
     this.saveToStorage();
 
-    console.log(`💾 Saved snapshot: "${uniqueName}" with ${viewportStates.length} viewports`);
+    console.log(`💾 Saved snapshot: "${uniqueName}" with ${viewportStates.length} viewports (radius: ${radius ?? 0}, length: ${length ?? 0})`);
     return snapshot;
   }
 
   // Restore specific snapshot by name
-  restoreSnapshot(name: string): boolean {
+  async restoreSnapshot(name: string): Promise<boolean> {
     const snapshot = this.snapshots.get(name);
 
     if (!snapshot) {
@@ -176,15 +188,35 @@ class ViewportStateService {
 
     let restoredCount = 0;
 
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔄 [ViewportStateService] RESTORING SNAPSHOT');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`📋 Snapshot name: "${name}"`);
+    console.log(`📋 Radius: ${snapshot.radius}`);
+    console.log(`📋 Length: ${snapshot.length}`);
+    console.log(`📋 Viewports to restore: ${snapshot.viewports.length}`);
+
     // Restore each viewport from the snapshot
-    snapshot.viewports.forEach(savedState => {
+    for (const savedState of snapshot.viewports) {
       try {
-        const vp = engine.getViewport(savedState.metadata.viewportId);
+        let vp = engine.getViewport(savedState.metadata.viewportId);
+
+         // If exact match not found, try flexible matching
+         if (!vp) {
+          const allViewports = engine.getViewports();
+          vp = allViewports.find(v =>
+            v.id.includes(savedState.metadata.viewportId) ||
+            savedState.metadata.viewportId.includes(v.id)
+          );
+        }
 
         if (!vp) {
           console.warn(`⚠️ Viewport ${savedState.metadata.viewportId} not found`);
-          return;
+          continue;
         }
+
+        console.log(`───────────────────────────────────────────────────────`);
+        console.log(`📍 Restoring viewport: ${savedState.metadata.viewportId}`);
 
         vp.setCamera(savedState.camera);
 
@@ -199,13 +231,212 @@ class ViewportStateService {
         vp.render();
         restoredCount++;
 
+        console.log(`✅ Viewport camera and view state restored`);
+
       } catch (error) {
         console.error(`❌ Failed to restore viewport ${savedState.metadata.viewportId}:`, error);
       }
-    });
+    }
 
-    console.log(`✅ Restored snapshot: "${name}" (${restoredCount}/${snapshot.viewports.length} viewports)`);
+    console.log(`───────────────────────────────────────────────────────`);
+    console.log(`✅ Restored ${restoredCount}/${snapshot.viewports.length} viewports`);
+
+    // Query and load model based on radius and length
+    await this._queryAndLoadModel(snapshot.radius, snapshot.length, snapshot.transform);
+
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('✅ [ViewportStateService] SNAPSHOT RESTORATION COMPLETE');
+    console.log('═══════════════════════════════════════════════════════');
+
     return restoredCount > 0;
+  }
+
+  /**
+   * Query model server for a model with specific radius and length, then load it
+   */
+  private async _queryAndLoadModel(radius: number, length: number, transform?: number[] | number[][]): Promise<void> {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔍 [ViewportStateService] QUERYING MODEL SERVER');
+    console.log('═══════════════════════════════════════════════════════');
+
+    // Check if radius and length are valid
+    if (!radius || radius <= 0 || !length || length <= 0) {
+      console.warn(`⚠️ Invalid model dimensions: radius=${radius}, length=${length}`);
+      console.warn(`⚠️ Skipping model loading`);
+      return;
+    }
+
+    console.log(`📋 Looking for model with:`);
+    console.log(`   Radius: ${radius} mm`);
+    console.log(`   Length: ${length} mm`);
+
+    // Check if modelStateService is available
+    if (!this.servicesManager) {
+      console.error(`❌ ServicesManager not available - cannot load model`);
+      return;
+    }
+
+    const modelStateService = this.servicesManager.services?.modelStateService;
+    if (!modelStateService) {
+      console.error(`❌ ModelStateService not available - cannot load model`);
+      return;
+    }
+
+    console.log(`✅ ModelStateService found`);
+
+    try {
+      // Get base URL for model server
+      const baseUrl = window.location.origin;
+      const queryUrl = `${baseUrl}/api/models/query?radius=${radius}&length=${length}`;
+
+      console.log(`───────────────────────────────────────────────────────`);
+      console.log(`🌐 Querying model server:`);
+      console.log(`   URL: ${queryUrl}`);
+
+      // Query the model server
+      const response = await fetch(queryUrl);
+
+      if (!response.ok) {
+        throw new Error(`Model query failed: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      console.log(`───────────────────────────────────────────────────────`);
+      console.log(`📦 Server response:`, data);
+
+      if (!data.success) {
+        console.warn(`⚠️ Model not found on server`);
+        console.warn(`   Reason: ${data.message || 'Unknown'}`);
+        return;
+      }
+
+      if (!data.model) {
+        console.warn(`⚠️ Server response missing model data`);
+        return;
+      }
+
+      console.log(`✅ Model found on server:`);
+      console.log(`   Filename: ${data.model.filename}`);
+      console.log(`   URL: ${data.model.url}`);
+      console.log(`   Radius: ${data.model.radius} mm`);
+      console.log(`   Length: ${data.model.length} mm`);
+      console.log(`   Diameter: ${data.model.diameter} mm`);
+
+      // Find the 3D viewport to load the model into
+      const engine = this.getEngine();
+      if (!engine) {
+        console.error(`❌ Rendering engine not found - cannot load model`);
+        return;
+      }
+
+      const viewports = engine.getViewports();
+      const volume3DViewport = viewports.find(vp => vp.type === 'volume3d');
+
+      if (!volume3DViewport) {
+        console.warn(`⚠️ No 3D volume viewport found - cannot load model`);
+        console.warn(`   Available viewport types: ${viewports.map(vp => vp.type).join(', ')}`);
+        return;
+      }
+
+      console.log(`───────────────────────────────────────────────────────`);
+      console.log(`🎯 Target 3D viewport found: ${volume3DViewport.id}`);
+      console.log(`📥 Loading model into viewport...`);
+
+      // Load the model using modelStateService
+      const loadedModel = await modelStateService.loadModelFromServer(data.model.url, {
+        viewportId: volume3DViewport.id,
+        color: [1.0, 0.84, 0.0], // Gold color for screw
+        opacity: 0.9,
+        visible: true
+      });
+
+      if (loadedModel) {
+        console.log(`✅ Model loaded successfully!`);
+        console.log(`   Model ID: ${loadedModel.metadata.id}`);
+        console.log(`   Model name: ${loadedModel.metadata.name}`);
+        console.log(`   Viewport: ${loadedModel.metadata.viewportId}`);
+        console.log(`   Color: [${loadedModel.metadata.color?.join(', ')}]`);
+        console.log(`   Opacity: ${loadedModel.metadata.opacity}`);
+
+        // Apply transform if available
+        if (transform && Array.isArray(transform)) {
+          console.log(`───────────────────────────────────────────────────────`);
+          console.log(`🔧 Processing transform for model...`);
+
+          // Check if transform is nested (2D array) or flat (1D array)
+          let flattenedTransform: number[] | null = null;
+
+          if (transform.length === 4 && Array.isArray(transform[0])) {
+            // Transform is a nested 4x4 matrix - flatten it (row-major order)
+            console.log(`   Transform format: Nested 4x4 matrix (4 rows)`);
+            const temp: number[] = [];
+            let isValid = true;
+
+            for (let i = 0; i < 4; i++) {
+              const row = transform[i];
+              if (!Array.isArray(row) || row.length !== 4) {
+                console.error(`❌ Invalid nested transform - row ${i} is not a 4-element array`);
+                console.log(`ℹ️ Skipping transform application`);
+                isValid = false;
+                break;
+              }
+              temp.push(...(row as number[]));
+            }
+
+            if (isValid) {
+              flattenedTransform = temp;
+            }
+          } else if (transform.length === 16 && !Array.isArray(transform[0])) {
+            // Transform is already flattened
+            console.log(`   Transform format: Flattened 16-element array`);
+            flattenedTransform = transform as number[];
+          } else {
+            console.warn(`⚠️ Invalid transform format - expected 16-element array or 4x4 nested array`);
+            console.warn(`   Received: ${transform.length} elements`);
+            console.log(`ℹ️ Skipping transform application`);
+          }
+
+          // Apply the transform if we successfully flattened it
+          if (flattenedTransform && flattenedTransform.length === 16) {
+            console.log(`   Transform matrix (4x4 flattened, row-major):`, flattenedTransform);
+
+            try {
+              // Apply the transform to the loaded model
+              const transformResult = await modelStateService.setModelTransform(
+                loadedModel.metadata.id,
+                flattenedTransform
+              );
+
+              if (transformResult) {
+                console.log(`✅ Transform applied successfully to model`);
+                console.log(`   Model positioned according to screw placement`);
+              } else {
+                console.warn(`⚠️ Transform application returned null/false`);
+              }
+            } catch (transformError) {
+              console.error(`❌ Error applying transform to model:`, transformError);
+              console.error(`   Transform error message: ${transformError.message}`);
+            }
+          }
+        } else {
+          console.log(`ℹ️ No transform provided for this model`);
+        }
+      } else {
+        console.error(`❌ Model loading failed - loadModelFromServer returned null`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Error querying or loading model:`, error);
+      console.error(`   Error message: ${error.message}`);
+      if (error.stack) {
+        console.error(`   Stack trace:`, error.stack);
+      }
+    }
+
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('✅ [ViewportStateService] MODEL QUERY AND LOAD COMPLETE');
+    console.log('═══════════════════════════════════════════════════════');
   }
 
   // Get all snapshots
@@ -266,6 +497,76 @@ class ViewportStateService {
       console.error('❌ Error importing:', error);
       throw new Error('Invalid JSON format');
     }
+  }
+
+  // Import snapshots from JSON file (Python script format)
+  // Expected format: Array of [name, snapshot] pairs where snapshot has radius and length
+  importFromJSONFile(jsonString: string) {
+    try {
+      const data = JSON.parse(jsonString);
+
+      // Handle both formats:
+      // 1. Python script format: Array of [name, snapshot] pairs
+      // 2. Direct snapshot format: Map entries
+
+      if (Array.isArray(data)) {
+        // Python script format: [[name, snapshot], [name, snapshot], ...]
+        data.forEach(([name, snapshot]) => {
+          if (snapshot && typeof snapshot === 'object') {
+            // Ensure snapshot has required fields
+            const validSnapshot: Snapshot = {
+              name: name || snapshot.name || 'Unnamed',
+              timestamp: snapshot.timestamp || new Date().toISOString(),
+              viewports: snapshot.viewports || [],
+              radius: snapshot.radius ?? 0,
+              length: snapshot.length ?? 0,
+              transform: snapshot.transform ?? [],
+            };
+
+            // Use unique name
+            const uniqueName = this.getUniqueName(validSnapshot.name);
+            validSnapshot.name = uniqueName;
+
+            this.snapshots.set(uniqueName, validSnapshot);
+          }
+        });
+      } else if (typeof data === 'object') {
+        // Map format: [[key, value], [key, value], ...]
+        this.snapshots = new Map(data);
+      } else {
+        throw new Error('Unsupported JSON format');
+      }
+
+      this.saveToStorage();
+      console.log(`✅ Imported ${this.snapshots.size} snapshots from JSON file`);
+      return this.snapshots.size;
+    } catch (error) {
+      console.error('❌ Error importing from JSON file:', error);
+      throw new Error(`Failed to import: ${error.message}`);
+    }
+  }
+
+  // Load snapshots from file upload
+  async loadSnapshotsFromFile(file: File): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = (event: any) => {
+        try {
+          const jsonString = event.target.result;
+          const count = this.importFromJSONFile(jsonString);
+          resolve(count);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      reader.onerror = () => {
+        reject(new Error('Failed to read file'));
+      };
+
+      reader.readAsText(file);
+    });
   }
 
   // Real-time camera focal point logging for MPR viewports
@@ -443,91 +744,25 @@ class ViewportStateService {
 
   // Get crosshairs tool center for all MPR viewports
   getCrosshairsToolCenter(): Record<string, { center: number[] | null; isActive: boolean }> {
-    const engine = this.getEngine();
-    if (!engine) {
-      return {};
-    }
-
-    const result: Record<string, { center: number[] | null; isActive: boolean }> = {};
-
     try {
-      const viewports = engine.getViewports();
+      const crosshairData = crosshairsHandler.getAllMPRCrosshairCenters();
 
-      viewports.forEach(viewport => {
-        if (this.isMPRViewport(viewport.id)) {
-          try {
-            // Find the tool group for this viewport using the ToolGroupManager
-            const toolGroup = ToolGroupManager.getToolGroupForViewport(
-              viewport.id,
-              engine.id
-            );
+      // Convert to the expected format
+      const result: Record<string, { center: number[] | null; isActive: boolean }> = {};
 
-            if (!toolGroup) {
-              result[viewport.id] = {
-                center: null,
-                isActive: false,
-              };
-              return;
-            }
+      for (const [viewportId, data] of Object.entries(crosshairData)) {
+        result[viewportId] = {
+          center: data.center,
+          isActive: data.isActive,
+        };
+      }
 
-            // Get the Crosshairs tool instance from the tool group
-            const crosshairsTool = toolGroup.getToolInstance('Crosshairs');
-
-            // Check if crosshairs tool is available and active
-            const isActive = crosshairsTool && crosshairsTool.mode === 'Active';
-
-            if (!crosshairsTool) {
-              result[viewport.id] = {
-                center: null,
-                isActive: false,
-              };
-              return;
-            }
-
-            // Get annotations for the crosshairs tool
-            const element = viewport.element;
-            if (!element) {
-              result[viewport.id] = {
-                center: null,
-                isActive: !!isActive,
-              };
-              return;
-            }
-
-            const annotations = annotation.state.getAnnotations('Crosshairs', element);
-
-            // Get the center from the first annotation (crosshairs typically has one annotation per viewport)
-            let center = null;
-            if (annotations && annotations.length > 0) {
-              const firstAnnotation = annotations[0];
-              // The center is typically stored in data.handles.rotationPoints or data.handles.toolCenter
-              if (firstAnnotation.data?.handles?.rotationPoints) {
-                center = firstAnnotation.data.handles.rotationPoints[0]; // World coordinates
-              } else if (firstAnnotation.data?.handles?.toolCenter) {
-                center = firstAnnotation.data.handles.toolCenter;
-              }
-            }
-
-            result[viewport.id] = {
-              center: center ? [center[0], center[1], center[2]] : null,
-              isActive: !!isActive,
-            };
-
-          } catch (error) {
-            console.error(`❌ Error getting crosshairs center for ${viewport.id}:`, error);
-            result[viewport.id] = {
-              center: null,
-              isActive: false,
-            };
-          }
-        }
-      });
+      return result;
 
     } catch (error) {
-      console.error('❌ Error accessing Cornerstone Tools:', error);
+      console.error('❌ Error accessing crosshairs tool:', error);
+      return {};
     }
-
-    return result;
   }
 }
 

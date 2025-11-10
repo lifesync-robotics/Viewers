@@ -5,9 +5,21 @@ import vtkMapper from '@kitware/vtk.js/Rendering/Core/Mapper';
 import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';  // models are all in obj format
 import vtkCutter from '@kitware/vtk.js/Filters/Core/Cutter';
 import vtkPlane from '@kitware/vtk.js/Common/DataModel/Plane';
+import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
+import vtkPolyData from '@kitware/vtk.js/Common/DataModel/PolyData';
+import vtkTransform from '@kitware/vtk.js/Common/Transform/Transform';
 
 import { Types as OHIFTypes } from '@ohif/core';
-
+import { crosshairsHandler } from './utils/crosshairsHandler';
+/**
+ *
+ *
+ * model should be placed at the origin 0,0,0 for screw planning at the beginning.
+ * Then the model orientation should follow the viewport camera normal and the crosshairs center point.
+ * Also, we may need to offset it depending on the design
+ *
+ *
+ */
 /**
  * Supported 3D model formats
  */
@@ -60,7 +72,7 @@ export interface LoadedModel {
   actor: any; // vtkActor
   mapper: any; // vtkMapper
   reader: any; // vtkOBJReader
-  polyData?: any; // vtkPolyData
+  polyData?: any; // vtkPolyData (with all transformations baked in, in world space)
   planeCutters?: PlaneCutter[]; // 2D cross-section cutters for orthographic viewports
 }
 
@@ -196,18 +208,34 @@ class ModelStateService extends PubSubService {
 
         if (planeCutter) {
           loadedModel.planeCutters.push(planeCutter);
+          // good habit for naming viewports , so that we can debug here!
           console.log(`  ✅ ${orientation} plane cutter created and added to viewport: ${viewport.id}`);
         }
+        // break // just try it on one viewport for now
       }
 
       console.log('═══════════════════════════════════════════════════════');
       console.log(`✅ [ModelStateService] Created ${loadedModel.planeCutters.length} plane cutters`);
       console.log('═══════════════════════════════════════════════════════');
 
+
+      // ═════════════════════════════════════════════════════════
+      // SAFEGUARD: Check if model was already transformed
+      // If so, update all cutters with transformed polyData
+      // ═════════════════════════════════════════════════════════
+
+      if (loadedModel && loadedModel.actor.getUserMatrix()) {
+        console.log('⚠️ Model was already transformed before cutters were created');
+        console.log('🔄 Updating all cutters with transformed polyData...');
+        this._updateAllPlaneCutters(loadedModel.metadata.id);
+      }
+
     } catch (error) {
       console.error('❌ [ModelStateService] Error creating 2D plane cutters:', error);
       console.error('❌ [ModelStateService] Error stack:', error.stack);
     }
+
+
   }
 
   /**
@@ -226,15 +254,23 @@ class ModelStateService extends PubSubService {
       console.log(`  📋 Camera focal point:`, focalPoint);
       console.log(`  📋 View plane normal:`, viewPlaneNormal);
 
-      // Create VTK plane from viewport's camera plane
+      // ═══════════════════════════════════════════════════════════════════════════
+      // SIMPLE & FAST: Use transformed polyData already in world space
+      // No inverse transforms needed - everything works in world coordinates
+      // This approach scales well for future UI-based model manipulation
+      // ═══════════════════════════════════════════════════════════════════════════
+
+      // Create VTK plane directly from viewport's camera plane (already in world space)
       const plane = vtkPlane.newInstance();
       plane.setOrigin(focalPoint[0], focalPoint[1], focalPoint[2]);
       plane.setNormal(viewPlaneNormal[0], viewPlaneNormal[1], viewPlaneNormal[2]);
 
-      // Create VTK cutter
+      // Create VTK cutter using the polyData (already hardened to world space)
       const cutter = vtkCutter.newInstance();
       cutter.setCutFunction(plane);
-      cutter.setInputData(loadedModel.polyData);
+      cutter.setInputData(loadedModel.polyData); // PolyData already in world space!
+
+      console.log(`  ✅ Cutter created using world-space polyData (no transform calculations needed)`);
 
       // Create mapper for the cut
       const mapper = vtkMapper.newInstance();
@@ -244,14 +280,13 @@ class ModelStateService extends PubSubService {
       const actor = vtkActor.newInstance();
       actor.setMapper(mapper);
 
-      // Apply same transformation as the 3D model
-      const modelOrientation = loadedModel.actor.getOrientation();
-      const modelScale = loadedModel.actor.getScale();
-      const modelPosition = loadedModel.actor.getPosition();
+      // ═══════════════════════════════════════════════════════════════════════════
+      // NO transformations needed on the cutter actor!
+      // The transformed polyData is already in world space with all transformations baked in
+      // Actor uses identity transform - geometry is already positioned correctly
+      // ═══════════════════════════════════════════════════════════════════════════
 
-      actor.setOrientation(modelOrientation[0], modelOrientation[1], modelOrientation[2]);
-      actor.setScale(modelScale[0], modelScale[1], modelScale[2]);
-      actor.setPosition(modelPosition[0], modelPosition[1], modelPosition[2]);
+      console.log(`  ✅ Cutter actor uses identity transform (geometry already in world space)`);
 
       // Set line properties for better visibility
       actor.getProperty().setLineWidth(3); // Slightly thicker for better visibility
@@ -276,26 +311,8 @@ class ModelStateService extends PubSubService {
       // which often renders after opaque geometry
       actor.getProperty().setOpacity(0.999);
 
-      // Additional technique: Shift the contour slightly toward the camera
-      // This small offset (0.1mm in the view plane normal direction) helps visibility
-      try {
-        const camera = viewport.getCamera();
-        const { viewPlaneNormal } = camera;
-
-        // Offset by a small amount in the direction of the camera (negative normal)
-        const offset = 0.1; // 0.1mm offset toward camera
-        const currentPosition = modelPosition;
-        const offsetPosition = [
-          currentPosition[0] - viewPlaneNormal[0] * offset,
-          currentPosition[1] - viewPlaneNormal[1] * offset,
-          currentPosition[2] - viewPlaneNormal[2] * offset,
-        ];
-
-        actor.setPosition(offsetPosition[0], offsetPosition[1], offsetPosition[2]);
-        console.log(`  🎨 Contour offset toward camera by ${offset}mm for visibility`);
-      } catch (error) {
-        console.warn('⚠️ Could not apply camera offset:', error.message);
-      }
+      // Note: Camera offset technique removed since polyData is pre-transformed
+      // The geometry is already in the correct position from the transformFilter
 
       console.log(`  ✅ Contour rendering configured for maximum visibility`);
 
@@ -310,184 +327,23 @@ class ModelStateService extends PubSubService {
 
       // CRITICAL: Set up dynamic plane updates using crosshair tool
       // This provides better synchronization and accuracy across all viewports
-      const updatePlanePosition = async () => {
+      const updatePlanePosition = () => {
         try {
           let planeOrigin = null;
           let planeNormal = null;
           let usedCrosshairs = false;
 
-          // Try to get crosshair data directly from tool group and annotations
-          // This is more reliable than using viewportStateService
+          // Try to get crosshair data using the handler
           try {
-            const { ToolGroupManager, annotation } = await import('@cornerstonejs/tools');
-            const renderingEngines = getRenderingEngines();
+            const crosshairData = crosshairsHandler.getCrosshairCenter(viewport.id);
 
-            // Find the rendering engine that has this viewport
-            let renderingEngineId = null;
-            for (const engine of renderingEngines) {
-              try {
-                const vp = engine.getViewport(viewport.id);
-                if (vp) {
-                  renderingEngineId = engine.id;
-                  break;
-                }
-              } catch (e) {
-                // Viewport not in this engine
-              }
-            }
-
-            if (renderingEngineId) {
-              // Get tool group for this viewport
-              const toolGroup = ToolGroupManager.getToolGroupForViewport(
-                viewport.id,
-                renderingEngineId
-              );
-
-              if (toolGroup) {
-                // Get the Crosshairs tool instance
-                const crosshairsTool = toolGroup.getToolInstance('Crosshairs');
-
-                // Check if crosshairs tool is available and active
-                const isActive = crosshairsTool && crosshairsTool.mode === 'Active';
-
-                if (isActive && viewport.element) {
-                  // Get annotations for the crosshairs tool
-                  const annotations = annotation.state.getAnnotations('Crosshairs', viewport.element);
-
-                  // Get the center from the first annotation
-                  if (annotations && annotations.length > 0) {
-                    const firstAnnotation = annotations[0];
-
-                    // ════════════════════════════════════════════════════════════
-                    // INVESTIGATION: Log complete crosshair annotation structure
-                    // ════════════════════════════════════════════════════════════
-                    console.log('═══════════════════════════════════════════════════');
-                    console.log(`🔍 CROSSHAIR ANNOTATION FOR ${orientation.toUpperCase()} (Viewport: ${viewport.id})`);
-                    console.log('═══════════════════════════════════════════════════');
-
-                    // Log annotation UID
-                    console.log('📌 Annotation UID:', firstAnnotation.annotationUID);
-
-                    // Log metadata
-                    console.log('\n📋 Metadata:');
-                    if (firstAnnotation.metadata) {
-                      Object.keys(firstAnnotation.metadata).forEach(key => {
-                        console.log(`  ${key}:`, firstAnnotation.metadata[key]);
-                      });
-                    } else {
-                      console.log('  (no metadata)');
-                    }
-
-                    // Log data structure overview
-                    console.log('\n📦 Data Structure:');
-                    if (firstAnnotation.data) {
-                      console.log('  Keys:', Object.keys(firstAnnotation.data));
-                    }
-
-                    // Log handles structure in detail
-                    if (firstAnnotation.data?.handles) {
-                      console.log('\n🎯 Handles:');
-                      Object.keys(firstAnnotation.data.handles).forEach(key => {
-                        const value = firstAnnotation.data.handles[key];
-                        try {
-                          if (Array.isArray(value)) {
-                            console.log(`  ${key}: Array[${value.length}]`);
-                            value.forEach((item, idx) => {
-                              try {
-                                if (Array.isArray(item)) {
-                                  const formatted = item.map(v => typeof v === 'number' ? v.toFixed(2) : String(v)).join(', ');
-                                  console.log(`    [${idx}]: [${formatted}]`);
-                                } else if (typeof item === 'object' && item !== null) {
-                                  // Check if it's a point object with x, y, z
-                                  if ('x' in item && 'y' in item && 'z' in item) {
-                                    const point = item as { x: number; y: number; z: number };
-                                    console.log(`    [${idx}]: {x: ${point.x.toFixed(2)}, y: ${point.y.toFixed(2)}, z: ${point.z.toFixed(2)}}`);
-                                  } else {
-                                    console.log(`    [${idx}]:`, JSON.stringify(item, null, 2));
-                                  }
-                                } else {
-                                  console.log(`    [${idx}]:`, item);
-                                }
-                              } catch (e) {
-                                console.log(`    [${idx}]: <error displaying value>`);
-                              }
-                            });
-                          } else if (typeof value === 'object' && value !== null) {
-                            // Check if it's a point object
-                            if ('x' in value && 'y' in value && 'z' in value) {
-                              const point = value as { x: number; y: number; z: number };
-                              console.log(`  ${key}: {x: ${point.x.toFixed(2)}, y: ${point.y.toFixed(2)}, z: ${point.z.toFixed(2)}}`);
-                            } else {
-                              console.log(`  ${key}:`, JSON.stringify(value, null, 2));
-                            }
-                          } else {
-                            console.log(`  ${key}:`, value);
-                          }
-                        } catch (e) {
-                          console.log(`  ${key}: <error displaying value>`);
-                        }
-                      });
-                    } else {
-                      console.log('  (no handles)');
-                    }
-
-                    // Log other data properties
-                    if (firstAnnotation.data) {
-                      const otherKeys = Object.keys(firstAnnotation.data).filter(k => k !== 'handles');
-                      if (otherKeys.length > 0) {
-                        console.log('\n📊 Other Data Properties:');
-                        otherKeys.forEach(key => {
-                          const value = firstAnnotation.data[key];
-                          if (typeof value === 'object' && value !== null) {
-                            console.log(`  ${key}:`, JSON.stringify(value, null, 2));
-                          } else {
-                            console.log(`  ${key}:`, value);
-                          }
-                        });
-                      }
-                    }
-
-                    console.log('═══════════════════════════════════════════════════\n');
-                    // ════════════════════════════════════════════════════════════
-
-                    // The center is typically stored in data.handles.rotationPoints or data.handles.toolCenter
-                    if (firstAnnotation.data?.handles?.rotationPoints) {
-                      const rawOrigin = firstAnnotation.data.handles.rotationPoints[0]; // World coordinates
-
-                      // Handle both array [x,y,z] and object {x,y,z} formats
-                      if (Array.isArray(rawOrigin)) {
-                        planeOrigin = rawOrigin;
-                      } else if (rawOrigin && typeof rawOrigin === 'object') {
-                        const point = rawOrigin as { x: number; y: number; z: number };
-                        planeOrigin = [point.x, point.y, point.z];
-                      }
-
-                      if (planeOrigin) {
-                        usedCrosshairs = true;
-                        console.log(`  🎯 Using crosshair center (rotationPoints): [${planeOrigin[0]?.toFixed(1)}, ${planeOrigin[1]?.toFixed(1)}, ${planeOrigin[2]?.toFixed(1)}]`);
-                      }
-                    } else if (firstAnnotation.data?.handles?.toolCenter) {
-                      const rawOrigin = firstAnnotation.data.handles.toolCenter;
-
-                      // Handle both array [x,y,z] and object {x,y,z} formats
-                      if (Array.isArray(rawOrigin)) {
-                        planeOrigin = rawOrigin;
-                      } else if (rawOrigin && typeof rawOrigin === 'object') {
-                        const point = rawOrigin as { x: number; y: number; z: number };
-                        planeOrigin = [point.x, point.y, point.z];
-                      }
-
-                      if (planeOrigin) {
-                        usedCrosshairs = true;
-                        console.log(`  🎯 Using crosshair center (toolCenter): [${planeOrigin[0]?.toFixed(1)}, ${planeOrigin[1]?.toFixed(1)}, ${planeOrigin[2]?.toFixed(1)}]`);
-                      }
-                    }
-                  }
-                }
-              }
+            if (crosshairData.isActive && crosshairData.center) {
+              planeOrigin = crosshairData.center;
+              usedCrosshairs = true;
+              // console.log(`  🎯 Using crosshair center: [${planeOrigin[0]?.toFixed(1)}, ${planeOrigin[1]?.toFixed(1)}, ${planeOrigin[2]?.toFixed(1)}]`);
             }
           } catch (crosshairError) {
-            console.warn('⚠️ Could not get crosshair data directly, falling back to camera:', crosshairError.message);
+            console.warn('⚠️ Could not get crosshair data, falling back to camera:', crosshairError.message);
           }
 
           // Fallback to camera focal point if crosshairs not available
@@ -495,7 +351,7 @@ class ModelStateService extends PubSubService {
             const currentCamera = viewport.getCamera();
             planeOrigin = currentCamera.focalPoint;
             planeNormal = currentCamera.viewPlaneNormal;
-            console.log(`  📷 Using camera focal point: [${planeOrigin[0]?.toFixed(1)}, ${planeOrigin[1]?.toFixed(1)}, ${planeOrigin[2]?.toFixed(1)}]`);
+            // console.log(`  📷 Using camera focal point: [${planeOrigin[0]?.toFixed(1)}, ${planeOrigin[1]?.toFixed(1)}, ${planeOrigin[2]?.toFixed(1)}]`);
           } else {
             // Get plane normal from camera even when using crosshair center
             const currentCamera = viewport.getCamera();
@@ -517,20 +373,14 @@ class ModelStateService extends PubSubService {
           // Cutter automatically updates when plane changes
           cutter.update();
 
-          // Update actor position offset for current view
-          const offset = 0.1;
-          const offsetPosition = [
-            modelPosition[0] - planeNormal[0] * offset,
-            modelPosition[1] - planeNormal[1] * offset,
-            modelPosition[2] - planeNormal[2] * offset,
-          ];
-          actor.setPosition(offsetPosition[0], offsetPosition[1], offsetPosition[2]);
+          // No position offset needed - geometry is already in world space
+          // Actor maintains identity transform
 
           // Re-render viewport
           viewport.render();
 
           const source = usedCrosshairs ? 'crosshairs' : 'camera';
-          console.log(`  🔄 [${source}] Plane updated for ${orientation}`);
+          // console.log(`  🔄 [${source}] Plane updated for ${orientation}`);
         } catch (error) {
           console.warn('⚠️ Error updating plane position:', error.message);
         }
@@ -615,6 +465,184 @@ class ModelStateService extends PubSubService {
     return null;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // API INTEGRATION METHODS
+  // Methods to interact with the model server for listing and uploading models
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get base URL for model server API
+   * In development, this is proxied through webpack dev server
+   */
+  private _getModelServerBaseUrl(): string {
+    // In development, webpack dev server proxies to localhost:5001
+    // In production, you might want to use an environment variable
+    return window.location.origin; // Proxied by webpack dev server
+  }
+
+  /**
+   * Fetch list of available models from the server
+   * Returns both server-provided models and user-uploaded models
+   *
+   * @returns Promise with list of available models
+   * @example
+   * const models = await modelStateService.fetchAvailableModels();
+   * models.forEach(model => {
+   *   console.log(model.name, model.url);
+   * });
+   */
+  public async fetchAvailableModels(): Promise<any[]> {
+    try {
+      const baseUrl = this._getModelServerBaseUrl();
+      const response = await fetch(`${baseUrl}/api/models/list`);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success && data.models) {
+        console.log(`✅ [ModelStateService] Fetched ${data.count} models from server`);
+        return data.models;
+      } else {
+        console.error('❌ [ModelStateService] Invalid response from model server:', data);
+        return [];
+      }
+    } catch (error) {
+      console.error('❌ [ModelStateService] Error fetching models:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Upload a model file to the server
+   *
+   * @param file - The File object to upload (must be .obj)
+   * @returns Promise with upload result including model metadata
+   * @example
+   * const input = document.querySelector('input[type="file"]');
+   * const file = input.files[0];
+   * const result = await modelStateService.uploadModelToServer(file);
+   * if (result.success) {
+   *   console.log('Model uploaded:', result.model.url);
+   * }
+   */
+  public async uploadModelToServer(file: File): Promise<any> {
+    try {
+      // Validate file type
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (ext !== 'obj') {
+        throw new Error('Only .obj files are supported');
+      }
+
+      // Create FormData for upload
+      const formData = new FormData();
+      formData.append('model', file);
+
+      const baseUrl = this._getModelServerBaseUrl();
+      const response = await fetch(`${baseUrl}/api/models/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        console.log('✅ [ModelStateService] Model uploaded successfully:', result.model.filename);
+        return result;
+      } else {
+        throw new Error(result.error || 'Upload failed');
+      }
+    } catch (error) {
+      console.error('❌ [ModelStateService] Error uploading model:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Load a model from the server by its URL
+   * This is a convenience method that combines fetching and loading
+   *
+   * @param modelUrl - The URL of the model (e.g., '/models/server/brain.obj')
+   * @param options - Loading options (viewportId, color, etc.)
+   * @returns Promise with loaded model
+   * @example
+   * // Load a server model
+   * await modelStateService.loadModelFromServer('/models/server/brain.obj', {
+   *   viewportId: 'viewport-3d',
+   *   color: [1, 0, 0],
+   *   opacity: 0.8
+   * });
+   */
+  public async loadModelFromServer(
+    modelUrl: string,
+    options: ModelLoadOptions = {}
+  ): Promise<LoadedModel | null> {
+    try {
+      // Prepend base URL if not already a full URL
+      let fullUrl = modelUrl;
+      if (!modelUrl.startsWith('http')) {
+        const baseUrl = this._getModelServerBaseUrl();
+        fullUrl = `${baseUrl}${modelUrl.startsWith('/') ? '' : '/'}${modelUrl}`;
+      }
+
+      console.log(`📥 [ModelStateService] Loading model from server: ${fullUrl}`);
+
+      // Use existing loadModel method
+      return await this.loadModel(fullUrl, options);
+    } catch (error) {
+      console.error('❌ [ModelStateService] Error loading model from server:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Upload a model and immediately load it into a viewport
+   *
+   * @param file - The File object to upload
+   * @param options - Loading options (viewportId, color, etc.)
+   * @returns Promise with loaded model
+   * @example
+   * const input = document.querySelector('input[type="file"]');
+   * const file = input.files[0];
+   * await modelStateService.uploadAndLoadModel(file, {
+   *   viewportId: 'viewport-3d'
+   * });
+   */
+  public async uploadAndLoadModel(
+    file: File,
+    options: ModelLoadOptions = {}
+  ): Promise<LoadedModel | null> {
+    try {
+      console.log('📤 [ModelStateService] Uploading and loading model:', file.name);
+
+      // First upload to server
+      const uploadResult = await this.uploadModelToServer(file);
+
+      if (!uploadResult.success) {
+        throw new Error(uploadResult.error || 'Upload failed');
+      }
+
+      // Then load from server URL
+      return await this.loadModelFromServer(uploadResult.model.url, options);
+    } catch (error) {
+      console.error('❌ [ModelStateService] Error uploading and loading model:', error);
+      return null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // END API INTEGRATION METHODS
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
    * Load a 3D model from file path or URL
    */
@@ -622,8 +650,8 @@ class ModelStateService extends PubSubService {
     filePathOrUrl: string,
     options: ModelLoadOptions = {}
   ): Promise<LoadedModel | null> {
-    const modelId = this._generateModelId();
     const fileName = this._extractFileName(filePathOrUrl);
+    const modelId = this._generateModelId(fileName);
     const format = this._getModelFormat(fileName);
 
     if (!format) {
@@ -744,8 +772,8 @@ class ModelStateService extends PubSubService {
     file: File,
     options: ModelLoadOptions = {}
   ): Promise<LoadedModel | null> {
-    const modelId = this._generateModelId();
     const fileName = file.name;
+    const modelId = this._generateModelId(fileName);
     const format = this._getModelFormat(fileName);
 
     if (!format) {
@@ -801,6 +829,110 @@ class ModelStateService extends PubSubService {
   }
 
   /**
+   * Apply initial DICOM coordinate system transformation to actor
+   * - Rotates -90° around X-axis to align with DICOM coordinate system
+   * - Scales 10x for better visibility
+   * - Applies custom position/rotation/scale from options
+   */
+  private _applyInitialDicomTransform(
+    actor: any,
+    options: ModelLoadOptions
+  ): void {
+
+    // no longer needed as the transformation matrix should handle this rotation already
+    // DICOM coordinate system alignment: -90° rotation around X-axis
+    // const dicomAlignmentRotation = [-90, 0, 0];
+    // actor.setOrientation(dicomAlignmentRotation[0], dicomAlignmentRotation[1], dicomAlignmentRotation[2]);
+
+    // Default scale
+    const defaultScale = [1, 1, 1];
+    actor.setScale(defaultScale[0], defaultScale[1], defaultScale[2]);
+
+    // Apply custom position if provided
+    // if (options.position) {
+    //   actor.setPosition(options.position[0], options.position[1], options.position[2]);
+    // }
+
+    // Apply custom scale if provided (multiply with default)
+    if (options.scale) {
+      const combinedScale = [
+        defaultScale[0] * options.scale[0],
+        defaultScale[1] * options.scale[1],
+        defaultScale[2] * options.scale[2],
+      ];
+      actor.setScale(combinedScale[0], combinedScale[1], combinedScale[2]);
+    }
+
+    // Apply custom rotation if provided (add to DICOM alignment)
+    // if (options.rotation) {
+    //   const combinedRotation = [
+    //     dicomAlignmentRotation[0] + options.rotation[0],
+    //     dicomAlignmentRotation[1] + options.rotation[1],
+    //     dicomAlignmentRotation[2] + options.rotation[2],
+    //   ];
+    //   actor.setOrientation(combinedRotation[0], combinedRotation[1], combinedRotation[2]);
+    // }
+
+    // Apply visual properties
+    if (options.color) {
+      actor.getProperty().setColor(options.color[0], options.color[1], options.color[2]);
+    }
+
+    if (options.opacity !== undefined) {
+      actor.getProperty().setOpacity(options.opacity);
+    }
+  }
+
+  /**
+   * Harden polyData transformations - bake actor transformations into polyData geometry
+   * This modifies polyData IN-PLACE to save memory
+   * After this, polyData exists in world space with all transformations applied
+   */
+  private _hardenPolyDataTransform(polyData: any, actor: any): void {
+    // Get final transformation parameters from the actor
+    const orientation = actor.getOrientation();
+    const scale = actor.getScale();
+    const position = actor.getPosition();
+
+    // Build transformation matrix: scale -> rotate -> translate
+    const transformMatrix = vtkMatrixBuilder
+      .buildFromDegree()
+      .scale(scale[0], scale[1], scale[2])
+      .rotateX(orientation[0])
+      .rotateY(orientation[1])
+      .rotateZ(orientation[2])
+      .translate(position[0], position[1], position[2])
+      .getMatrix();
+
+    // Get the points from polyData
+    const points = polyData.getPoints();
+    const pointsData = points.getData();
+    const numPoints = points.getNumberOfPoints();
+
+    // Transform each point IN-PLACE using the matrix
+    for (let i = 0; i < numPoints; i++) {
+      const idx = i * 3;
+      const x = pointsData[idx];
+      const y = pointsData[idx + 1];
+      const z = pointsData[idx + 2];
+
+      // Apply 4x4 transformation matrix (homogeneous coordinates)
+      pointsData[idx] =
+        transformMatrix[0] * x + transformMatrix[1] * y + transformMatrix[2] * z + transformMatrix[3];
+      pointsData[idx + 1] =
+        transformMatrix[4] * x + transformMatrix[5] * y + transformMatrix[6] * z + transformMatrix[7];
+      pointsData[idx + 2] =
+        transformMatrix[8] * x + transformMatrix[9] * y + transformMatrix[10] * z + transformMatrix[11];
+    }
+
+    // Notify that points have been modified
+    points.modified();
+
+    console.log(`✅ Hardened polyData transformations (${numPoints} points transformed in-place)`);
+    console.log(`   Applied: rotation=${orientation}, scale=${scale}, position=${position}`);
+  }
+
+  /**
    * Create model from text content
    */
   private _createModelFromText(
@@ -837,66 +969,25 @@ class ModelStateService extends PubSubService {
 
     actor.setMapper(mapper);
 
-    // Apply coordinate system transformation
-    // DICOM coordinate system correction: Rotate model 90° around X-axis
-    // This aligns the model's Y/Z axes with DICOM's coordinate system
-    // console.log('🔄 [ModelStateService] Applying coordinate system transformation');
-    // console.log('   Default rotation: 90° around X-axis (to align with DICOM)');
-
-    const dicomAlignmentRotation = [-90, 0, 0]; // -90 degrees around X-axis
-    actor.setOrientation(dicomAlignmentRotation[0], dicomAlignmentRotation[1], dicomAlignmentRotation[2]);
-
-    // Apply default scale for visibility
-    // console.log('📏 [ModelStateService] Applying default scale');
-    // console.log('   Default scale: 10x in all directions (for better visibility)');
-    const defaultScale = [10, 10, 10]; // 10x scale for visibility
-    actor.setScale(defaultScale[0], defaultScale[1], defaultScale[2]);
-
-    // Apply options
-    if (options.color) {
-      actor.getProperty().setColor(options.color[0], options.color[1], options.color[2]);
-    }
-
-    if (options.opacity !== undefined) {
-      actor.getProperty().setOpacity(options.opacity);
-    }
-
-    if (options.position) {
-      actor.setPosition(options.position[0], options.position[1], options.position[2]);
-    }
-
-    if (options.scale) {
-      // If custom scale is provided, multiply it with the default scale
-      // console.log('📏 [ModelStateService] Applying additional custom scale:', options.scale);
-      const combinedScale = [
-        defaultScale[0] * options.scale[0],
-        defaultScale[1] * options.scale[1],
-        defaultScale[2] * options.scale[2],
-      ];
-      actor.setScale(combinedScale[0], combinedScale[1], combinedScale[2]);
-      // console.log('📏 [ModelStateService] Combined scale:', combinedScale);
-    }
-
-    if (options.rotation) {
-      // If custom rotation is provided, apply it on top of the DICOM alignment rotation
-      // console.log('🔄 [ModelStateService] Applying additional custom rotation:', options.rotation);
-      const combinedRotation = [
-        dicomAlignmentRotation[0] + options.rotation[0],
-        dicomAlignmentRotation[1] + options.rotation[1],
-        dicomAlignmentRotation[2] + options.rotation[2],
-      ];
-      actor.setOrientation(combinedRotation[0], combinedRotation[1], combinedRotation[2]);
-      // console.log('🔄 [ModelStateService] Combined rotation:', combinedRotation);
-    }
-
+    // Apply initial DICOM alignment transformation and custom options
+    this._applyInitialDicomTransform(actor, options);
     actor.setVisibility(metadata.visible);
+
+    // Get polyData and harden transformations (modifies polyData in-place to save memory)
+    const polyData = mapper.getInputData();
+    this._hardenPolyDataTransform(polyData, actor);
+
+    // Reset actor transform to identity since geometry is now in world space
+    actor.setOrientation(0, 0, 0);
+    actor.setScale(1, 1, 1);
+    actor.setPosition(0, 0, 0);
 
     return {
       metadata,
       actor,
       mapper,
       reader,
-      polyData: mapper.getInputData(),
+      polyData,
     };
   }
 
@@ -1100,14 +1191,14 @@ class ModelStateService extends PubSubService {
         // console.log('   Z:', modelPosition[2].toFixed(2));
 
         // Show rotation and scale information
-        const modelOrientation = loadedModel.actor.getOrientation();
+        // const modelOrientation = loadedModel.actor.getOrientation();
         // console.log('🔄 Model Orientation (Rotation):');
         // console.log('   X-axis:', modelOrientation[0].toFixed(2), '°');
         // console.log('   Y-axis:', modelOrientation[1].toFixed(2), '°');
         // console.log('   Z-axis:', modelOrientation[2].toFixed(2), '°');
         // console.log('   Note: 90° X-rotation applied for DICOM coordinate alignment');
 
-        const modelScale = loadedModel.actor.getScale();
+        // const modelScale = loadedModel.actor.getScale();
         // console.log('📏 Model Scale:');
         // console.log('   X-scale:', modelScale[0].toFixed(2), 'x');
         // console.log('   Y-scale:', modelScale[1].toFixed(2), 'x');
@@ -1467,10 +1558,24 @@ class ModelStateService extends PubSubService {
   }
 
   /**
-   * Helper: Generate unique model ID
+   * Helper: Generate unique model ID based on filename
+   * Uses the filename (without extension) as the base ID
+   * Adds a counter suffix if there are duplicate filenames
    */
-  private _generateModelId(): string {
-    return `model_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  private _generateModelId(fileName: string): string {
+    // Remove file extension and sanitize the filename
+    const baseName = fileName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    // Check if this ID already exists
+    let modelId = baseName;
+    let counter = 1;
+
+    while (this.loadedModels.has(modelId)) {
+      modelId = `${baseName}_${counter}`;
+      counter++;
+    }
+
+    return modelId;
   }
 
   /**
@@ -1707,6 +1812,199 @@ class ModelStateService extends PubSubService {
       return null;
     }
   }
+/**
+ * Set transformation matrix for a loaded model
+ *
+ * @param modelId - The unique identifier for the model
+ * @param transform - 4x4 transformation matrix as a flat array of 16 elements (row-major order)
+ * @returns true if successful, false otherwise
+ */
+async setModelTransform(modelId: string, transform: number[]): Promise<boolean> {
+  try {
+    const loadedModel = this.loadedModels.get(modelId);
+    if (!loadedModel) {
+      console.error(`❌ Model not found`);
+      return false;
+    }
+
+    // Validate and convert transform
+    if (!Array.isArray(transform) || transform.length !== 16) {
+      console.error(`❌ Invalid transform`);
+      return false;
+    }
+
+    // Convert row-major to column-major and create Float32Array directly
+    const finalTransform = new Float32Array([
+      transform[0], transform[4], transform[8],  transform[12],
+      transform[1], transform[5], transform[9],  transform[13],
+      transform[2], transform[6], transform[10], transform[14],
+      transform[3], transform[7], transform[11], transform[15]
+    ]);
+
+
+    // // Convert row-major to column-major
+    // const jsonTransform = [
+    //   transform[0], transform[4], transform[8],  transform[12],
+    //   transform[1], transform[5], transform[9],  transform[13],
+    //   transform[2], transform[6], transform[10], transform[14],
+    //   transform[3], transform[7], transform[11], transform[15]
+    // ];
+
+
+    // // Create 10x scale matrix
+    // // const scale10x = [
+    // //   10, 0, 0, 0,
+    // //   0, 10, 0, 0,
+    // //   0, 0, 10, 0,
+    // //   0, 0, 0, 1
+    // // ];
+
+
+    // // Compose: Final = JSON × Scale(10x)
+    // const finalTransform = new Float32Array(16);
+    // for (let row = 0; row < 4; row++) {
+    //   for (let col = 0; col < 4; col++) {
+    //     let sum = 0;
+    //     for (let k = 0; k < 4; k++) {
+    //       sum += jsonTransform[row + k * 4] * scale10x[k + col * 4];
+    //     }
+    //     finalTransform[row + col * 4] = sum;
+    //   }
+    // }
+
+    // ═════════════════════════════════════════════════════════
+    // PART 1: Transform ACTOR (GPU-side, for 3D display)
+    // ═════════════════════════════════════════════════════════
+    loadedModel.actor.setUserMatrix(finalTransform);
+    loadedModel.actor.setPosition(0, 0, 0);
+    loadedModel.actor.setScale(1, 1, 1);
+    loadedModel.actor.setOrientation(0, 0, 0);
+
+    console.log('✅ Actor transformed (GPU rendering)');
+
+    // ═════════════════════════════════════════════════════════
+    // PART 2: Transform POLYDATA (CPU-side, for plane cutters)
+    // ═════════════════════════════════════════════════════════
+
+    console.log('🔪 Transforming polyData for plane cutters...');
+
+    // Get ORIGINAL polyData from reader
+    const originalPolyData = loadedModel.reader.getOutputData();
+
+    // Create VTK transform object with same matrix
+    const vtkTransformObj = vtkTransform.newInstance();
+    vtkTransformObj.setMatrix(finalTransform);
+
+    // Create new transformed polyData
+    const transformedPolyData = vtkPolyData.newInstance();
+    transformedPolyData.shallowCopy(originalPolyData);
+
+    // Transform ALL points
+    const points = originalPolyData.getPoints();
+    const numPoints = points.getNumberOfPoints();
+    const transformedPoints = new Float32Array(numPoints * 3);
+
+    for (let i = 0; i < numPoints; i++) {
+      const point = points.getPoint(i);
+      const transformedPoint = [0, 0, 0];
+      vtkTransformObj.transformPoint(point, transformedPoint);
+
+      const idx = i * 3;
+      transformedPoints[idx] = transformedPoint[0];
+      transformedPoints[idx + 1] = transformedPoint[1];
+      transformedPoints[idx + 2] = transformedPoint[2];
+    }
+
+    // Update polyData with transformed coordinates
+    transformedPolyData.getPoints().setData(transformedPoints, 3);
+
+    // Store transformed polyData
+    loadedModel.polyData = transformedPolyData;
+
+    // Update ALL plane cutters with transformed polyData
+    for (const planeCutter of loadedModel.planeCutters) {
+      planeCutter.cutter.setInputData(transformedPolyData);
+    }
+
+    console.log(`✅ Transformed ${numPoints} points`);
+    console.log(`✅ Updated ${loadedModel.planeCutters.length} plane cutters`);
+    console.log('✅ Plane cutters now operate on transformed coordinates');
+
+
+    // ═════════════════════════════════════════════════════════
+    // PART 3: Update ALL plane cutters with new polyData
+    // This ensures ALL cutters get updated, including ones
+    // created before the transform
+    // ═════════════════════════════════════════════════════════
+
+    this._updateAllPlaneCutters(modelId);
+
+    console.log('✅ Model transform complete!');
+    return true;
+
+
+    // // Trigger re-render
+    // const renderingEngines = getRenderingEngines();
+    // for (const engine of renderingEngines) {
+    //   engine.render();
+    // }
+
+    // return true;
+
+  } catch (error) {
+    console.error('❌ Error setting transform:', error);
+    console.error('Stack:', error.stack);
+    return false;
+  }
+}
+
+/**
+ * Update all plane cutters for a model with the current transformed polyData
+ * Call this after updating loadedModel.polyData to ensure all cutters are in sync
+ */
+private _updateAllPlaneCutters(modelId: string): void {
+  const loadedModel = this.loadedModels.get(modelId);
+
+  if (!loadedModel) {
+    console.warn(`⚠️ Model ${modelId} not found`);
+    return;
+  }
+
+  if (!loadedModel.planeCutters || loadedModel.planeCutters.length === 0) {
+    console.log('⚠️ No plane cutters to update');
+    return;
+  }
+
+  console.log(`🔄 Updating ${loadedModel.planeCutters.length} plane cutters with current polyData...`);
+
+  const currentPolyData = loadedModel.polyData;
+
+  for (const planeCutter of loadedModel.planeCutters) {
+    console.log(`  🔄 Updating ${planeCutter.orientation} cutter...`);
+
+    // Update input data
+    planeCutter.cutter.setInputData(currentPolyData);
+
+    // Force VTK to recompute the cutting
+    planeCutter.cutter.modified();
+    planeCutter.cutter.update();
+
+    // Update mapper
+    planeCutter.mapper.modified();
+    planeCutter.mapper.update();
+
+    console.log(`  ✅ ${planeCutter.orientation} cutter updated`);
+  }
+
+  console.log(`✅ All plane cutters updated with current polyData`);
+
+  // Trigger re-render of all viewports
+  const renderingEngines = getRenderingEngines();
+  for (const engine of renderingEngines) {
+    engine.render();
+  }
+}
+
 
 }
 

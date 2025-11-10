@@ -171,6 +171,20 @@ module.exports = (env, argv) => {
         {
           '/dicomweb': 'http://localhost:5000',
         },
+        {
+          // Proxy for 3D model server - API endpoints
+          context: ['/api/models', '/api/health'],
+          target: 'http://localhost:5001',
+          changeOrigin: true,
+          secure: false,
+        },
+        {
+          // Proxy for 3D model server - Static model files
+          context: ['/models'],
+          target: 'http://localhost:5001',
+          changeOrigin: true,
+          secure: false,
+        },
       ],
       static: [
         {
@@ -197,17 +211,16 @@ module.exports = (env, argv) => {
   });
 
   if (hasProxy) {
-    mergedConfig.devServer.proxy = [
-      {
-        context: ['/pacs/dicom-web', '/pacs/wado'], // Multiple paths
-        target: 'http://localhost:8042',
-        changeOrigin: true,
-        pathRewrite: {
-          '^/pacs/dicom-web': '/dicom-web',
-          '^/pacs/wado': '/wado',
-        },
+    // Add Orthanc proxy to existing proxies (don't replace them)
+    mergedConfig.devServer.proxy.push({
+      context: ['/pacs/dicom-web', '/pacs/wado'], // Multiple paths
+      target: 'http://localhost:8042',
+      changeOrigin: true,
+      pathRewrite: {
+        '^/pacs/dicom-web': '/dicom-web',
+        '^/pacs/wado': '/wado',
       },
-    ];
+    });
   }
 
   if (isProdBuild) {

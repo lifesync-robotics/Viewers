@@ -42,6 +42,7 @@ export const fourUpMesh = {
       viewports: [
         {
           viewportOptions: {
+            viewportId: 'fourUpMesh-mpr-axial',
             toolGroupId: 'mpr',
             viewportType: 'volume',
             orientation: 'axial',
@@ -58,6 +59,7 @@ export const fourUpMesh = {
         },
         {
           viewportOptions: {
+            viewportId: 'fourUpMesh-volume3d',
             toolGroupId: 'volume3d',
             viewportType: 'volume3d',
             orientation: 'coronal',
@@ -81,6 +83,7 @@ export const fourUpMesh = {
         },
         {
           viewportOptions: {
+            viewportId: 'fourUpMesh-mpr-coronal',
             toolGroupId: 'mpr',
             viewportType: 'volume',
             orientation: 'coronal',
@@ -97,6 +100,7 @@ export const fourUpMesh = {
         },
         {
           viewportOptions: {
+            viewportId: 'fourUpMesh-mpr-sagittal',
             toolGroupId: 'mpr',
             viewportType: 'volume',
             orientation: 'sagittal',

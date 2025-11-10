@@ -14,18 +14,18 @@ function ModelUploadButton() {
   const { commandsManager } = useSystem();
 
   useEffect(() => {
-    console.log('🔘 [ModelUploadButton] Component mounted');
-    console.log('🔘 [ModelUploadButton] CommandsManager available:', !!commandsManager);
-    console.log('🔘 [ModelUploadButton] CommandsManager type:', typeof commandsManager);
+    // console.log('🔘 [ModelUploadButton] Component mounted');
+    // console.log('🔘 [ModelUploadButton] CommandsManager available:', !!commandsManager);
+    // console.log('🔘 [ModelUploadButton] CommandsManager type:', typeof commandsManager);
   }, [commandsManager]);
 
   const handleClick = () => {
-    console.log('🔘 [ModelUploadButton] Button clicked!');
+    // console.log('🔘 [ModelUploadButton] Button clicked!');
     console.log('🔘 [ModelUploadButton] Attempting to run command: showModelUploadModal');
 
     try {
       commandsManager.runCommand('showModelUploadModal');
-      console.log('✅ [ModelUploadButton] Command executed successfully');
+      // console.log('✅ [ModelUploadButton] Command executed successfully');
     } catch (error) {
       console.error('❌ [ModelUploadButton] Error running command:', error);
     }
@@ -37,7 +37,7 @@ function ModelUploadButton() {
       size="default"
       onClick={handleClick}
       className="flex items-center gap-2"
-      title="Upload 3D Models (OBJ, STL, PLY)"
+      title="Upload 3D Models (OBJ)"
     >
       <Icons.Upload className="w-5 h-5" />
       <span className="hidden lg:inline">Upload Models</span>

@@ -4,6 +4,8 @@ export default function ViewportStatePanel({ servicesManager }) {
   const { viewportStateService } = servicesManager.services;
   const [snapshots, setSnapshots] = useState([]);
   const [snapshotName, setSnapshotName] = useState('');
+  const [radius, setRadius] = useState('');
+  const [length, setLength] = useState('');
 
   useEffect(() => {
     loadSnapshots();
@@ -17,14 +19,18 @@ export default function ViewportStatePanel({ servicesManager }) {
   const saveSnapshot = () => {
     try {
       const name = snapshotName.trim() || `Snapshot ${new Date().toLocaleString()}`;
+      const radiusValue = parseFloat(radius) || 0;
+      const lengthValue = parseFloat(length) || 0;
 
-      // Save snapshot (service ensures unique name)
-      const snapshot = viewportStateService.saveSnapshot(name);
+      // Save snapshot with radius and length (service ensures unique name)
+      const snapshot = viewportStateService.saveSnapshot(name, radiusValue, lengthValue);
 
       setSnapshotName('');
+      setRadius('');
+      setLength('');
       loadSnapshots();
 
-      console.log(`✅ Saved: "${snapshot.name}" with ${snapshot.viewports.length} viewports`);
+      console.log(`✅ Saved: "${snapshot.name}" with ${snapshot.viewports.length} viewports (radius: ${radiusValue}, length: ${lengthValue})`);
 
     } catch (error) {
       console.error('Failed to save:', error);
@@ -32,9 +38,9 @@ export default function ViewportStatePanel({ servicesManager }) {
     }
   };
 
-  const restoreSnapshot = (name) => {
+  const restoreSnapshot = async (name) => {
     try {
-      viewportStateService.restoreSnapshot(name);
+      await viewportStateService.restoreSnapshot(name);
       console.log(`✅ Restored: "${name}"`);
 
     } catch (error) {
@@ -104,38 +110,19 @@ export default function ViewportStatePanel({ servicesManager }) {
           const file = (e.target as HTMLInputElement).files?.[0];
           if (!file) return;
 
-          // Read file
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            try {
-              const jsonString = event.target?.result as string;
-
-              if (!jsonString) {
-                throw new Error('File is empty');
-              }
-
-              // Import via service
-              viewportStateService.importJSON(jsonString);
-
+          // Use the new file loading method that handles both formats
+          viewportStateService.loadSnapshotsFromFile(file)
+            .then((count) => {
               // Reload snapshots in UI
               loadSnapshots();
-
-              console.log(`✅ Successfully imported snapshots from: ${file.name}`);
+              alert(`✅ Successfully imported ${count} snapshots from: ${file.name}`);
+              console.log(`✅ Successfully imported ${count} snapshots from: ${file.name}`);
               console.log(`📁 Full file path: ${file.name}`);
-
-            } catch (error) {
+            })
+            .catch((error) => {
               console.error('Failed to import:', error);
               alert(`❌ Import failed: ${error.message}`);
-            }
-          };
-
-          reader.onerror = () => {
-            const error = 'Failed to read file';
-            console.error(error);
-            alert(`❌ ${error}`);
-          };
-
-          reader.readAsText(file);
+            });
 
         } catch (error) {
           console.error('Failed to process file:', error);
@@ -204,6 +191,32 @@ export default function ViewportStatePanel({ servicesManager }) {
           onKeyPress={(e) => e.key === 'Enter' && saveSnapshot()}
           className="w-full px-3 py-2 bg-gray-800 text-white border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
         />
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Radius (mm)</label>
+            <input
+              type="number"
+              placeholder="0"
+              value={radius}
+              onChange={(e) => setRadius(e.target.value)}
+              step="0.1"
+              min="0"
+              className="w-full px-3 py-2 bg-gray-800 text-white border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Length (mm)</label>
+            <input
+              type="number"
+              placeholder="0"
+              value={length}
+              onChange={(e) => setLength(e.target.value)}
+              step="0.1"
+              min="0"
+              className="w-full px-3 py-2 bg-gray-800 text-white border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
         <button
           onClick={saveSnapshot}
           disabled={remainingSlots === 0}
@@ -217,7 +230,7 @@ export default function ViewportStatePanel({ servicesManager }) {
           </p>
         )}
         <p className="text-xs text-gray-400">
-          Saves all orthographic viewports (Axial, Sagittal, Coronal)
+          Saves all orthographic viewports with radius and length metadata
         </p>
       </div>
 
@@ -250,9 +263,21 @@ export default function ViewportStatePanel({ servicesManager }) {
                     <p className="text-xs text-gray-400 mb-1">
                       {new Date(snapshot.timestamp).toLocaleString()}
                     </p>
-                    <span className="inline-block px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300">
-                      {snapshot.viewports.length} viewports
-                    </span>
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <span className="inline-block px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300">
+                        {snapshot.viewports.length} viewports
+                      </span>
+                      {(snapshot.radius > 0 || snapshot.length > 0) && (
+                        <>
+                          <span className="inline-block px-2 py-0.5 bg-blue-900 rounded text-xs text-blue-300">
+                            📏 R: {snapshot.radius?.toFixed(1) ?? 0} mm
+                          </span>
+                          <span className="inline-block px-2 py-0.5 bg-green-900 rounded text-xs text-green-300">
+                            📐 L: {snapshot.length?.toFixed(1) ?? 0} mm
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   {/* Action Buttons */}
