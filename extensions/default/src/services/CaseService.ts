@@ -263,6 +263,60 @@ class CaseService extends PubSubService {
   }
 
   /**
+   * Get all unique case IDs
+   */
+  public async getUniqueCaseIds(): Promise<{ caseId: string; patientName: string; mrn: string; studyCount: number; createdAt: string; }[]> {
+    console.log('📁 Fetching unique case IDs');
+
+    try {
+      const response = await fetch(`${this.apiUrl}/api/cases/unique-ids`);
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch unique case IDs');
+      }
+
+      console.log(`✅ Fetched ${data.count} unique case IDs`);
+      return data.cases;
+    } catch (error) {
+      console.error('❌ Failed to fetch unique case IDs:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get studies for a specific case
+   */
+  public async getStudiesForCase(caseId: string): Promise<{ caseId: string; patientInfo: PatientInfo; studies: Study[]; }> {
+    console.log(`📁 Fetching studies for case: ${caseId}`);
+
+    try {
+      const response = await fetch(`${this.apiUrl}/api/cases/${caseId}/studies`);
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch studies for case');
+      }
+
+      console.log(`✅ Fetched studies for case: ${caseId}`);
+      return data.case;
+    } catch (error) {
+      console.error(`❌ Failed to fetch studies for case ${caseId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Get single case details
    */
   public async getCase(caseId: string): Promise<Case> {
@@ -564,7 +618,7 @@ class CaseService extends PubSubService {
   /**
    * Get studies for active case
    */
-  public getStudiesForCase(): string[] {
+  public getActiveCaseStudyUIDs(): string[] {
     if (!this.activeCase) {
       return [];
     }

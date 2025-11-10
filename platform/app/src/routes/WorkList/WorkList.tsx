@@ -214,8 +214,8 @@ const CreateCaseDialog = ({ isOpen, onClose, onCreateCase, servicesManager }) =>
 };
 
 // Simplified Case Selector for WorkList
-const WorkListCaseSelector = ({ servicesManager }) => {
-  const [cases, setCases] = React.useState([]);
+const WorkListCaseSelector = ({ servicesManager, viewMode, setViewMode, cases, loadingCases }) => {
+  const [localCases, setLocalCases] = React.useState([]);
   const [activeCaseId, setActiveCaseId] = React.useState(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false);
   const caseService = servicesManager?.services?.caseService;
@@ -224,7 +224,7 @@ const WorkListCaseSelector = ({ servicesManager }) => {
     if (!caseService) return;
     try {
       const fetchedCases = await caseService.getCases();
-      setCases(fetchedCases);
+      setLocalCases(fetchedCases);
     } catch (err) {
       console.warn('Failed to load cases:', err);
     }
@@ -256,37 +256,79 @@ const WorkListCaseSelector = ({ servicesManager }) => {
     return null;
   }
 
-  const activeCase = cases.find(c => c.caseId === activeCaseId);
+  const activeCase = localCases.find(c => c.caseId === activeCaseId);
+  const displayCases = cases && cases.length > 0 ? cases : localCases;
 
   return (
     <>
-      <div className="flex items-center gap-2 px-4">
-        <span className="text-primary-light text-sm font-medium">Surgical Case:</span>
-        <select
-          value={activeCaseId || ''}
-          onChange={(e) => caseService.setActiveCaseId(e.target.value || null)}
-          className="bg-primary-dark hover:bg-primary text-primary-active border-primary-light min-w-[200px] rounded border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">No Case Selected (View All Studies)</option>
-          {cases.map(caseItem => (
-            <option key={caseItem.caseId} value={caseItem.caseId}>
-              {caseItem.caseName || caseItem.caseId} - {caseItem.patientInfo.name || caseItem.patientInfo.mrn}
-            </option>
-          ))}
-        </select>
-        {activeCase && (
-          <span className="text-primary-light text-xs">
-            ({activeCase.studyCount || 0} studies)
-          </span>
+      <div className="flex items-center gap-4 px-4">
+        {/* View Mode Toggle */}
+        <div className="flex items-center gap-2">
+          <span className="text-primary-light text-sm font-medium">View:</span>
+          <div className="flex rounded border border-primary-light">
+            <button
+              onClick={() => setViewMode('cases')}
+              className={classnames(
+                'px-3 py-1.5 text-sm transition-colors',
+                viewMode === 'cases'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-primary-dark text-primary-light hover:bg-primary-main'
+              )}
+            >
+              Cases
+            </button>
+            <button
+              onClick={() => setViewMode('studies')}
+              className={classnames(
+                'px-3 py-1.5 text-sm transition-colors',
+                viewMode === 'studies'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-primary-dark text-primary-light hover:bg-primary-main'
+              )}
+            >
+              Studies
+            </button>
+          </div>
+        </div>
+
+        {/* Case Selector - only show in study view */}
+        {viewMode === 'studies' && (
+          <>
+            <span className="text-primary-light text-sm font-medium">Surgical Case:</span>
+            <select
+              value={activeCaseId || ''}
+              onChange={(e) => caseService.setActiveCaseId(e.target.value || null)}
+              className="bg-primary-dark hover:bg-primary text-primary-active border-primary-light min-w-[200px] rounded border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">No Case Selected (View All Studies)</option>
+              {displayCases.map(caseItem => (
+                <option key={caseItem.caseId} value={caseItem.caseId}>
+                  {caseItem.caseName || caseItem.caseId} - {caseItem.patientName || caseItem.mrn}
+                </option>
+              ))}
+            </select>
+            {activeCase && (
+              <span className="text-primary-light text-xs">
+                ({activeCase.studyCount || 0} studies)
+              </span>
+            )}
+          </>
         )}
+
+        {/* Create Case Button */}
         <ButtonNext
           size="sm"
           onClick={() => setIsCreateDialogOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 ml-2"
+          className="bg-blue-600 hover:bg-blue-700"
         >
           <Icons.Add className="mr-1 h-4 w-4" />
           Create Case
         </ButtonNext>
+
+        {/* Loading indicator for cases */}
+        {loadingCases && (
+          <span className="text-primary-light text-xs">Loading cases...</span>
+        )}
       </div>
 
       <CreateCaseDialog
@@ -464,6 +506,14 @@ function WorkList({
   const [activeCase, setActiveCase] = useState(null);
   const [activeCaseId, setActiveCaseId] = useState(null);
   const caseService = servicesManager?.services?.caseService;
+
+  // ~ Hierarchical Worklist State
+  const [viewMode, setViewMode] = useState<'cases' | 'studies'>('studies'); // Toggle between case-centric and study-centric views (default to studies)
+  const [cases, setCases] = useState([]);
+  const [expandedCases, setExpandedCases] = useState([]);
+  const [caseStudies, setCaseStudies] = useState(new Map()); // caseId -> studies
+  const [loadingCases, setLoadingCases] = useState(false);
+
   // ~ Filters
   const searchParams = useSearchParams();
   const navigate = useNavigate();
@@ -584,6 +634,47 @@ function WorkList({
     };
   }, []);
 
+  // Load cases for hierarchical view
+  const loadCases = async () => {
+    if (!caseService) return;
+
+    setLoadingCases(true);
+    try {
+      const caseData = await caseService.getUniqueCaseIds();
+      setCases(caseData);
+    } catch (error) {
+      console.warn('Failed to load cases:', error);
+      setCases([]);
+    } finally {
+      setLoadingCases(false);
+    }
+  };
+
+  // Load studies for a specific case
+  const loadStudiesForCase = async (caseId) => {
+    if (!caseService) return;
+
+    try {
+      const caseStudiesData = await caseService.getStudiesForCase(caseId);
+      setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData.studies)));
+    } catch (error) {
+      console.warn(`Failed to load studies for case ${caseId}:`, error);
+    }
+  };
+
+  // Handle case expansion
+  const handleCaseExpansion = async (caseId, shouldExpand) => {
+    if (shouldExpand) {
+      setExpandedCases(prev => [...prev, caseId]);
+      // Load studies if not already loaded
+      if (!caseStudies.has(caseId)) {
+        await loadStudiesForCase(caseId);
+      }
+    } else {
+      setExpandedCases(prev => prev.filter(id => id !== caseId));
+    }
+  };
+
   // Subscribe to case service changes
   useEffect(() => {
     if (!caseService) {
@@ -595,6 +686,9 @@ function WorkList({
     const initialCase = caseService.getActiveCase();
     setActiveCaseId(initialCaseId);
     setActiveCase(initialCase);
+
+    // Load cases for hierarchical view
+    loadCases();
 
     // Subscribe to case changes
     const unsubscribe = caseService.subscribe(
@@ -669,7 +763,14 @@ function WorkList({
     // Note: expanded rows index begins at 1
     for (let z = 0; z < expandedRows.length; z++) {
       const expandedRowIndex = expandedRows[z] - 1;
-      const studyInstanceUid = filteredStudies[expandedRowIndex].studyInstanceUid;
+      const study = filteredStudies[expandedRowIndex];
+
+      // Safety check: study might not exist in hierarchical view
+      if (!study || !study.studyInstanceUid) {
+        continue;
+      }
+
+      const studyInstanceUid = study.studyInstanceUid;
 
       if (studiesWithSeriesData.includes(studyInstanceUid)) {
         continue;
@@ -685,245 +786,592 @@ function WorkList({
     return !isEqual(filterValues, defaultFilterValues);
   };
 
+  // Create hierarchical table data source
+  const createTableDataSource = () => {
+    const rows = [];
+    let rowIndex = 1;
+
+    if (viewMode === 'cases' && cases.length > 0) {
+      // Case-centric view: Show cases first
+      cases.forEach((caseItem) => {
+        const caseRowKey = rowIndex++;
+        const isCaseExpanded = expandedCases.includes(caseItem.caseId);
+
+        // Add case row
+        rows.push({
+          dataCY: `caseRow-${caseItem.caseId}`,
+          clickableCY: caseItem.caseId,
+          row: [
+            {
+              key: 'caseId',
+              content: (
+                <div className="flex items-center gap-2">
+                  <Icons.Database className="h-4 w-4 text-blue-400" />
+                  <span className="font-medium text-blue-300">{caseItem.caseId}</span>
+                </div>
+              ),
+              gridCol: 4,
+            },
+            {
+              key: 'patientName',
+              content: caseItem.patientName || 'Unknown Patient',
+              gridCol: 4,
+            },
+            {
+              key: 'mrn',
+              content: caseItem.mrn,
+              gridCol: 3,
+            },
+            {
+              key: 'createdAt',
+              content: moment(caseItem.createdAt).format('MMM-DD-YYYY'),
+              gridCol: 3,
+            },
+            {
+              key: 'studyCount',
+              content: (
+                <div className="flex items-center gap-2">
+                  <Icons.GroupLayers className="h-4 w-4 text-gray-400" />
+                  <span>{caseItem.studyCount} studies</span>
+                </div>
+              ),
+              gridCol: 3,
+            },
+            {
+              key: 'expandIcon',
+              content: (
+                <Icons.GroupLayers
+                  className={classnames('w-4', {
+                    'text-primary': isCaseExpanded,
+                    'text-secondary-light': !isCaseExpanded,
+                  })}
+                />
+              ),
+              gridCol: 2,
+            },
+          ],
+          onClickRow: () => handleCaseExpansion(caseItem.caseId, !isCaseExpanded),
+          isExpanded: isCaseExpanded,
+          isCaseRow: true,
+        });
+
+        // Add study rows if case is expanded
+        if (isCaseExpanded && caseStudies.has(caseItem.caseId)) {
+          const studies = caseStudies.get(caseItem.caseId) || [];
+
+          studies.forEach((study) => {
+            const studyRowKey = rowIndex++;
+            const isStudyExpanded = expandedRows.some(k => k === studyRowKey);
+
+            // Find the full study data from filteredStudies
+            const fullStudy = filteredStudies.find(s => s.studyInstanceUid === study.studyInstanceUID);
+
+            if (!fullStudy) {
+              // Study not loaded yet - show placeholder
+              rows.push({
+                dataCY: `studyPlaceholder-${study.studyInstanceUID}`,
+                clickableCY: study.studyInstanceUID,
+                row: [
+                  {
+                    key: 'studyIndent',
+                    content: <div className="ml-6 text-gray-500">└─</div>,
+                    gridCol: 1,
+                  },
+                  {
+                    key: 'studyInfo',
+                    content: (
+                      <div className="text-gray-400">
+                        <span className="text-sm">{study.description || 'Study not loaded'}</span>
+                        <br />
+                        <span className="text-xs text-gray-500">StudyUID: {study.studyInstanceUID.substring(0, 30)}...</span>
+                      </div>
+                    ),
+                    gridCol: 10,
+                  },
+                  {
+                    key: 'phase',
+                    content: <span className="text-xs text-blue-400">{study.clinicalPhase}</span>,
+                    gridCol: 3,
+                  },
+                  {
+                    key: 'status',
+                    content: <span className="text-xs text-yellow-500">Not in worklist</span>,
+                    gridCol: 3,
+                  },
+                ],
+                onClickRow: () => {},
+                isExpanded: false,
+                isStudyRow: true,
+              });
+              return; // Skip to next study
+            }
+
+            // Study found - show full details
+            if (fullStudy) {
+              const {
+                studyInstanceUid,
+                accession,
+                modalities,
+                instances,
+                description,
+                mrn,
+                patientName,
+                date,
+                time,
+              } = fullStudy;
+
+              const studyDate =
+                date &&
+                moment(date, ['YYYYMMDD', 'YYYY.MM.DD'], true).isValid() &&
+                moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(t('Common:localDateFormat', 'MMM-DD-YYYY'));
+              const studyTime =
+                time &&
+                moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).isValid() &&
+                moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).format(
+                  t('Common:localTimeFormat', 'hh:mm A')
+                );
+
+              const makeCopyTooltipCell = textValue => {
+                if (!textValue) {
+                  return '';
+                }
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-pointer truncate">{textValue}</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <div className="flex items-center justify-between gap-2">
+                        {textValue}
+                        <Clipboard>{textValue}</Clipboard>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              };
+
+              rows.push({
+                dataCY: `studyRow-${studyInstanceUid}`,
+                clickableCY: studyInstanceUid,
+                row: [
+                  {
+                    key: 'studyIndent',
+                    content: <div className="ml-6 text-gray-500">└─</div>,
+                    gridCol: 1,
+                  },
+                  {
+                    key: 'patientName',
+                    content: patientName ? makeCopyTooltipCell(patientName) : null,
+                    gridCol: 3,
+                  },
+                  {
+                    key: 'mrn',
+                    content: makeCopyTooltipCell(mrn),
+                    gridCol: 3,
+                  },
+                  {
+                    key: 'studyDate',
+                    content: (
+                      <>
+                        {studyDate && <span className="mr-4">{studyDate}</span>}
+                        {studyTime && <span>{studyTime}</span>}
+                      </>
+                    ),
+                    title: `${studyDate || ''} ${studyTime || ''}`,
+                    gridCol: 4,
+                  },
+                  {
+                    key: 'description',
+                    content: (
+                      <div className="flex items-center gap-2">
+                        {makeCopyTooltipCell(description)}
+                        {study.clinicalPhase && (
+                          <span className="bg-blue-900/40 text-blue-300 border-blue-500 rounded border px-2 py-0.5 text-xs whitespace-nowrap">
+                            {study.clinicalPhase.replace(/([A-Z])/g, ' $1').trim()}
+                          </span>
+                        )}
+                      </div>
+                    ),
+                    gridCol: 4,
+                  },
+                  {
+                    key: 'modality',
+                    content: modalities,
+                    title: modalities,
+                    gridCol: 3,
+                  },
+                  {
+                    key: 'instances',
+                    content: (
+                      <>
+                        <Icons.GroupLayers
+                          className={classnames('mr-2 inline-flex w-4', {
+                            'text-primary': isStudyExpanded,
+                            'text-secondary-light': !isStudyExpanded,
+                          })}
+                        />
+                        {instances}
+                      </>
+                    ),
+                    title: (instances || 0).toString(),
+                    gridCol: 2,
+                  },
+                ],
+                expandedContent: (
+                  <StudyListExpandedRow
+                    seriesTableColumns={{
+                      description: t('StudyList:Description'),
+                      seriesNumber: t('StudyList:Series'),
+                      modality: t('StudyList:Modality'),
+                      instances: t('StudyList:Instances'),
+                    }}
+                    seriesTableDataSource={
+                      seriesInStudiesMap.has(studyInstanceUid)
+                        ? seriesInStudiesMap.get(studyInstanceUid).map(s => {
+                            return {
+                              description: s.description || '(empty)',
+                              seriesNumber: s.seriesNumber ?? '',
+                              modality: s.modality || '',
+                              instances: s.numSeriesInstances || '',
+                            };
+                          })
+                        : []
+                    }
+                  >
+                    <div className="flex flex-row gap-2">
+                      {(appConfig.groupEnabledModesFirst
+                        ? appConfig.loadedModes.sort((a, b) => {
+                            const isValidA = a.isValidMode({
+                              modalities: modalities.replaceAll('/', '\\'),
+                              study: fullStudy,
+                            }).valid;
+                            const isValidB = b.isValidMode({
+                              modalities: modalities.replaceAll('/', '\\'),
+                              study: fullStudy,
+                            }).valid;
+
+                            return isValidB - isValidA;
+                          })
+                        : appConfig.loadedModes
+                      ).map((mode, i) => {
+                        if (mode.hide) {
+                          return null;
+                        }
+                        const modalitiesToCheck = modalities.replaceAll('/', '\\');
+
+                        const { valid: isValidMode, description: invalidModeDescription } = mode.isValidMode({
+                          modalities: modalitiesToCheck,
+                          study: fullStudy,
+                        });
+                        if (isValidMode === null) {
+                          return null;
+                        }
+
+                        const query = new URLSearchParams();
+                        if (filterValues.configUrl) {
+                          query.append('configUrl', filterValues.configUrl);
+                        }
+                        query.append('StudyInstanceUIDs', studyInstanceUid);
+                        preserveQueryParameters(query);
+
+                        return (
+                          mode.displayName && (
+                            <Link
+                              className={isValidMode ? '' : 'cursor-not-allowed'}
+                              key={i}
+                              to={`${mode.routeName}${dataPath || ''}?${query.toString()}`}
+                              onClick={event => {
+                                if (!isValidMode) {
+                                  event.preventDefault();
+                                }
+                              }}
+                            >
+                              <Button
+                                type={ButtonEnums.type.primary}
+                                size={ButtonEnums.size.smallTall}
+                                disabled={!isValidMode}
+                                startIconTooltip={
+                                  !isValidMode ? (
+                                    <div className="font-inter flex w-[206px] whitespace-normal text-left text-xs font-normal text-white">
+                                      {invalidModeDescription}
+                                    </div>
+                                  ) : null
+                                }
+                                startIcon={
+                                  isValidMode ? (
+                                    <Icons.LaunchArrow className="!h-[20px] !w-[20px] text-black" />
+                                  ) : (
+                                    <Icons.LaunchInfo className="!h-[20px] !w-[20px] text-black" />
+                                  )
+                                }
+                                onClick={() => {}}
+                                dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
+                                className={!isValidMode && 'bg-[#222d44]'}
+                              >
+                                {mode.displayName}
+                              </Button>
+                            </Link>
+                          )
+                        );
+                      })}
+                    </div>
+                  </StudyListExpandedRow>
+                ),
+                onClickRow: () =>
+                  setExpandedRows(s => (isStudyExpanded ? s.filter(n => studyRowKey !== n) : [...s, studyRowKey])),
+                isExpanded: isStudyExpanded,
+                isStudyRow: true,
+              });
+            }
+          });
+        }
+      });
+    } else {
+      // Study-centric view (original behavior) or fallback when no cases
+      const rollingPageNumberMod = Math.floor(101 / resultsPerPage);
+      const rollingPageNumber = (pageNumber - 1) % rollingPageNumberMod;
+      const offset = resultsPerPage * rollingPageNumber;
+      const offsetAndTake = offset + resultsPerPage;
+
+      filteredStudies.slice(offset, offsetAndTake).forEach((study, key) => {
+        const rowKey = key + 1;
+        const isExpanded = expandedRows.some(k => k === rowKey);
+        const {
+          studyInstanceUid,
+          accession,
+          modalities,
+          instances,
+          description,
+          mrn,
+          patientName,
+          date,
+          time,
+        } = study;
+        const studyDate =
+          date &&
+          moment(date, ['YYYYMMDD', 'YYYY.MM.DD'], true).isValid() &&
+          moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(t('Common:localDateFormat', 'MMM-DD-YYYY'));
+        const studyTime =
+          time &&
+          moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).isValid() &&
+          moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).format(
+            t('Common:localTimeFormat', 'hh:mm A')
+          );
+
+        const makeCopyTooltipCell = textValue => {
+          if (!textValue) {
+            return '';
+          }
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="cursor-pointer truncate">{textValue}</span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <div className="flex items-center justify-between gap-2">
+                  {textValue}
+                  <Clipboard>{textValue}</Clipboard>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          );
+        };
+
+        // Get clinical phase if study is in active case
+        const studyInfo = activeCaseId && activeCase ?
+          activeCase.studies.find(s => s.studyInstanceUID === studyInstanceUid) : null;
+        const clinicalPhase = studyInfo?.clinicalPhase;
+
+        rows.push({
+          dataCY: `studyRow-${studyInstanceUid}`,
+          clickableCY: studyInstanceUid,
+          row: [
+            {
+              key: 'patientName',
+              content: patientName ? makeCopyTooltipCell(patientName) : null,
+              gridCol: 4,
+            },
+            {
+              key: 'mrn',
+              content: makeCopyTooltipCell(mrn),
+              gridCol: 3,
+            },
+            {
+              key: 'studyDate',
+              content: (
+                <>
+                  {studyDate && <span className="mr-4">{studyDate}</span>}
+                  {studyTime && <span>{studyTime}</span>}
+                </>
+              ),
+              title: `${studyDate || ''} ${studyTime || ''}`,
+              gridCol: 5,
+            },
+            {
+              key: 'description',
+              content: (
+                <div className="flex items-center gap-2">
+                  {makeCopyTooltipCell(description)}
+                  {clinicalPhase && (
+                    <span className="bg-blue-900/40 text-blue-300 border-blue-500 rounded border px-2 py-0.5 text-xs whitespace-nowrap">
+                      {clinicalPhase.replace(/([A-Z])/g, ' $1').trim()}
+                    </span>
+                  )}
+                </div>
+              ),
+              gridCol: 4,
+            },
+            {
+              key: 'modality',
+              content: modalities,
+              title: modalities,
+              gridCol: 3,
+            },
+            {
+              key: 'accession',
+              content: makeCopyTooltipCell(accession),
+              gridCol: 3,
+            },
+            {
+              key: 'instances',
+              content: (
+                <>
+                  <Icons.GroupLayers
+                    className={classnames('mr-2 inline-flex w-4', {
+                      'text-primary': isExpanded,
+                      'text-secondary-light': !isExpanded,
+                    })}
+                  />
+                  {instances}
+                </>
+              ),
+              title: (instances || 0).toString(),
+              gridCol: 2,
+            },
+          ],
+          expandedContent: (
+            <StudyListExpandedRow
+              seriesTableColumns={{
+                description: t('StudyList:Description'),
+                seriesNumber: t('StudyList:Series'),
+                modality: t('StudyList:Modality'),
+                instances: t('StudyList:Instances'),
+              }}
+              seriesTableDataSource={
+                seriesInStudiesMap.has(studyInstanceUid)
+                  ? seriesInStudiesMap.get(studyInstanceUid).map(s => {
+                      return {
+                        description: s.description || '(empty)',
+                        seriesNumber: s.seriesNumber ?? '',
+                        modality: s.modality || '',
+                        instances: s.numSeriesInstances || '',
+                      };
+                    })
+                  : []
+              }
+            >
+              <div className="flex flex-row gap-2">
+                {(appConfig.groupEnabledModesFirst
+                  ? appConfig.loadedModes.sort((a, b) => {
+                      const isValidA = a.isValidMode({
+                        modalities: modalities.replaceAll('/', '\\'),
+                        study,
+                      }).valid;
+                      const isValidB = b.isValidMode({
+                        modalities: modalities.replaceAll('/', '\\'),
+                        study,
+                      }).valid;
+
+                      return isValidB - isValidA;
+                    })
+                  : appConfig.loadedModes
+                ).map((mode, i) => {
+                  if (mode.hide) {
+                    return null;
+                  }
+                  const modalitiesToCheck = modalities.replaceAll('/', '\\');
+
+                  const { valid: isValidMode, description: invalidModeDescription } = mode.isValidMode({
+                    modalities: modalitiesToCheck,
+                    study,
+                  });
+                  if (isValidMode === null) {
+                    return null;
+                  }
+
+                  const query = new URLSearchParams();
+                  if (filterValues.configUrl) {
+                    query.append('configUrl', filterValues.configUrl);
+                  }
+                  query.append('StudyInstanceUIDs', studyInstanceUid);
+                  preserveQueryParameters(query);
+
+                  return (
+                    mode.displayName && (
+                      <Link
+                        className={isValidMode ? '' : 'cursor-not-allowed'}
+                        key={i}
+                        to={`${mode.routeName}${dataPath || ''}?${query.toString()}`}
+                        onClick={event => {
+                          if (!isValidMode) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        <Button
+                          type={ButtonEnums.type.primary}
+                          size={ButtonEnums.size.smallTall}
+                          disabled={!isValidMode}
+                          startIconTooltip={
+                            !isValidMode ? (
+                              <div className="font-inter flex w-[206px] whitespace-normal text-left text-xs font-normal text-white">
+                                {invalidModeDescription}
+                              </div>
+                            ) : null
+                          }
+                          startIcon={
+                            isValidMode ? (
+                              <Icons.LaunchArrow className="!h-[20px] !w-[20px] text-black" />
+                            ) : (
+                              <Icons.LaunchInfo className="!h-[20px] !w-[20px] text-black" />
+                            )
+                          }
+                          onClick={() => {}}
+                          dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
+                          className={!isValidMode && 'bg-[#222d44]'}
+                        >
+                          {mode.displayName}
+                        </Button>
+                      </Link>
+                    )
+                  );
+                })}
+              </div>
+            </StudyListExpandedRow>
+          ),
+          onClickRow: () =>
+            setExpandedRows(s => (isExpanded ? s.filter(n => rowKey !== n) : [...s, rowKey])),
+          isExpanded,
+        });
+      });
+    }
+
+    return rows;
+  };
+
+  const tableDataSource = createTableDataSource();
+
+  // Calculate pagination offset
   const rollingPageNumberMod = Math.floor(101 / resultsPerPage);
   const rollingPageNumber = (pageNumber - 1) % rollingPageNumberMod;
   const offset = resultsPerPage * rollingPageNumber;
   const offsetAndTake = offset + resultsPerPage;
-  const tableDataSource = filteredStudies.map((study, key) => {
-    const rowKey = key + 1;
-    const isExpanded = expandedRows.some(k => k === rowKey);
-    const {
-      studyInstanceUid,
-      accession,
-      modalities,
-      instances,
-      description,
-      mrn,
-      patientName,
-      date,
-      time,
-    } = study;
-    const studyDate =
-      date &&
-      moment(date, ['YYYYMMDD', 'YYYY.MM.DD'], true).isValid() &&
-      moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(t('Common:localDateFormat', 'MMM-DD-YYYY'));
-    const studyTime =
-      time &&
-      moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).isValid() &&
-      moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).format(
-        t('Common:localTimeFormat', 'hh:mm A')
-      );
 
-    const makeCopyTooltipCell = textValue => {
-      if (!textValue) {
-        return '';
-      }
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="cursor-pointer truncate">{textValue}</span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            <div className="flex items-center justify-between gap-2">
-              {textValue}
-              <Clipboard>{textValue}</Clipboard>
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      );
-    };
-
-    // Get clinical phase if study is in active case
-    const studyInfo = activeCaseId && activeCase ?
-      activeCase.studies.find(s => s.studyInstanceUID === studyInstanceUid) : null;
-    const clinicalPhase = studyInfo?.clinicalPhase;
-
-    return {
-      dataCY: `studyRow-${studyInstanceUid}`,
-      clickableCY: studyInstanceUid,
-      row: [
-        {
-          key: 'patientName',
-          content: patientName ? makeCopyTooltipCell(patientName) : null,
-          gridCol: 4,
-        },
-        {
-          key: 'mrn',
-          content: makeCopyTooltipCell(mrn),
-          gridCol: 3,
-        },
-        {
-          key: 'studyDate',
-          content: (
-            <>
-              {studyDate && <span className="mr-4">{studyDate}</span>}
-              {studyTime && <span>{studyTime}</span>}
-            </>
-          ),
-          title: `${studyDate || ''} ${studyTime || ''}`,
-          gridCol: 5,
-        },
-        {
-          key: 'description',
-          content: (
-            <div className="flex items-center gap-2">
-              {makeCopyTooltipCell(description)}
-              {clinicalPhase && (
-                <span className="bg-blue-900/40 text-blue-300 border-blue-500 rounded border px-2 py-0.5 text-xs whitespace-nowrap">
-                  {clinicalPhase.replace(/([A-Z])/g, ' $1').trim()}
-                </span>
-              )}
-            </div>
-          ),
-          gridCol: 4,
-        },
-        {
-          key: 'modality',
-          content: modalities,
-          title: modalities,
-          gridCol: 3,
-        },
-        {
-          key: 'accession',
-          content: makeCopyTooltipCell(accession),
-          gridCol: 3,
-        },
-        {
-          key: 'instances',
-          content: (
-            <>
-              <Icons.GroupLayers
-                className={classnames('mr-2 inline-flex w-4', {
-                  'text-primary': isExpanded,
-                  'text-secondary-light': !isExpanded,
-                })}
-              />
-              {instances}
-            </>
-          ),
-          title: (instances || 0).toString(),
-          gridCol: 2,
-        },
-      ],
-      // Todo: This is actually running for all rows, even if they are
-      // not clicked on.
-      expandedContent: (
-        <StudyListExpandedRow
-          seriesTableColumns={{
-            description: t('StudyList:Description'),
-            seriesNumber: t('StudyList:Series'),
-            modality: t('StudyList:Modality'),
-            instances: t('StudyList:Instances'),
-          }}
-          seriesTableDataSource={
-            seriesInStudiesMap.has(studyInstanceUid)
-              ? seriesInStudiesMap.get(studyInstanceUid).map(s => {
-                  return {
-                    description: s.description || '(empty)',
-                    seriesNumber: s.seriesNumber ?? '',
-                    modality: s.modality || '',
-                    instances: s.numSeriesInstances || '',
-                  };
-                })
-              : []
-          }
-        >
-          <div className="flex flex-row gap-2">
-            {(appConfig.groupEnabledModesFirst
-              ? appConfig.loadedModes.sort((a, b) => {
-                  const isValidA = a.isValidMode({
-                    modalities: modalities.replaceAll('/', '\\'),
-                    study,
-                  }).valid;
-                  const isValidB = b.isValidMode({
-                    modalities: modalities.replaceAll('/', '\\'),
-                    study,
-                  }).valid;
-
-                  return isValidB - isValidA;
-                })
-              : appConfig.loadedModes
-            ).map((mode, i) => {
-              if (mode.hide) {
-                // Hide this mode from display
-                return null;
-              }
-              const modalitiesToCheck = modalities.replaceAll('/', '\\');
-
-              const { valid: isValidMode, description: invalidModeDescription } = mode.isValidMode({
-                modalities: modalitiesToCheck,
-                study,
-              });
-              if (isValidMode === null) {
-                // Hide this as a computed result.
-                return null;
-              }
-
-              // TODO: Modes need a default/target route? We mostly support a single one for now.
-              // We should also be using the route path, but currently are not
-              // mode.routeName
-              // mode.routes[x].path
-              // Don't specify default data source, and it should just be picked up... (this may not currently be the case)
-              // How do we know which params to pass? Today, it's just StudyInstanceUIDs and configUrl if exists
-              const query = new URLSearchParams();
-              if (filterValues.configUrl) {
-                query.append('configUrl', filterValues.configUrl);
-              }
-              query.append('StudyInstanceUIDs', studyInstanceUid);
-              preserveQueryParameters(query);
-
-              return (
-                mode.displayName && (
-                  <Link
-                    className={isValidMode ? '' : 'cursor-not-allowed'}
-                    key={i}
-                    to={`${mode.routeName}${dataPath || ''}?${query.toString()}`}
-                    onClick={event => {
-                      // In case any event bubbles up for an invalid mode, prevent the navigation.
-                      // For example, the event bubbles up when the icon embedded in the disabled button is clicked.
-                      if (!isValidMode) {
-                        event.preventDefault();
-                      }
-                    }}
-                    // to={`${mode.routeName}/dicomweb?StudyInstanceUIDs=${studyInstanceUid}`}
-                  >
-                    {/* TODO revisit the completely rounded style of buttons used for launching a mode from the worklist later */}
-                    <Button
-                      type={ButtonEnums.type.primary}
-                      size={ButtonEnums.size.smallTall}
-                      disabled={!isValidMode}
-                      startIconTooltip={
-                        !isValidMode ? (
-                          <div className="font-inter flex w-[206px] whitespace-normal text-left text-xs font-normal text-white">
-                            {invalidModeDescription}
-                          </div>
-                        ) : null
-                      }
-                      startIcon={
-                        isValidMode ? (
-                          <Icons.LaunchArrow className="!h-[20px] !w-[20px] text-black" />
-                        ) : (
-                          <Icons.LaunchInfo className="!h-[20px] !w-[20px] text-black" />
-                        )
-                      }
-                      onClick={() => {}}
-                      dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
-                      className={!isValidMode && 'bg-[#222d44]'}
-                    >
-                      {mode.displayName}
-                    </Button>
-                  </Link>
-                )
-              );
-            })}
-          </div>
-        </StudyListExpandedRow>
-      ),
-      onClickRow: () =>
-        setExpandedRows(s => (isExpanded ? s.filter(n => rowKey !== n) : [...s, rowKey])),
-      isExpanded,
-    };
-  });
+  // In cases view, we don't slice because we're showing hierarchical data
+  // In studies view, we slice for pagination
+  const paginatedTableData = viewMode === 'cases'
+    ? tableDataSource
+    : tableDataSource.slice(offset, offsetAndTake);
 
   const hasStudies = numOfStudies > 0;
 
@@ -1011,7 +1459,7 @@ function WorkList({
         isReturnEnabled={false}
         WhiteLabeling={appConfig.whiteLabeling}
         showPatientInfo={PatientInfoVisibility.DISABLED}
-        Secondary={<WorkListCaseSelector servicesManager={servicesManager} />}
+        Secondary={<WorkListCaseSelector servicesManager={servicesManager} viewMode={viewMode} setViewMode={setViewMode} cases={cases} loadingCases={loadingCases} />}
       />
       <ApiConfigPanel servicesManager={servicesManager} />
       <Onboarding />
@@ -1061,7 +1509,7 @@ function WorkList({
           {hasStudies ? (
             <div className="flex grow flex-col">
               <StudyListTable
-                tableDataSource={tableDataSource.slice(offset, offsetAndTake)}
+                tableDataSource={paginatedTableData}
                 numOfStudies={numOfStudies}
                 querying={querying}
                 filtersMeta={filtersMeta}
