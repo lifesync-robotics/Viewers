@@ -5,6 +5,7 @@ import PanelSegmentation from './panels/PanelSegmentation';
 import ActiveViewportWindowLevel from './components/ActiveViewportWindowLevel';
 import PanelMeasurement from './panels/PanelMeasurement';
 import ViewportStatePanel from './viewportStatePanel';
+import ScrewManagementPanel from './ScrewManagementPanel';
 
 const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: withAppTypes) => {
   const wrappedPanelSegmentation = ({ configuration }) => {
@@ -89,13 +90,27 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
       label: 'Segmentation',
       component: wrappedPanelSegmentationWithTools,
     },
-    // ✅ FIXED: Your viewport state panel
+    // Viewport state panel (legacy)
     {
       name: 'viewport-state',
       label: 'Viewport States',
       iconName: 'icon-panel-seg',
       component: (props) => (
         <ViewportStatePanel
+          servicesManager={servicesManager}
+          commandsManager={commandsManager}
+          extensionManager={extensionManager}
+          {...props}
+        />
+      ),
+    },
+    // Screw management panel (new)
+    {
+      name: 'screw-management',
+      label: 'Screw Management',
+      iconName: 'tool-more-menu',
+      component: (props) => (
+        <ScrewManagementPanel
           servicesManager={servicesManager}
           commandsManager={commandsManager}
           extensionManager={extensionManager}

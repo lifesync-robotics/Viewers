@@ -242,7 +242,7 @@ class ViewportStateService {
     console.log(`✅ Restored ${restoredCount}/${snapshot.viewports.length} viewports`);
 
     // Query and load model based on radius and length
-    await this._queryAndLoadModel(snapshot.radius, snapshot.length, snapshot.transform);
+    await this.queryAndLoadModel(snapshot.radius, snapshot.length, snapshot.transform);
 
     console.log('═══════════════════════════════════════════════════════');
     console.log('✅ [ViewportStateService] SNAPSHOT RESTORATION COMPLETE');
@@ -253,8 +253,9 @@ class ViewportStateService {
 
   /**
    * Query model server for a model with specific radius and length, then load it
+   * This is a public method that can be called from external components
    */
-  private async _queryAndLoadModel(radius: number, length: number, transform?: number[] | number[][]): Promise<void> {
+  public async queryAndLoadModel(radius: number, length: number, transform?: number[] | number[][]): Promise<void> {
     console.log('═══════════════════════════════════════════════════════');
     console.log('🔍 [ViewportStateService] QUERYING MODEL SERVER');
     console.log('═══════════════════════════════════════════════════════');
@@ -402,15 +403,16 @@ class ViewportStateService {
             console.log(`   Transform matrix (4x4 flattened, row-major):`, flattenedTransform);
 
             try {
-              // Apply the transform to the loaded model
+              // Apply the transform to the loaded model (with length offset)
               const transformResult = await modelStateService.setModelTransform(
                 loadedModel.metadata.id,
-                flattenedTransform
+                flattenedTransform,
+                length  // Pass length to offset model backward along coronal direction
               );
 
               if (transformResult) {
                 console.log(`✅ Transform applied successfully to model`);
-                console.log(`   Model positioned according to screw placement`);
+                console.log(`   Model positioned according to screw placement (offset by length/2)`);
               } else {
                 console.warn(`⚠️ Transform application returned null/false`);
               }
@@ -745,15 +747,15 @@ class ViewportStateService {
   // Get crosshairs tool center for all MPR viewports
   getCrosshairsToolCenter(): Record<string, { center: number[] | null; isActive: boolean }> {
     try {
-      const crosshairData = crosshairsHandler.getAllMPRCrosshairCenters();
+      const crosshairCenters = crosshairsHandler.getAllMPRCrosshairCenters();
 
-      // Convert to the expected format
+      // Convert to the expected format (adding isActive based on whether center exists)
       const result: Record<string, { center: number[] | null; isActive: boolean }> = {};
 
-      for (const [viewportId, data] of Object.entries(crosshairData)) {
+      for (const [viewportId, center] of Object.entries(crosshairCenters)) {
         result[viewportId] = {
-          center: data.center,
-          isActive: data.isActive,
+          center: center,
+          isActive: !!center, // isActive is true if center exists
         };
       }
 

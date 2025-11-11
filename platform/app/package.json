@@ -108,6 +108,7 @@
   },
   "devDependencies": {
     "@babel/plugin-transform-private-methods": "^7.27.1",
+    "@kitware/vtk.js": "^30.5.3",
     "@pmmmwh/react-refresh-webpack-plugin": "0.5.17",
     "@types/node": "^20.12.12",
     "clean-webpack-plugin": "4.0.0",
@@ -119,6 +120,7 @@
     "extract-css-chunks-webpack-plugin": "4.10.0",
     "html-webpack-plugin": "5.6.3",
     "identity-obj-proxy": "3.0.x",
+    "jsdom": "^24.0.0",
     "mini-css-extract-plugin": "2.9.2",
     "multer": "^1.4.5-lts.1",
     "shx": "^0.3.4",

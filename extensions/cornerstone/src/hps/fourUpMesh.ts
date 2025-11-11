@@ -1,5 +1,6 @@
 import { HYDRATE_SEG_SYNC_GROUP, VOI_SYNC_GROUP } from './mpr';
 import i18n from 'i18next';
+
 export const fourUpMesh = {
   id: 'fourUpMesh',
   locked: true,
@@ -12,6 +13,20 @@ export const fourUpMesh = {
   editableBy: {},
   protocolMatchingRules: [],
   imageLoadStrategy: 'interleaveCenter',
+  callbacks: {
+    onProtocolEnter: [
+      {
+        commandName: 'initializePlaneCutters',
+        context: 'CORNERSTONE',
+      },
+    ],
+    onProtocolExit: [
+      {
+        commandName: 'disablePlaneCutters',
+        context: 'CORNERSTONE',
+      },
+    ],
+  },
   displaySetSelectors: {
     activeDisplaySet: {
       seriesMatchingRules: [
