@@ -654,6 +654,110 @@ class CaseService extends PubSubService {
   private _broadcastEvent(eventName: string, data: any): void {
     this.broadcastEvent(eventName, data);
   }
+
+  // ============================================================================
+  // SERIES MANAGEMENT
+  // ============================================================================
+
+  /**
+   * Get all series for a study with enrollment status
+   */
+  public async getSeriesForStudy(caseId: string, studyInstanceUID: string): Promise<any> {
+    try {
+      const response = await fetch(
+        `${this.apiUrl}/api/cases/${caseId}/studies/${studyInstanceUID}/series`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to get series: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error('❌ Failed to get series for study:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Toggle series enrollment
+   */
+  public async toggleSeriesEnrollment(
+    caseId: string,
+    studyInstanceUID: string,
+    seriesInstanceUID: string,
+    isEnrolled: boolean
+  ): Promise<any> {
+    try {
+      const response = await fetch(
+        `${this.apiUrl}/api/cases/${caseId}/studies/${studyInstanceUID}/series/${seriesInstanceUID}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ isEnrolled }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to toggle series enrollment: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // Reload active case if this is it
+      if (this.activeCaseId === caseId) {
+        await this.loadActiveCase();
+      }
+
+      console.log(`✅ Series ${isEnrolled ? 'enrolled' : 'unenrolled'}: ${seriesInstanceUID}`);
+      return data;
+    } catch (error) {
+      console.error('❌ Failed to toggle series enrollment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk update series enrollment
+   */
+  public async bulkUpdateSeries(
+    caseId: string,
+    studyInstanceUID: string,
+    updates: Array<{ seriesInstanceUID: string; isEnrolled: boolean }>
+  ): Promise<any> {
+    try {
+      const response = await fetch(
+        `${this.apiUrl}/api/cases/${caseId}/studies/${studyInstanceUID}/series`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ updates }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to bulk update series: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // Reload active case if this is it
+      if (this.activeCaseId === caseId) {
+        await this.loadActiveCase();
+      }
+
+      console.log(`✅ Bulk updated ${updates.length} series`);
+      return data;
+    } catch (error) {
+      console.error('❌ Failed to bulk update series:', error);
+      throw error;
+    }
+  }
 }
 
 export default CaseService;

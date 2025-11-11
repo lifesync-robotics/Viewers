@@ -508,7 +508,7 @@ function WorkList({
   const caseService = servicesManager?.services?.caseService;
 
   // ~ Hierarchical Worklist State
-  const [viewMode, setViewMode] = useState<'cases' | 'studies'>('studies'); // Toggle between case-centric and study-centric views (default to studies)
+  const [viewMode, setViewMode] = useState<'cases' | 'studies'>('cases'); // Toggle between case-centric and study-centric views (default to cases)
   const [cases, setCases] = useState([]);
   const [expandedCases, setExpandedCases] = useState([]);
   const [caseStudies, setCaseStudies] = useState(new Map()); // caseId -> studies
@@ -590,6 +590,7 @@ function WorkList({
   // ~ Rows & Studies
   const [expandedRows, setExpandedRows] = useState([]);
   const [studiesWithSeriesData, setStudiesWithSeriesData] = useState([]);
+  const [seriesDataForCases, setSeriesDataForCases] = useState(new Map()); // Map<studyUID, seriesData>
   const numOfStudies = studiesTotal;
   const querying = useMemo(() => {
     return isLoadingData || expandedRows.length > 0;
@@ -746,6 +747,69 @@ function WorkList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedFilterValues]);
 
+  // Helper function to load series data for a study
+  const loadSeriesForStudy = async (studyUID) => {
+    if (!activeCaseId || !caseService) {
+      return;
+    }
+
+    try {
+      const data = await caseService.getSeriesForStudy(activeCaseId, studyUID);
+      setSeriesDataForCases(prev => {
+        const newMap = new Map(prev);
+        newMap.set(studyUID, data);
+        return newMap;
+      });
+    } catch (error) {
+      console.error('Failed to load series for study:', error);
+    }
+  };
+
+  // Helper function to toggle series enrollment
+  const toggleSeriesEnrollment = async (studyUID, seriesUID, isEnrolled) => {
+    if (!activeCaseId || !caseService) {
+      return;
+    }
+
+    try {
+      await caseService.toggleSeriesEnrollment(activeCaseId, studyUID, seriesUID, isEnrolled);
+      // Reload series data
+      await loadSeriesForStudy(studyUID);
+    } catch (error) {
+      console.error('Failed to toggle series enrollment:', error);
+    }
+  };
+
+  // Helper function to remove study from case
+  const removeStudyFromCase = async (studyUID) => {
+    if (!activeCaseId || !caseService) {
+      return;
+    }
+
+    // Confirm with user
+    const confirmed = window.confirm(
+      'Are you sure you want to remove this study from the case?\n\n' +
+      'The study will remain in Orthanc but will no longer be associated with this case.'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await caseService.removeStudy(activeCaseId, studyUID);
+      console.log(`✅ Study ${studyUID} removed from case`);
+
+      // Reload the active case to refresh the UI
+      if (caseService.loadActiveCase) {
+        await caseService.loadActiveCase();
+      }
+    } catch (error) {
+      console.error('Failed to remove study from case:', error);
+      alert('Failed to remove study from case. Please try again.');
+    }
+  };
+
   // Query for series information
   useEffect(() => {
     const fetchSeries = async studyInstanceUid => {
@@ -805,16 +869,20 @@ function WorkList({
             {
               key: 'caseId',
               content: (
-                <div className="flex items-center gap-2">
-                  <Icons.Database className="h-4 w-4 text-blue-400" />
-                  <span className="font-medium text-blue-300">{caseItem.caseId}</span>
+                <div className="flex items-center gap-2 bg-blue-900/20 px-2 py-1 rounded">
+                  <Icons.Database className="h-5 w-5 text-blue-400" />
+                  <span className="font-bold text-blue-200 text-base">📁 {caseItem.caseId}</span>
                 </div>
               ),
               gridCol: 4,
             },
             {
               key: 'patientName',
-              content: caseItem.patientName || 'Unknown Patient',
+              content: (
+                <span className="font-semibold text-white">
+                  {caseItem.patientName || 'Unknown Patient'}
+                </span>
+              ),
               gridCol: 4,
             },
             {
@@ -850,6 +918,7 @@ function WorkList({
               gridCol: 2,
             },
           ],
+          expandedContent: null, // Case rows don't have expanded content
           onClickRow: () => handleCaseExpansion(caseItem.caseId, !isCaseExpanded),
           isExpanded: isCaseExpanded,
           isCaseRow: true,
@@ -867,7 +936,7 @@ function WorkList({
             const fullStudy = filteredStudies.find(s => s.studyInstanceUid === study.studyInstanceUID);
 
             if (!fullStudy) {
-              // Study not loaded yet - show placeholder
+              // Study not loaded yet - show placeholder with remove button
               rows.push({
                 dataCY: `studyPlaceholder-${study.studyInstanceUID}`,
                 clickableCY: study.studyInstanceUID,
@@ -881,7 +950,7 @@ function WorkList({
                     key: 'studyInfo',
                     content: (
                       <div className="text-gray-400">
-                        <span className="text-sm">{study.description || 'Study not loaded'}</span>
+                        <span className="text-sm">{study.description || 'Study not in Orthanc'}</span>
                         <br />
                         <span className="text-xs text-gray-500">StudyUID: {study.studyInstanceUID.substring(0, 30)}...</span>
                       </div>
@@ -896,9 +965,38 @@ function WorkList({
                   {
                     key: 'status',
                     content: <span className="text-xs text-yellow-500">Not in worklist</span>,
-                    gridCol: 3,
+                    gridCol: 2,
+                  },
+                  {
+                    key: 'removeButton',
+                    content: (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm('Remove this study from the case?\n\nThis study is not in Orthanc worklist.')) {
+                            if (caseService) {
+                              caseService.removeStudy(caseItem.caseId, study.studyInstanceUID)
+                                .then(() => {
+                                  console.log(`✅ Study removed from case`);
+                                  window.location.reload();
+                                })
+                                .catch(err => {
+                                  console.error('Failed to remove study:', err);
+                                  alert('Failed to remove study');
+                                });
+                            }
+                          }
+                        }}
+                        className="hover:bg-red-900/50 rounded p-1 transition-colors"
+                        title="Remove from Case"
+                      >
+                        <Icons.Close className="h-4 w-4 text-red-400 hover:text-red-300" />
+                      </button>
+                    ),
+                    gridCol: 1,
                   },
                 ],
+                expandedContent: null, // Placeholder rows don't expand
                 onClickRow: () => {},
                 isExpanded: false,
                 isStudyRow: true,
@@ -1016,6 +1114,34 @@ function WorkList({
                     title: (instances || 0).toString(),
                     gridCol: 2,
                   },
+                  {
+                    key: 'removeButton',
+                    content: (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent row expansion
+                          if (window.confirm('Remove this study from the case?\n\nThe study will remain in Orthanc.')) {
+                            if (caseService) {
+                              caseService.removeStudy(caseItem.caseId, studyInstanceUid)
+                                .then(() => {
+                                  console.log(`✅ Study removed from case`);
+                                  window.location.reload();
+                                })
+                                .catch(err => {
+                                  console.error('Failed to remove study:', err);
+                                  alert('Failed to remove study');
+                                });
+                            }
+                          }
+                        }}
+                        className="hover:bg-red-900/50 rounded p-1 transition-colors"
+                        title="Remove from Case"
+                      >
+                        <Icons.Close className="h-4 w-4 text-red-400 hover:text-red-300" />
+                      </button>
+                    ),
+                    gridCol: 1,
+                  },
                 ],
                 expandedContent: (
                   <StudyListExpandedRow
@@ -1038,6 +1164,55 @@ function WorkList({
                         : []
                     }
                   >
+                    {/* Series Management - Compact Version */}
+                    {(() => {
+                      // Get caseStudy from caseStudies map (fetched from API)
+                      const studiesInCase = caseStudies.get(caseItem.caseId) || [];
+                      const caseStudy = studiesInCase.find(s => s.studyInstanceUID === studyInstanceUid);
+
+                      return caseStudy && caseStudy.series && caseStudy.series.length > 0 && (
+                        <div className="mb-3 rounded border border-gray-700 bg-gray-900/30 p-2">
+                          <div className="mb-1 flex items-center justify-between">
+                            <h5 className="text-xs font-semibold text-gray-300">
+                              Series: {caseStudy.series.filter(s => s.isEnrolled).length}/{caseStudy.series.length} enrolled
+                            </h5>
+                          </div>
+                          <div className="space-y-1">
+                            {caseStudy.series.map(series => (
+                              <div
+                                key={series.seriesInstanceUID}
+                                className="flex items-center gap-2 rounded bg-gray-800/40 px-2 py-1 text-xs"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={series.isEnrolled}
+                                  onChange={async (e) => {
+                                    if (caseService) {
+                                      try {
+                                        await caseService.toggleSeriesEnrollment(
+                                          caseItem.caseId,
+                                          studyInstanceUid,
+                                          series.seriesInstanceUID,
+                                          e.target.checked
+                                        );
+                                        window.location.reload();
+                                      } catch (err) {
+                                        console.error('Failed to toggle series:', err);
+                                      }
+                                    }
+                                  }}
+                                  className="h-3 w-3"
+                                />
+                                <span className="text-blue-400">#{series.seriesNumber}</span>
+                                <span className="text-gray-400">{series.modality}</span>
+                                <span className="flex-1 text-white">{series.description || '(no description)'}</span>
+                                <span className="text-gray-500">{series.instanceCount} img</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <div className="flex flex-row gap-2">
                       {(appConfig.groupEnabledModesFirst
                         ? appConfig.loadedModes.sort((a, b) => {
