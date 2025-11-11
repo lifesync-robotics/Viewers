@@ -17,9 +17,6 @@ export interface CrosshairData {
  */
 interface CrosshairGlobalCache {
   center: [number, number, number] | null;
-  isActive: boolean;
-  toolGroup: any;
-  crosshairsTool: any;
   lastChecked: number;
 }
 
@@ -31,45 +28,34 @@ interface CrosshairGlobalCache {
  * - No per-viewport caching needed since all viewports share the same point
  * - Provides simple API to get crosshair center
  * - Handles both array [x,y,z] and object {x,y,z} formats
- * - Auto-refreshes cache when stale
+ * - Auto-refreshes cache when stale (50ms cache for 20Hz refresh rate)
  */
 class CrosshairsHandler {
   private globalCache: CrosshairGlobalCache | null = null;
-  private readonly CACHE_TTL = 5000; // 5 seconds cache validity
+  private readonly CACHE_TTL = 50; // 50ms cache validity (20Hz refresh rate)
 
   /**
    * Get the shared crosshair center (world coordinate)
    * Since crosshairs use a single shared point across all viewports,
    * this returns the same center regardless of which viewport you query
+   * Returns only the center point for efficiency
    */
-  public getCrosshairCenter(viewportId?: string): CrosshairData {
+  public getCrosshairCenter(): [number, number, number] | null {
     try {
       // Check if we have valid cached data
       const now = Date.now();
       if (this.globalCache && (now - this.globalCache.lastChecked) < this.CACHE_TTL) {
-        return {
-          center: this.globalCache.center,
-          isActive: this.globalCache.isActive,
-          viewportId,
-        };
+        return this.globalCache.center;
       }
 
       // Cache is stale or doesn't exist - fetch fresh data
       this._refreshGlobalCache();
 
-      return {
-        center: this.globalCache?.center || null,
-        isActive: this.globalCache?.isActive || false,
-        viewportId,
-      };
+      return this.globalCache?.center || null;
 
     } catch (error) {
       console.warn(`⚠️ [CrosshairsHandler] Error getting crosshair center:`, error.message);
-      return {
-        center: null,
-        isActive: false,
-        viewportId,
-      };
+      return null;
     }
   }
 
@@ -78,18 +64,15 @@ class CrosshairsHandler {
    * Note: Since all viewports share the same world coordinate,
    * this returns the same center for each viewport
    */
-  public getCrosshairCenters(viewportIds: string[]): Record<string, CrosshairData> {
-    const result: Record<string, CrosshairData> = {};
+  public getCrosshairCenters(viewportIds: string[]): Record<string, [number, number, number] | null> {
+    const result: Record<string, [number, number, number] | null> = {};
 
     // Get the shared center once
     const sharedCenter = this.getCrosshairCenter();
 
     // Return same center for all viewports
     for (const viewportId of viewportIds) {
-      result[viewportId] = {
-        ...sharedCenter,
-        viewportId,
-      };
+      result[viewportId] = sharedCenter;
     }
 
     return result;
@@ -100,9 +83,9 @@ class CrosshairsHandler {
    * Note: Since all viewports share the same world coordinate,
    * this returns the same center for each MPR viewport
    */
-  public getAllMPRCrosshairCenters(): Record<string, CrosshairData> {
+  public getAllMPRCrosshairCenters(): Record<string, [number, number, number] | null> {
     const MPR_VIEWPORT_IDS = ['mpr-axial', 'mpr-sagittal', 'mpr-coronal'];
-    const result: Record<string, CrosshairData> = {};
+    const result: Record<string, [number, number, number] | null> = {};
 
     // Get the shared center once
     const sharedCenter = this.getCrosshairCenter();
@@ -118,10 +101,7 @@ class CrosshairsHandler {
         const isMPR = MPR_VIEWPORT_IDS.some(id => viewport.id.includes(id));
 
         if (isMPR) {
-          result[viewport.id] = {
-            ...sharedCenter,
-            viewportId: viewport.id,
-          };
+          result[viewport.id] = sharedCenter;
         }
       }
     }
@@ -137,20 +117,17 @@ class CrosshairsHandler {
   }
 
   /**
-   * Refresh the global cache by finding any viewport with crosshairs
+   * Refresh the global cache by finding the first viewport with crosshairs
    * and extracting the shared world coordinate
+   * Optimized to stop at first valid crosshair tool found
    * @private
    */
   private _refreshGlobalCache(): void {
     try {
       const renderingEngines = getRenderingEngines();
 
-      // Track all tool groups and crosshair tools found (for debugging)
-      let toolsFound = 0;
-      let activeTools = 0;
-      let annotationsFound = 0;
-
-      // Search through all rendering engines and viewports to find crosshairs tool
+      // Search through rendering engines and viewports to find first crosshairs tool
+      // Since crosshairs are the same across all viewports, we only need the first one
       for (const engine of renderingEngines) {
         const viewports = engine.getViewports();
 
@@ -178,44 +155,37 @@ class CrosshairsHandler {
               continue;
             }
 
-            toolsFound++;
-
-            // Check if crosshairs tool is active
+            // Found a crosshairs tool! Check if it's active
             const isActive = crosshairsTool.mode === 'Active';
 
-            if (isActive) {
-              activeTools++;
-            }
-
             if (!isActive) {
-              // Tool exists but not active - but keep searching other viewports
-              // Don't return yet, there might be an active one in another viewport
-              continue;
+              // Tool exists but not active - since all viewports share same tool state,
+              // we can stop here and cache the inactive state
+              this.globalCache = {
+                center: null,
+                lastChecked: Date.now(),
+              };
+              console.warn(`⚠️ [CrosshairsHandler] Crosshairs tool found but not active`);
+              return;
             }
 
-            // Get annotations for the crosshairs tool
+            // Tool is active, get annotations
             const annotations = annotation.state.getAnnotations('Crosshairs', viewport.element);
-
-            if (annotations && annotations.length > 0) {
-              annotationsFound++;
-            }
 
             // Extract center from the first annotation
             const center = this._extractCenterFromAnnotations(annotations);
 
-            if (center) {
-              // Found valid center! Cache it and return
-              this.globalCache = {
-                center,
-                isActive: true,
-                toolGroup,
-                crosshairsTool,
-                lastChecked: Date.now(),
-              };
+            // Cache the result (even if center is null) and return
+            this.globalCache = {
+              center,
+              lastChecked: Date.now(),
+            };
 
-              console.log(`✅ [CrosshairsHandler] Found active crosshairs in ${viewport.id}`);
-              return;
+            // Only log if we don't have a valid center (potential issue)
+            if (!center) {
+              console.warn(`⚠️ [CrosshairsHandler] Crosshairs tool active but no center found in ${viewport.id}`);
             }
+            return;
 
           } catch (e) {
             // Error with this viewport, try next one
@@ -224,49 +194,17 @@ class CrosshairsHandler {
         }
       }
 
-      // If we get here, we didn't find a valid crosshair center
-      console.log(`📊 [CrosshairsHandler] Search complete: ${toolsFound} tools found, ${activeTools} active, ${annotationsFound} with annotations`);
-
-      // Decide on cache state based on what we found
-      if (activeTools > 0) {
-        // Tool is active but no center found
-        this.globalCache = {
-          center: null,
-          isActive: true,  // Tool is active, just no position yet
-          toolGroup: null,
-          crosshairsTool: null,
-          lastChecked: Date.now(),
-        };
-        console.warn(`⚠️ [CrosshairsHandler] Crosshairs tool active but no center found`);
-      } else if (toolsFound > 0) {
-        // Tool exists but not active
-        this.globalCache = {
-          center: null,
-          isActive: false,
-          toolGroup: null,
-          crosshairsTool: null,
-          lastChecked: Date.now(),
-        };
-        console.warn(`⚠️ [CrosshairsHandler] Crosshairs tool found but not active`);
-      } else {
-        // No tool found at all
-        this.globalCache = {
-          center: null,
-          isActive: false,
-          toolGroup: null,
-          crosshairsTool: null,
-          lastChecked: Date.now(),
-        };
-        console.warn(`⚠️ [CrosshairsHandler] No Crosshairs tool found in any viewport`);
-      }
+      // If we get here, no crosshairs tool was found in any viewport
+      this.globalCache = {
+        center: null,
+        lastChecked: Date.now(),
+      };
+      console.warn(`⚠️ [CrosshairsHandler] No Crosshairs tool found in any viewport`);
 
     } catch (error) {
       console.warn(`⚠️ [CrosshairsHandler] Error refreshing global cache:`, error.message);
       this.globalCache = {
         center: null,
-        isActive: false,
-        toolGroup: null,
-        crosshairsTool: null,
         lastChecked: Date.now(),
       };
     }
@@ -309,9 +247,8 @@ class CrosshairsHandler {
       try {
         const rawPoint = getPath();
         if (rawPoint) {
-          const normalizedPoint = this._normalizePoint(rawPoint);
+          const normalizedPoint = this._normalizePoint(rawPoint, false); // Don't log warnings for each attempt
           if (normalizedPoint) {
-            console.log(`✅ [CrosshairsHandler] Found center in annotation data`);
             return normalizedPoint;
           }
         }
@@ -336,9 +273,11 @@ class CrosshairsHandler {
   /**
    * Normalize point from either array [x,y,z] or object {x,y,z} format
    * Validates that coordinates are actual numbers
+   * @param point - The point to normalize
+   * @param logWarnings - Whether to log validation warnings (default: false)
    * @private
    */
-  private _normalizePoint(point: any): [number, number, number] | null {
+  private _normalizePoint(point: any, logWarnings: boolean = false): [number, number, number] | null {
     if (!point) {
       return null;
     }
@@ -363,7 +302,9 @@ class CrosshairsHandler {
       ) {
         return coords;
       } else {
-        console.warn(`⚠️ [CrosshairsHandler] Point has invalid number values:`, coords);
+        if (logWarnings) {
+          console.warn(`⚠️ [CrosshairsHandler] Point has invalid number values:`, coords);
+        }
         return null;
       }
     }

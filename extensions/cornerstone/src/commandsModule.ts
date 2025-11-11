@@ -2687,6 +2687,64 @@ function commandsModule({
         deleting,
       });
     },
+    /**
+     * Initialize plane cutters for fourUpMesh layout
+     */
+    initializePlaneCutters: async () => {
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔪 [initializePlaneCutters] Command triggered');
+      console.log('═══════════════════════════════════════════════════════');
+
+      const { planeCutterService } = servicesManager.services;
+
+      if (!planeCutterService) {
+        console.error('❌ [initializePlaneCutters] PlaneCutterService not available');
+        console.error('   Available services:', Object.keys(servicesManager.services));
+        return;
+      }
+
+      console.log('✅ [initializePlaneCutters] PlaneCutterService found');
+
+      // Wait for viewports to be ready before initializing plane cutters
+      // This prevents race conditions where plane cutters are created before viewports exist
+      const initializeWithRetry = async (maxRetries = 5, delayMs = 200) => {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          console.log(`🔄 [initializePlaneCutters] Initialization attempt ${attempt}/${maxRetries}`);
+
+          const success = await planeCutterService.initialize();
+
+          if (success) {
+            // Enable plane cutters
+            planeCutterService.enable();
+            console.log('✅ [initializePlaneCutters] Plane cutters initialized and enabled');
+            console.log('═══════════════════════════════════════════════════════');
+            return;
+          }
+
+          if (attempt < maxRetries) {
+            console.log(`⏳ [initializePlaneCutters] Viewports not ready, waiting ${delayMs}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          }
+        }
+
+        console.warn('⚠️ [initializePlaneCutters] Could not initialize plane cutters after multiple attempts');
+      };
+
+      // Run initialization with retry logic
+      await initializeWithRetry();
+    },
+    /**
+     * Disable plane cutters when exiting fourUpMesh layout
+     */
+    disablePlaneCutters: () => {
+      console.log('🔴 [disablePlaneCutters] Disabling plane cutters');
+
+      const { planeCutterService } = servicesManager.services;
+
+      if (planeCutterService) {
+        planeCutterService.disable();
+      }
+    },
   };
 
   const definitions = {
@@ -3048,6 +3106,16 @@ function commandsModule({
     },
     loadMeasurementsJSON: {
       commandFn: actions.loadMeasurementsJSON,
+      storeContexts: [],
+      options: {},
+    },
+    initializePlaneCutters: {
+      commandFn: actions.initializePlaneCutters,
+      storeContexts: [],
+      options: {},
+    },
+    disablePlaneCutters: {
+      commandFn: actions.disablePlaneCutters,
       storeContexts: [],
       options: {},
     },

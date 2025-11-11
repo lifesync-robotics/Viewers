@@ -48,6 +48,7 @@ import * as polySeg from '@cornerstonejs/polymorphic-segmentation';
 import CalibrationLineTool from './tools/CalibrationLineTool';
 import ImageOverlayViewerTool from './tools/ImageOverlayViewerTool';
 import FiducialMarkerTool from './tools/FiducialMarkerTool';
+import PlaneCutterTool from './tools/PlaneCutterTool';
 
 export default function initCornerstoneTools(configuration = {}) {
   CrosshairsTool.isAnnotation = false;
@@ -56,6 +57,7 @@ export default function initCornerstoneTools(configuration = {}) {
   ReferenceLinesTool.isAnnotation = false;
   AdvancedMagnifyTool.isAnnotation = false;
   PlanarFreehandContourSegmentationTool.isAnnotation = false;
+  PlaneCutterTool.isAnnotation = false;
 
   init({
     addons: {
@@ -98,6 +100,7 @@ export default function initCornerstoneTools(configuration = {}) {
   addTool(TrackballRotateTool);
   addTool(ImageOverlayViewerTool);
   addTool(AdvancedMagnifyTool);
+  addTool(PlaneCutterTool);
   addTool(UltrasoundDirectionalTool);
   addTool(UltrasoundPleuraBLineTool);
   addTool(PlanarFreehandROITool);
@@ -171,6 +174,7 @@ const toolNames = {
   LabelmapSlicePropagation: LabelmapSlicePropagationTool.toolName,
   MarkerLabelmap: MarkerLabelmapTool.toolName,
   RegionSegmentPlus: RegionSegmentPlusTool.toolName,
+  PlaneCutter: PlaneCutterTool.toolName,
 };
 
 export { toolNames };

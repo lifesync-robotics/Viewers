@@ -52,28 +52,17 @@ export default function ScrewManagementPanel({ servicesManager }) {
       crosshairsHandler.clearCache();
 
       // Get crosshair center (translation)
-      const crosshairData = crosshairsHandler.getCrosshairCenter();
+      const crosshairCenter = crosshairsHandler.getCrosshairCenter();
 
-      console.log('📋 Crosshair data received:', {
-        isActive: crosshairData.isActive,
-        hasCenter: !!crosshairData.center,
-        center: crosshairData.center,
-        viewportId: crosshairData.viewportId
-      });
+      console.log('📋 Crosshair center received:', crosshairCenter);
 
-      if (!crosshairData.isActive) {
-        console.warn('⚠️ Crosshairs tool is not active');
-        console.warn('💡 Hint: Activate the crosshairs tool from the toolbar');
-        return null;
-      }
-
-      if (!crosshairData.center) {
+      if (!crosshairCenter) {
         console.warn('⚠️ Crosshair center is not available');
-        console.warn('💡 Hint: Make sure crosshairs are positioned in the viewport');
+        console.warn('💡 Hint: Activate the crosshairs tool from the toolbar and position it');
         return null;
       }
 
-      const translation = crosshairData.center;
+      const translation = crosshairCenter;
       console.log('✅ Crosshair center (translation):', translation);
 
       // Step 2: Get rendering engine and viewports
@@ -86,6 +75,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // Step 3: Find axial and sagittal viewports
       let axialViewport = null;
       let sagittalViewport = null;
+      let coronalViewport = null;
 
       const viewports = renderingEngine.getViewports();
       for (const vp of viewports) {
@@ -96,11 +86,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
         } else if (vpId.includes('sagittal')) {
           sagittalViewport = vp;
           console.log(`✅ Found sagittal viewport: ${vp.id}`);
+        } else if (vpId.includes('coronal')) {
+          coronalViewport = vp;
+          console.log(`✅ Found coronal viewport: ${vp.id}`);
         }
       }
 
-      if (!axialViewport || !sagittalViewport) {
-        console.error('❌ Could not find required viewports (axial and sagittal)');
+      if (!axialViewport || !sagittalViewport || !coronalViewport) {
+        console.error('❌ Could not find required viewports (axial, sagittal, and coronal)');
         console.log('Available viewports:', viewports.map(vp => vp.id));
         return null;
       }
@@ -108,23 +101,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // Step 4: Get camera data from viewports
       const axialCamera = axialViewport.getCamera();
       const sagittalCamera = sagittalViewport.getCamera();
+      const coronalCamera = coronalViewport.getCamera();
 
-      const axialNormal = axialCamera.viewPlaneNormal;      // Column 0
-      const axialUp = [-axialCamera.viewUp[0], -axialCamera.viewUp[1], -axialCamera.viewUp[2]];                    // Column 1
+      const axialNormal = axialCamera.viewPlaneNormal;
+      const coronalNormal = [-coronalCamera.viewPlaneNormal[0], -coronalCamera.viewPlaneNormal[1], -coronalCamera.viewPlaneNormal[2]];
       const sagittalNormal = sagittalCamera.viewPlaneNormal;
 
-      // Negate sagittal normal (flip direction) - Column 2
-      // const sagittalNormal = [
-      //   -sagittalNormalRaw[0],
-      //   -sagittalNormalRaw[1],
-      //   -sagittalNormalRaw[2]
-      // ];
+
 
       console.log('───────────────────────────────────────────────────────');
       console.log('📐 Camera vectors:');
       console.log('  Axial Normal (col 0):', axialNormal);
-      console.log('  Axial Up (col 1):', axialUp);
-      console.log('  Sagittal Normal (col 2, negated):', sagittalNormal);
+      console.log('  Coronal Normal (col 1, negated):', coronalNormal);
+      console.log('  Sagittal Normal (col 2):', sagittalNormal);
 
       // Step 5: Construct 4x4 transform matrix in row-major order
       // Row-major layout for a 4x4 matrix:
@@ -143,13 +132,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       const transform = new Float32Array([
         // Row 0: X-components of basis vectors + translation X
-        axialNormal[0], axialUp[0], sagittalNormal[0], translation[0],
+        axialNormal[0], coronalNormal[0], sagittalNormal[0], translation[0],
 
         // Row 1: Y-components of basis vectors + translation Y
-        axialNormal[1], axialUp[1], sagittalNormal[1], translation[1],
+        axialNormal[1], coronalNormal[1], sagittalNormal[1], translation[1],
 
         // Row 2: Z-components of basis vectors + translation Z
-        axialNormal[2], axialUp[2], sagittalNormal[2], translation[2],
+        axialNormal[2], coronalNormal[2], sagittalNormal[2], translation[2],
 
         // Row 3: Homogeneous coordinates
         0, 0, 0, 1
@@ -172,16 +161,21 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
-  const saveScrew = () => {
+  const saveScrew = async () => {
     try {
       const name = screwName.trim() || `Screw ${new Date().toLocaleString()}`;
       const radiusValue = parseFloat(radius) || 0;
       const lengthValue = parseFloat(length) || 0;
 
-      // Validate input
+      // Validate input - use defaults if invalid
+      let finalRadiusValue = radiusValue;
+      let finalLengthValue = lengthValue;
+
       if (radiusValue <= 0 || lengthValue <= 0) {
-        alert('⚠️ Please enter valid radius and length values (must be greater than 0)');
-        return;
+        console.warn('⚠️ Please enter valid radius and length values (must be greater than 0)');
+        finalRadiusValue = 3.5;
+        finalLengthValue = 40;
+        console.log('Using default radius and length values: 3.5mm and 40mm');
       }
 
       // Construct screw transform from viewport cameras and crosshair center
@@ -189,17 +183,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       if (!transformMatrix) {
         console.warn('⚠️ Could not construct transform matrix - crosshairs may not be active');
-        const proceed = confirm(
-          '⚠️ Warning: Transform matrix could not be constructed.\n\n' +
-          'This usually means:\n' +
-          '- Crosshairs tool is not active\n' +
-          '- Required viewports (axial/sagittal) not found\n\n' +
-          'Do you want to save without transform data?'
-        );
-
-        if (!proceed) {
-          return;
-        }
+        console.warn('This usually means:');
+        console.warn('- Crosshairs tool is not active');
+        console.warn('- Required viewports (axial/sagittal) not found');
+        console.warn('Proceeding to save without transform data');
       }
 
       // Convert Float32Array to regular array for JSON serialization
@@ -211,19 +198,52 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log('⚠️ Saving screw without transform data');
       }
 
-      // Save screw with radius, length, and transform
-      const screw = viewportStateService.saveSnapshot(name, radiusValue, lengthValue, transform);
+      // ═════════════════════════════════════════════════════════
+      // STEP 1: Load and position the model BEFORE saving
+      // This ensures the model is visible and matches what will be restored
+      // ═════════════════════════════════════════════════════════
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔧 [ScrewManagement] LOADING MODEL BEFORE SAVE');
+      console.log('═══════════════════════════════════════════════════════');
+
+      // Check if we've reached the maximum number of models
+      const existingModels = modelStateService.getAllModels();
+      const maxModels = viewportStateService.getMaxSnapshots();
+
+      if (existingModels.length >= maxModels) {
+        console.warn(`⚠️ Maximum number of models (${maxModels}) reached. Cannot add more screws.`);
+        alert(`Maximum of ${maxModels} screws reached. Please delete some screws before adding more.`);
+        return;
+      }
+
+      console.log(`📊 Current models: ${existingModels.length}/${maxModels}`);
+
+      // Query and load the model (same as restore does)
+      // Models will coexist - no need to clear existing ones
+      try {
+        await viewportStateService.queryAndLoadModel(finalRadiusValue, finalLengthValue, transform);
+        console.log(`✅ Model loaded and positioned successfully - Total: ${modelStateService.getAllModels().length}/${maxModels}`);
+      } catch (modelError) {
+        console.warn('⚠️ Could not load model before saving:', modelError.message);
+        console.warn('⚠️ Continuing with save anyway...');
+      }
+
+      console.log('═══════════════════════════════════════════════════════');
+
+      // ═════════════════════════════════════════════════════════
+      // STEP 2: Save the screw snapshot with current viewport states
+      // ═════════════════════════════════════════════════════════
+      const screw = viewportStateService.saveSnapshot(name, finalRadiusValue, finalLengthValue, transform);
 
       setScrewName('');
       setRadius('');
       setLength('');
       loadScrews();
 
-      console.log(`✅ Saved screw: "${screw.name}" (R: ${radiusValue}mm, L: ${lengthValue}mm)`);
+      console.log(`✅ Saved screw: "${screw.name}" (R: ${finalRadiusValue}mm, L: ${finalLengthValue}mm)`);
 
     } catch (error) {
       console.error('Failed to save screw:', error);
-      alert(`❌ ${error.message}`);
     }
   };
 
@@ -231,73 +251,76 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       setIsRestoring(true);
 
-      // First, clear any existing models to avoid clutter
-      console.log('🗑️ Clearing existing models before restoring screw...');
+      // Check if we've reached the maximum number of models
       const existingModels = modelStateService.getAllModels();
-      for (const model of existingModels) {
-        modelStateService.removeModel(model.metadata.id);
+      const maxModels = viewportStateService.getMaxSnapshots();
+
+      if (existingModels.length >= maxModels) {
+        console.warn(`⚠️ Maximum number of models (${maxModels}) reached. Cannot restore more screws.`);
+        alert(`Maximum of ${maxModels} screws reached. Please delete some screws before restoring more.`);
+        setIsRestoring(false);
+        return;
       }
 
+      console.log(`🔄 Restoring screw: "${name}" (${existingModels.length + 1}/${maxModels} models)`);
+
       // Restore the screw (viewport state + loads model)
+      // Models will coexist - no need to clear existing ones
       await viewportStateService.restoreSnapshot(name);
-      console.log(`✅ Restored screw: "${name}"`);
+      console.log(`✅ Restored screw: "${name}" - Total models: ${modelStateService.getAllModels().length}/${maxModels}`);
 
     } catch (error) {
       console.error('Failed to restore screw:', error);
-      alert(`❌ ${error.message}`);
     } finally {
       setIsRestoring(false);
     }
   };
 
   const deleteScrew = (name) => {
-    if (confirm(`🗑️ Delete screw "${name}"?\n\nThis will remove the screw placement and any associated 3D model.`)) {
-      try {
-        // Get the screw data before deleting
-        const screw = viewportStateService.getSnapshot(name);
+    try {
+      // Get the screw data before deleting
+      const screw = viewportStateService.getSnapshot(name);
 
-        if (screw) {
-          // Find and remove any models that match this screw's dimensions
-          const loadedModels = modelStateService.getAllModels();
-          let modelsRemoved = 0;
+      if (screw) {
+        // Find and remove any models that match this screw's dimensions
+        const loadedModels = modelStateService.getAllModels();
+        let modelsRemoved = 0;
 
-          for (const model of loadedModels) {
-            // Check if this model matches the screw by checking its metadata or name
-            // Since models loaded for screws have specific naming patterns
-            const modelName = model.metadata.name.toLowerCase();
-            const screwRadius = screw.radius || 0;
-            const screwLength = screw.length || 0;
+        for (const model of loadedModels) {
+          // Check if this model matches the screw by checking its metadata or name
+          // Since models loaded for screws have specific naming patterns
+          const modelName = model.metadata.name.toLowerCase();
+          const screwRadius = screw.radius || 0;
+          const screwLength = screw.length || 0;
 
-            // Check if model name contains the screw dimensions
-            if (modelName.includes(`${screwRadius}`) || modelName.includes(`${screwLength}`)) {
-              console.log(`🗑️ Removing model: ${model.metadata.id} (${model.metadata.name})`);
-              modelStateService.removeModel(model.metadata.id);
-              modelsRemoved++;
-            }
+          // Check if model name contains the screw dimensions
+          if (modelName.includes(`${screwRadius}`) || modelName.includes(`${screwLength}`)) {
+            console.log(`🗑️ Removing model: ${model.metadata.id} (${model.metadata.name})`);
+            modelStateService.removeModel(model.metadata.id);
+            modelsRemoved++;
           }
-
-          if (modelsRemoved === 0) {
-            // If no models found by name matching, remove all models as fallback
-            // This ensures the UI stays clean
-            console.log('⚠️ No models found by dimension matching, clearing all models');
-            for (const model of loadedModels) {
-              modelStateService.removeModel(model.metadata.id);
-            }
-          }
-
-          console.log(`✅ Removed ${modelsRemoved > 0 ? modelsRemoved : loadedModels.length} model(s)`);
         }
 
-        // Delete the screw snapshot
-        viewportStateService.deleteSnapshot(name);
-        loadScrews();
+        if (modelsRemoved === 0) {
+          // If no models found by name matching, remove all models as fallback
+          // This ensures the UI stays clean
+          console.log('⚠️ No models found by dimension matching, clearing all models');
+          for (const model of loadedModels) {
+            modelStateService.removeModel(model.metadata.id);
+          }
+        }
 
-        console.log(`✅ Deleted screw: "${name}"`);
-
-      } catch (error) {
-        console.error('Error deleting screw:', error);
-        alert(`❌ Failed to delete screw: ${error.message}`);
+        console.log(`✅ Removed ${modelsRemoved > 0 ? modelsRemoved : loadedModels.length} model(s)`);
       }
+
+      // Delete the screw snapshot
+      viewportStateService.deleteSnapshot(name);
+      loadScrews();
+
+      console.log(`✅ Deleted screw: "${name}"`);
+
+    } catch (error) {
+      console.error('Error deleting screw:', error);
     }
   };
 
@@ -311,26 +334,23 @@ export default function ScrewManagementPanel({ servicesManager }) {
       crosshairsHandler.clearCache();
       console.log('✅ Cache cleared');
 
-      // Get crosshair data (single shared center)
-      const crosshairData = crosshairsHandler.getCrosshairCenter();
+      // Get crosshair center (single shared center)
+      const crosshairCenter = crosshairsHandler.getCrosshairCenter();
 
       console.log('📊 Crosshair Detection Results (Shared Center):');
-      console.log('  - isActive:', crosshairData.isActive);
-      console.log('  - hasCenter:', !!crosshairData.center);
-      console.log('  - center:', crosshairData.center);
-      console.log('  - viewportId:', crosshairData.viewportId);
+      console.log('  - hasCenter:', !!crosshairCenter);
+      console.log('  - center:', crosshairCenter);
 
       // Test with all MPR viewports (more reliable check)
       const mprData = crosshairsHandler.getAllMPRCrosshairCenters();
       console.log('📊 MPR Crosshair Centers (All Viewports):');
 
       let validViewportCount = 0;
-      for (const [vpId, data] of Object.entries(mprData)) {
+      for (const [vpId, center] of Object.entries(mprData)) {
         console.log(`  ${vpId}:`, {
-          isActive: data.isActive,
-          center: data.center
+          center: center
         });
-        if (data.isActive && data.center) {
+        if (center) {
           validViewportCount++;
         }
       }
@@ -350,33 +370,18 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.error('❌ Rendering engine not found');
       }
 
-      // Show result to user
-      if (crosshairData.isActive && crosshairData.center) {
-        alert(
-          '✅ Crosshairs Detected!\n\n' +
-          `Position: [${crosshairData.center[0].toFixed(2)}, ${crosshairData.center[1].toFixed(2)}, ${crosshairData.center[2].toFixed(2)}]\n\n` +
-          'Check browser console (F12) for detailed information.'
-        );
-      } else if (!crosshairData.isActive) {
-        alert(
-          '❌ Crosshairs Not Active\n\n' +
-          'The crosshairs tool is not currently active.\n\n' +
-          'How to activate:\n' +
-          '1. Click the crosshairs icon in the toolbar\n' +
-          '2. Click and drag in any viewport\n' +
-          '3. Try this test again\n\n' +
-          'Check browser console (F12) for detailed information.'
-        );
+      // Log result to console
+      if (crosshairCenter) {
+        console.log('✅ Crosshairs Detected!');
+        console.log(`Position: [${crosshairCenter[0].toFixed(2)}, ${crosshairCenter[1].toFixed(2)}, ${crosshairCenter[2].toFixed(2)}]`);
+        console.log('Check browser console (F12) for detailed information.');
       } else {
-        alert(
-          '⚠️ Crosshairs Active but No Center\n\n' +
-          'The crosshairs tool is active but position data is unavailable.\n\n' +
-          'Try:\n' +
-          '1. Click and drag crosshairs in a viewport\n' +
-          '2. Scroll through a few slices\n' +
-          '3. Try this test again\n\n' +
-          'Check browser console (F12) for detailed information.'
-        );
+        console.warn('❌ Crosshairs Not Detected');
+        console.warn('The crosshairs tool may not be active or position data is unavailable.');
+        console.warn('How to activate:');
+        console.warn('1. Click the crosshairs icon in the toolbar');
+        console.warn('2. Click and drag in any viewport');
+        console.warn('3. Try this test again');
       }
 
       console.log('═══════════════════════════════════════════════════════');
@@ -384,37 +389,29 @@ export default function ScrewManagementPanel({ servicesManager }) {
     } catch (error) {
       console.error('❌ Error testing crosshair detection:', error);
       console.error('Stack:', error.stack);
-      alert(
-        '❌ Error Testing Crosshairs\n\n' +
-        `${error.message}\n\n` +
-        'Check browser console (F12) for details.'
-      );
     }
   };
 
   const clearAllScrews = () => {
-    if (confirm('⚠️ Delete all screws? This will remove all screw placements and 3D models. This cannot be undone.')) {
-      try {
-        // Clear all models first
-        console.log('🗑️ Clearing all 3D models...');
-        modelStateService.clearAllModels();
+    try {
+      // Clear all models first
+      console.log('🗑️ Clearing all 3D models...');
+      modelStateService.clearAllModels();
 
-        // Clear all screws
-        viewportStateService.clearAll();
-        loadScrews();
+      // Clear all screws
+      viewportStateService.clearAll();
+      loadScrews();
 
-        console.log('✅ All screws and models cleared');
-      } catch (error) {
-        console.error('Error clearing all screws:', error);
-        alert(`❌ Failed to clear screws: ${error.message}`);
-      }
+      console.log('✅ All screws and models cleared');
+    } catch (error) {
+      console.error('Error clearing all screws:', error);
     }
   };
 
   const exportToJSON = () => {
     try {
       if (screws.length === 0) {
-        alert('⚠️ No screws to export');
+        console.warn('⚠️ No screws to export');
         return;
       }
 
@@ -439,7 +436,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
     } catch (error) {
       console.error('Failed to export:', error);
-      alert(`❌ Export failed: ${error.message}`);
     }
   };
 
@@ -460,17 +456,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
             .then((count) => {
               // Reload screws in UI
               loadScrews();
-              alert(`✅ Successfully imported ${count} screw placements from: ${file.name}`);
               console.log(`✅ Successfully imported ${count} screws from: ${file.name}`);
             })
             .catch((error) => {
               console.error('Failed to import:', error);
-              alert(`❌ Import failed: ${error.message}`);
             });
 
         } catch (error) {
           console.error('Failed to process file:', error);
-          alert(`❌ Failed to process file: ${error.message}`);
         }
       };
 
@@ -479,7 +472,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
     } catch (error) {
       console.error('Failed to import:', error);
-      alert(`❌ Import failed: ${error.message}`);
     }
   };
 

@@ -1,0 +1,18 @@
+0 silly argv {
+0 silly argv   _: [ 'run' ],
+0 silly argv   stream: true,
+0 silly argv   lernaVersion: '7.4.2',
+0 silly argv   '$0': 'node_modules\\lerna\\dist\\cli.js',
+0 silly argv   script: 'dev:orthanc'
+0 silly argv }
+1 notice cli v7.4.2
+2 verbose packageConfigs Explicit "packages" configuration found in lerna.json. Resolving packages using the configured glob(s): ["extensions/*","platform/*","modes/*","addOns/externals/*"]
+3 verbose rootPath C:\Users\hp\tableTop\mvisioner\Viewers
+4 error Error: LOCK_FILES_CHANGED
+4 error     at handleMessage (C:\Users\hp\AppData\Local\npm-cache\_npx\d5cad42883f80c04\node_modules\nx\src\daemon\server\server.js:97:88)
+4 error     at C:\Users\hp\AppData\Local\npm-cache\_npx\d5cad42883f80c04\node_modules\nx\src\daemon\server\server.js:76:15
+4 error     at Socket.<anonymous> (C:\Users\hp\AppData\Local\npm-cache\_npx\d5cad42883f80c04\node_modules\nx\src\utils\consume-messages-from-socket.js:13:17)
+4 error     at Socket.emit (node:events:519:28)
+4 error     at addChunk (node:internal/streams/readable:561:12)
+4 error     at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+4 error     at Readable.push (node:internal/streams/readable:392:5)

@@ -3,14 +3,11 @@ import { getRenderingEngine, getRenderingEngines, metaData } from '@cornerstonej
 import vtkActor from '@kitware/vtk.js/Rendering/Core/Actor';
 import vtkMapper from '@kitware/vtk.js/Rendering/Core/Mapper';
 import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';  // models are all in obj format
-import vtkCutter from '@kitware/vtk.js/Filters/Core/Cutter';
-import vtkPlane from '@kitware/vtk.js/Common/DataModel/Plane';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 import vtkPolyData from '@kitware/vtk.js/Common/DataModel/PolyData';
 import vtkTransform from '@kitware/vtk.js/Common/Transform/Transform';
 
 import { Types as OHIFTypes } from '@ohif/core';
-import { crosshairsHandler } from './utils/crosshairsHandler';
 /**
  *
  *
@@ -52,19 +49,6 @@ export interface ModelMetadata {
 }
 
 /**
- * 2D plane cutter data for cross-section rendering
- */
-export interface PlaneCutter {
-  viewportId: string;
-  orientation: 'axial' | 'coronal' | 'sagittal';
-  plane: any; // vtkPlane
-  cutter: any; // vtkCutter
-  mapper: any; // vtkMapper
-  actor: any; // vtkActor
-  updateCallback?: any; // Callback for viewport updates
-}
-
-/**
  * Loaded model data structure
  */
 export interface LoadedModel {
@@ -73,7 +57,6 @@ export interface LoadedModel {
   mapper: any; // vtkMapper
   reader: any; // vtkOBJReader
   polyData?: any; // vtkPolyData (with all transformations baked in, in world space)
-  planeCutters?: PlaneCutter[]; // 2D cross-section cutters for orthographic viewports
 }
 
 /**
@@ -130,339 +113,6 @@ class ModelStateService extends PubSubService {
     super(EVENTS);
     this.servicesManager = servicesManager;
     this.loadedModels = new Map();
-
-    // Subscribe to MODEL_ADDED event to create 2D plane cutters
-    this.subscribe(this.EVENTS.MODEL_ADDED, this._handleModelAdded.bind(this));
-  }
-
-  /**
-   * Handle MODEL_ADDED event - create 2D plane cutters for FourUpMesh layout
-   */
-  private _handleModelAdded(event: { modelId: string; metadata: ModelMetadata }): void {
-    const { modelId } = event;
-    const loadedModel = this.loadedModels.get(modelId);
-
-    if (!loadedModel) {
-      console.warn('⚠️ [ModelStateService] Model not found in _handleModelAdded:', modelId);
-      return;
-    }
-
-    // Check if we're in fourUpMesh layout
-    const { hangingProtocolService } = this.servicesManager.services;
-    const hpState = hangingProtocolService?.getState();
-
-    if (hpState?.protocolId === 'fourUpMesh') {
-      console.log('🔪 [ModelStateService] FourUpMesh detected - creating 2D plane cutters');
-      this._create2DPlaneCutters(loadedModel);
-    } else {
-      console.log('ℹ️ [ModelStateService] Not using fourUpMesh layout - skipping 2D plane cutters');
-    }
-  }
-
-  /**
-   * Create 2D plane cutters for axial, coronal, and sagittal viewports
-   */
-  private async _create2DPlaneCutters(loadedModel: LoadedModel): Promise<void> {
-    try {
-      console.log('═══════════════════════════════════════════════════════');
-      console.log('🔪 [ModelStateService] CREATING 2D PLANE CUTTERS');
-      console.log('═══════════════════════════════════════════════════════');
-
-      const renderingEngines = getRenderingEngines();
-      const orthographicViewports: { viewport: any; orientation: 'axial' | 'coronal' | 'sagittal' }[] = [];
-
-      // Find all orthographic viewports
-      for (const engine of renderingEngines) {
-        const viewports = engine.getViewports();
-
-        for (const vp of viewports) {
-          // Skip 3D viewports
-          if (vp.type === 'volume3d') {
-            continue;
-          }
-
-          // Determine orientation from viewport ID or camera
-          const orientation = this._getViewportOrientation(vp);
-
-          if (orientation) {
-            orthographicViewports.push({ viewport: vp, orientation });
-            console.log(`  ✅ Found ${orientation} viewport: ${vp.id}`);
-          }
-        }
-      }
-
-      if (orthographicViewports.length === 0) {
-        console.warn('⚠️ [ModelStateService] No orthographic viewports found for plane cutters');
-        return;
-      }
-
-      // Initialize planeCutters array
-      loadedModel.planeCutters = [];
-
-      // Create a plane cutter for each orthographic viewport
-      for (const { viewport, orientation } of orthographicViewports) {
-        console.log(`───────────────────────────────────────────────────────`);
-        console.log(`🔪 [ModelStateService] Creating ${orientation} plane cutter`);
-
-        const planeCutter = await this._createPlaneCutterForViewport(loadedModel, viewport, orientation);
-
-        if (planeCutter) {
-          loadedModel.planeCutters.push(planeCutter);
-          // good habit for naming viewports , so that we can debug here!
-          console.log(`  ✅ ${orientation} plane cutter created and added to viewport: ${viewport.id}`);
-        }
-        // break // just try it on one viewport for now
-      }
-
-      console.log('═══════════════════════════════════════════════════════');
-      console.log(`✅ [ModelStateService] Created ${loadedModel.planeCutters.length} plane cutters`);
-      console.log('═══════════════════════════════════════════════════════');
-
-
-      // ═════════════════════════════════════════════════════════
-      // SAFEGUARD: Check if model was already transformed
-      // If so, update all cutters with transformed polyData
-      // ═════════════════════════════════════════════════════════
-
-      if (loadedModel && loadedModel.actor.getUserMatrix()) {
-        console.log('⚠️ Model was already transformed before cutters were created');
-        console.log('🔄 Updating all cutters with transformed polyData...');
-        this._updateAllPlaneCutters(loadedModel.metadata.id);
-      }
-
-    } catch (error) {
-      console.error('❌ [ModelStateService] Error creating 2D plane cutters:', error);
-      console.error('❌ [ModelStateService] Error stack:', error.stack);
-    }
-
-
-  }
-
-  /**
-   * Create a plane cutter for a specific viewport
-   */
-  private async _createPlaneCutterForViewport(
-    loadedModel: LoadedModel,
-    viewport: any,
-    orientation: 'axial' | 'coronal' | 'sagittal'
-  ): Promise<PlaneCutter | null> {
-    try {
-      // Get the camera to determine the cutting plane
-      const camera = viewport.getCamera();
-      const { focalPoint, viewPlaneNormal } = camera;
-
-      console.log(`  📋 Camera focal point:`, focalPoint);
-      console.log(`  📋 View plane normal:`, viewPlaneNormal);
-
-      // ═══════════════════════════════════════════════════════════════════════════
-      // SIMPLE & FAST: Use transformed polyData already in world space
-      // No inverse transforms needed - everything works in world coordinates
-      // This approach scales well for future UI-based model manipulation
-      // ═══════════════════════════════════════════════════════════════════════════
-
-      // Create VTK plane directly from viewport's camera plane (already in world space)
-      const plane = vtkPlane.newInstance();
-      plane.setOrigin(focalPoint[0], focalPoint[1], focalPoint[2]);
-      plane.setNormal(viewPlaneNormal[0], viewPlaneNormal[1], viewPlaneNormal[2]);
-
-      // Create VTK cutter using the polyData (already hardened to world space)
-      const cutter = vtkCutter.newInstance();
-      cutter.setCutFunction(plane);
-      cutter.setInputData(loadedModel.polyData); // PolyData already in world space!
-
-      console.log(`  ✅ Cutter created using world-space polyData (no transform calculations needed)`);
-
-      // Create mapper for the cut
-      const mapper = vtkMapper.newInstance();
-      mapper.setInputConnection(cutter.getOutputPort());
-
-      // Create actor for the cut
-      const actor = vtkActor.newInstance();
-      actor.setMapper(mapper);
-
-      // ═══════════════════════════════════════════════════════════════════════════
-      // NO transformations needed on the cutter actor!
-      // The transformed polyData is already in world space with all transformations baked in
-      // Actor uses identity transform - geometry is already positioned correctly
-      // ═══════════════════════════════════════════════════════════════════════════
-
-      console.log(`  ✅ Cutter actor uses identity transform (geometry already in world space)`);
-
-      // Set line properties for better visibility
-      actor.getProperty().setLineWidth(3); // Slightly thicker for better visibility
-      actor.getProperty().setColor(1.0, 0.5, 0.0); // Orange color for visibility
-
-      // CRITICAL: Configure rendering to ensure contours always show on top of DICOM volume
-      // This ensures the cross-section is visible regardless of its depth position
-
-      // Use mapper's coincident topology resolution to push lines forward
-      if (mapper.setResolveCoincidentTopologyToPolygonOffset) {
-        mapper.setResolveCoincidentTopologyToPolygonOffset();
-        console.log(`  🎨 Using polygon offset for depth resolution`);
-      }
-
-      // Set relative offset parameters for lines to ensure they render on top
-      if (mapper.setRelativeCoincidentTopologyLineOffsetParameters) {
-        mapper.setRelativeCoincidentTopologyLineOffsetParameters(-1, -1);
-        console.log(`  🎨 Line offset parameters set for visibility`);
-      }
-
-      // Alternative: Set opacity slightly less than 1.0 to use transparency rendering path
-      // which often renders after opaque geometry
-      actor.getProperty().setOpacity(0.999);
-
-      // Note: Camera offset technique removed since polyData is pre-transformed
-      // The geometry is already in the correct position from the transformFilter
-
-      console.log(`  ✅ Contour rendering configured for maximum visibility`);
-
-      // Add actor to viewport's renderer
-      const vtkRenderer = viewport.getRenderer();
-      if (!vtkRenderer) {
-        console.error('❌ [ModelStateService] No VTK renderer found for viewport:', viewport.id);
-        return null;
-      }
-
-      vtkRenderer.addActor(actor);
-
-      // CRITICAL: Set up dynamic plane updates using crosshair tool
-      // This provides better synchronization and accuracy across all viewports
-      const updatePlanePosition = () => {
-        try {
-          let planeOrigin = null;
-          let planeNormal = null;
-          let usedCrosshairs = false;
-
-          // Try to get crosshair data using the handler
-          try {
-            const crosshairData = crosshairsHandler.getCrosshairCenter(viewport.id);
-
-            if (crosshairData.isActive && crosshairData.center) {
-              planeOrigin = crosshairData.center;
-              usedCrosshairs = true;
-              // console.log(`  🎯 Using crosshair center: [${planeOrigin[0]?.toFixed(1)}, ${planeOrigin[1]?.toFixed(1)}, ${planeOrigin[2]?.toFixed(1)}]`);
-            }
-          } catch (crosshairError) {
-            console.warn('⚠️ Could not get crosshair data, falling back to camera:', crosshairError.message);
-          }
-
-          // Fallback to camera focal point if crosshairs not available
-          if (!planeOrigin || !Array.isArray(planeOrigin) || planeOrigin.length !== 3) {
-            const currentCamera = viewport.getCamera();
-            planeOrigin = currentCamera.focalPoint;
-            planeNormal = currentCamera.viewPlaneNormal;
-            // console.log(`  📷 Using camera focal point: [${planeOrigin[0]?.toFixed(1)}, ${planeOrigin[1]?.toFixed(1)}, ${planeOrigin[2]?.toFixed(1)}]`);
-          } else {
-            // Get plane normal from camera even when using crosshair center
-            const currentCamera = viewport.getCamera();
-            planeNormal = currentCamera.viewPlaneNormal;
-          }
-
-          // Final validation
-          if (!planeOrigin || !planeNormal || planeOrigin.length !== 3 || planeNormal.length !== 3) {
-            console.warn('⚠️ Invalid plane origin or normal, skipping update');
-            return;
-          }
-
-          // Update plane origin to match current position
-          plane.setOrigin(planeOrigin[0], planeOrigin[1], planeOrigin[2]);
-
-          // Update plane normal
-          plane.setNormal(planeNormal[0], planeNormal[1], planeNormal[2]);
-
-          // Cutter automatically updates when plane changes
-          cutter.update();
-
-          // No position offset needed - geometry is already in world space
-          // Actor maintains identity transform
-
-          // Re-render viewport
-          viewport.render();
-
-          const source = usedCrosshairs ? 'crosshairs' : 'camera';
-          // console.log(`  🔄 [${source}] Plane updated for ${orientation}`);
-        } catch (error) {
-          console.warn('⚠️ Error updating plane position:', error.message);
-        }
-      };
-
-      // Subscribe to camera modified events (includes scrolling, panning, zooming)
-      const { Enums } = await import('@cornerstonejs/core');
-      const element = viewport.element;
-
-      if (element && Enums?.Events?.CAMERA_MODIFIED) {
-        element.addEventListener(Enums.Events.CAMERA_MODIFIED, updatePlanePosition);
-        console.log(`  📡 Subscribed to CAMERA_MODIFIED events (scroll/pan/zoom)`);
-      }
-
-      // Initial update with current position
-      // This will use crosshair center if crosshairs are active
-      updatePlanePosition();
-
-      console.log(`  ✅ Plane cutter actor added with dynamic updates enabled`);
-
-      return {
-        viewportId: viewport.id,
-        orientation,
-        plane,
-        cutter,
-        mapper,
-        actor,
-        updateCallback: updatePlanePosition,
-      };
-
-    } catch (error) {
-      console.error(`❌ [ModelStateService] Error creating plane cutter for ${orientation}:`, error);
-      return null;
-    }
-  }
-
-  /**
-   * Determine viewport orientation from viewport properties
-   */
-  private _getViewportOrientation(viewport: any): 'axial' | 'coronal' | 'sagittal' | null {
-    // Try to get orientation from viewport ID
-    const viewportId = viewport.id.toLowerCase();
-
-    if (viewportId.includes('axial')) {
-      return 'axial';
-    } else if (viewportId.includes('coronal')) {
-      return 'coronal';
-    } else if (viewportId.includes('sagittal')) {
-      return 'sagittal';
-    }
-
-    // Try to determine from viewport options
-    const viewportOptions = viewport.options;
-    if (viewportOptions && viewportOptions.orientation) {
-      const orientation = viewportOptions.orientation.toLowerCase();
-      if (orientation === 'axial' || orientation === 'coronal' || orientation === 'sagittal') {
-        return orientation as 'axial' | 'coronal' | 'sagittal';
-      }
-    }
-
-    // Try to determine from camera's view plane normal
-    try {
-      const camera = viewport.getCamera();
-      const { viewPlaneNormal } = camera;
-
-      // Axial: normal is (0, 0, 1) or (0, 0, -1)
-      if (Math.abs(viewPlaneNormal[2]) > 0.9) {
-        return 'axial';
-      }
-      // Sagittal: normal is (1, 0, 0) or (-1, 0, 0)
-      else if (Math.abs(viewPlaneNormal[0]) > 0.9) {
-        return 'sagittal';
-      }
-      // Coronal: normal is (0, 1, 0) or (0, -1, 0)
-      else if (Math.abs(viewPlaneNormal[1]) > 0.9) {
-        return 'coronal';
-      }
-    } catch (error) {
-      console.warn('⚠️ [ModelStateService] Could not determine orientation from camera:', error.message);
-    }
-
-    return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1325,57 +975,6 @@ class ModelStateService extends PubSubService {
 
     console.log('🗑️ [ModelStateService] Removing model from all viewports:', modelId);
 
-    // Remove 2D plane cutters first
-    if (loadedModel.planeCutters && loadedModel.planeCutters.length > 0) {
-      console.log('🗑️ [ModelStateService] Removing 2D plane cutters...');
-
-      const renderingEngines = getRenderingEngines();
-
-      loadedModel.planeCutters.forEach(async (planeCutter) => {
-        try {
-          // Find viewport and remove actor + event listener
-          for (const engine of renderingEngines) {
-            try {
-              const viewport = engine.getViewport(planeCutter.viewportId);
-              if (viewport) {
-                // Remove event listeners if exist
-                if (planeCutter.updateCallback && viewport.element) {
-                  const { Enums } = await import('@cornerstonejs/core');
-                  if (Enums?.Events?.CAMERA_MODIFIED) {
-                    viewport.element.removeEventListener(
-                      Enums.Events.CAMERA_MODIFIED,
-                      planeCutter.updateCallback
-                    );
-                    console.log(`   📡 Unsubscribed from camera/crosshair events for ${planeCutter.orientation}`);
-                  }
-                }
-
-                const vtkRenderer = viewport.getRenderer();
-                if (vtkRenderer) {
-                  vtkRenderer.removeActor(planeCutter.actor);
-                  viewport.render();
-                  console.log(`   🗑️ Removed ${planeCutter.orientation} plane cutter from ${planeCutter.viewportId}`);
-                }
-                break;
-              }
-            } catch (e) {
-              // Viewport not in this engine
-            }
-          }
-
-          // Clean up vtk objects
-          planeCutter.actor.delete();
-          planeCutter.mapper.delete();
-          planeCutter.cutter.delete();
-          planeCutter.plane.delete();
-        } catch (error) {
-          console.error('   ⚠️ Error removing plane cutter:', error.message);
-        }
-      });
-
-      loadedModel.planeCutters = [];
-    }
-
     // Remove from all viewports in all rendering engines
     const renderingEngines = getRenderingEngines();
     let removedCount = 0;
@@ -1817,9 +1416,10 @@ class ModelStateService extends PubSubService {
  *
  * @param modelId - The unique identifier for the model
  * @param transform - 4x4 transformation matrix as a flat array of 16 elements (row-major order)
+ * @param length - Optional screw length in mm (used to offset model along its Y-axis)
  * @returns true if successful, false otherwise
  */
-async setModelTransform(modelId: string, transform: number[]): Promise<boolean> {
+async setModelTransform(modelId: string, transform: number[], length?: number): Promise<boolean> {
   try {
     const loadedModel = this.loadedModels.get(modelId);
     if (!loadedModel) {
@@ -1833,13 +1433,75 @@ async setModelTransform(modelId: string, transform: number[]): Promise<boolean> 
       return false;
     }
 
-    // Convert row-major to column-major and create Float32Array directly
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔧 [ModelStateService] APPLYING TRANSFORM WITH LENGTH OFFSET');
+    console.log('═══════════════════════════════════════════════════════');
+
+    // Check if model is a generated cylinder (only apply offset for cylinders)
+    const modelPath = loadedModel.metadata.fileUrl || loadedModel.metadata.filePath;
+    const isCylinder = modelPath.includes('/cylinder/');
+
+    console.log(`📦 Model type: ${isCylinder ? 'Generated Cylinder' : 'OBJ Model'}`);
+    console.log(`📂 Model path: ${modelPath}`);
+
+    // Extract the coronal (Y-axis) direction from the transform matrix (column 1 in row-major)
+    const coronalX = transform[1];  // Row 0, Col 1
+    const coronalY = transform[5];  // Row 1, Col 1
+    const coronalZ = transform[9];  // Row 2, Col 1
+
+    console.log(`📋 Original transform matrix (row-major):`);
+    console.log(`   Row 0: [${transform[0]}, ${transform[1]}, ${transform[2]}, ${transform[3]}]`);
+    console.log(`   Row 1: [${transform[4]}, ${transform[5]}, ${transform[6]}, ${transform[7]}]`);
+    console.log(`   Row 2: [${transform[8]}, ${transform[9]}, ${transform[10]}, ${transform[11]}]`);
+    console.log(`   Row 3: [${transform[12]}, ${transform[13]}, ${transform[14]}, ${transform[15]}]`);
+
+    console.log(`📐 Coronal (Y-axis) direction: [${coronalX}, ${coronalY}, ${coronalZ}]`);
+
+    // Apply length offset if provided AND model is a generated cylinder
+    let adjustedTransform = [...transform];
+
+    if (isCylinder && length && length > 0) {
+      // Move forward along the coronal (Y) direction by length/2
+      // This positions the screw so its center is at the crosshair center
+      const offset = length / 2;
+
+      console.log(`📏 Screw length: ${length}mm`);
+      console.log(`📏 Applying offset: +${offset}mm along coronal direction`);
+
+      // Original translation (column 3 in row-major)
+      const originalTransX = transform[3];
+      const originalTransY = transform[7];
+      const originalTransZ = transform[11];
+
+      console.log(`📍 Original translation: [${originalTransX}, ${originalTransY}, ${originalTransZ}]`);
+
+      // Adjust translation by moving forward along coronal direction
+      // Forward means positive direction along the local Y-axis
+      adjustedTransform[3] = originalTransX + (coronalX * offset);
+      adjustedTransform[7] = originalTransY + (coronalY * offset);
+      adjustedTransform[11] = originalTransZ + (coronalZ * offset);
+
+      console.log(`📍 Adjusted translation: [${adjustedTransform[3]}, ${adjustedTransform[7]}, ${adjustedTransform[11]}]`);
+      console.log(`📐 Offset vector: [${coronalX * offset}, ${coronalY * offset}, ${coronalZ * offset}]`);
+    } else {
+      if (!isCylinder) {
+        console.log(`ℹ️ No offset applied - OBJ model (not a generated cylinder)`);
+      } else if (!length || length <= 0) {
+        console.log(`ℹ️ No offset applied - length not provided (length=${length})`);
+      }
+    }
+
+    // Convert row-major to column-major and create Float32Array
     const finalTransform = new Float32Array([
-      transform[0], transform[4], transform[8],  transform[12],
-      transform[1], transform[5], transform[9],  transform[13],
-      transform[2], transform[6], transform[10], transform[14],
-      transform[3], transform[7], transform[11], transform[15]
+      adjustedTransform[0], adjustedTransform[4], adjustedTransform[8],  adjustedTransform[12],
+      adjustedTransform[1], adjustedTransform[5], adjustedTransform[9],  adjustedTransform[13],
+      adjustedTransform[2], adjustedTransform[6], adjustedTransform[10], adjustedTransform[14],
+      adjustedTransform[3], adjustedTransform[7], adjustedTransform[11], adjustedTransform[15]
     ]);
+
+    console.log('───────────────────────────────────────────────────────');
+    console.log('✅ Final transform matrix prepared (column-major for VTK)');
+    console.log('═══════════════════════════════════════════════════════');
 
 
     // // Convert row-major to column-major
@@ -1921,25 +1583,18 @@ async setModelTransform(modelId: string, transform: number[]): Promise<boolean> 
     // Store transformed polyData
     loadedModel.polyData = transformedPolyData;
 
-    // Update ALL plane cutters with transformed polyData
-    for (const planeCutter of loadedModel.planeCutters) {
-      planeCutter.cutter.setInputData(transformedPolyData);
-    }
-
     console.log(`✅ Transformed ${numPoints} points`);
-    console.log(`✅ Updated ${loadedModel.planeCutters.length} plane cutters`);
-    console.log('✅ Plane cutters now operate on transformed coordinates');
-
+    console.log('✅ PolyData transformed and stored');
 
     // ═════════════════════════════════════════════════════════
-    // PART 3: Update ALL plane cutters with new polyData
-    // This ensures ALL cutters get updated, including ones
-    // created before the transform
+    // PART 3: Broadcast MODEL_UPDATED event
+    // PlaneCutterService will listen and update all cutters
     // ═════════════════════════════════════════════════════════
 
-    this._updateAllPlaneCutters(modelId);
+    this._broadcastEvent(this.EVENTS.MODEL_UPDATED, { modelId, property: 'transform' });
 
     console.log('✅ Model transform complete!');
+    console.log('✅ MODEL_UPDATED event broadcast - PlaneCutterService will update cutters');
     return true;
 
 
@@ -1957,54 +1612,6 @@ async setModelTransform(modelId: string, transform: number[]): Promise<boolean> 
     return false;
   }
 }
-
-/**
- * Update all plane cutters for a model with the current transformed polyData
- * Call this after updating loadedModel.polyData to ensure all cutters are in sync
- */
-private _updateAllPlaneCutters(modelId: string): void {
-  const loadedModel = this.loadedModels.get(modelId);
-
-  if (!loadedModel) {
-    console.warn(`⚠️ Model ${modelId} not found`);
-    return;
-  }
-
-  if (!loadedModel.planeCutters || loadedModel.planeCutters.length === 0) {
-    console.log('⚠️ No plane cutters to update');
-    return;
-  }
-
-  console.log(`🔄 Updating ${loadedModel.planeCutters.length} plane cutters with current polyData...`);
-
-  const currentPolyData = loadedModel.polyData;
-
-  for (const planeCutter of loadedModel.planeCutters) {
-    console.log(`  🔄 Updating ${planeCutter.orientation} cutter...`);
-
-    // Update input data
-    planeCutter.cutter.setInputData(currentPolyData);
-
-    // Force VTK to recompute the cutting
-    planeCutter.cutter.modified();
-    planeCutter.cutter.update();
-
-    // Update mapper
-    planeCutter.mapper.modified();
-    planeCutter.mapper.update();
-
-    console.log(`  ✅ ${planeCutter.orientation} cutter updated`);
-  }
-
-  console.log(`✅ All plane cutters updated with current polyData`);
-
-  // Trigger re-render of all viewports
-  const renderingEngines = getRenderingEngines();
-  for (const engine of renderingEngines) {
-    engine.render();
-  }
-}
-
 
 }
 

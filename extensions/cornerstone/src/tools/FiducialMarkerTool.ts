@@ -158,7 +158,7 @@ class FiducialMarkerTool extends AnnotationTool {
     const annotations = annotation.state.getAnnotations(FiducialMarkerTool.toolName, element);
 
     // Debug: Log rendering calls
-    console.log(`🎨 [FiducialMarker renderAnnotation] viewport=${viewport.id}, found ${annotations?.length || 0} annotations`);
+    // console.log(`🎨 [FiducialMarker renderAnnotation] viewport=${viewport.id}, found ${annotations?.length || 0} annotations`);
 
     if (!annotations?.length) {
       return renderStatus;
