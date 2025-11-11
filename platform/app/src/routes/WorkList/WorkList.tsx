@@ -592,6 +592,12 @@ function WorkList({
   const [studiesWithSeriesData, setStudiesWithSeriesData] = useState([]);
   const [seriesDataForCases, setSeriesDataForCases] = useState(new Map()); // Map<studyUID, seriesData>
   const numOfStudies = studiesTotal;
+
+  // ~ Add Study Modal
+  const [showAddStudyModal, setShowAddStudyModal] = useState(false);
+  const [addStudyToCaseId, setAddStudyToCaseId] = useState(null);
+  const [orthancStudies, setOrthancStudies] = useState([]);
+  const [loadingOrthancStudies, setLoadingOrthancStudies] = useState(false);
   const querying = useMemo(() => {
     return isLoadingData || expandedRows.length > 0;
   }, [isLoadingData, expandedRows]);
@@ -906,6 +912,37 @@ function WorkList({
               gridCol: 3,
             },
             {
+              key: 'addStudy',
+              content: (
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setAddStudyToCaseId(caseItem.caseId);
+                    setShowAddStudyModal(true);
+                    setLoadingOrthancStudies(true);
+
+                    try {
+                      if (caseService) {
+                        const studies = await caseService.getAllOrthancStudies();
+                        setOrthancStudies(studies);
+                      }
+                    } catch (err) {
+                      console.error('Failed to load Orthanc studies:', err);
+                      alert('Failed to load studies from Orthanc');
+                    } finally {
+                      setLoadingOrthancStudies(false);
+                    }
+                  }}
+                  className="hover:bg-green-900/50 flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-2 py-1 transition-colors"
+                  title="Add Study to Case"
+                >
+                  <Icons.Add className="h-4 w-4 text-green-400" />
+                  <span className="text-xs text-green-300">Add Study</span>
+                </button>
+              ),
+              gridCol: 2,
+            },
+            {
               key: 'expandIcon',
               content: (
                 <Icons.GroupLayers
@@ -915,7 +952,7 @@ function WorkList({
                   })}
                 />
               ),
-              gridCol: 2,
+              gridCol: 1,
             },
           ],
           expandedContent: null, // Case rows don't have expanded content
@@ -1423,6 +1460,62 @@ function WorkList({
               title: (instances || 0).toString(),
               gridCol: 2,
             },
+            {
+              key: 'addToCase',
+              content: (
+                <div className="flex items-center justify-end gap-2">
+                  {/* Show if study is already in the active case */}
+                  {studyInfo ? (
+                    <span className="text-xs text-green-400 flex items-center gap-1">
+                      <Icons.Checkmark className="h-4 w-4" />
+                      In Case
+                    </span>
+                  ) : activeCaseId ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (caseService && activeCaseId) {
+                          console.log(`📝 Adding study ${studyInstanceUid} to case ${activeCaseId}`);
+                          // Prompt for clinical phase
+                          const phase = window.prompt(
+                            'Enter clinical phase:\n\n1. PreOperativePlanning\n2. IntraOperative\n3. PostOperative\n4. FollowUp\n\nEnter number (1-4):',
+                            '1'
+                          );
+
+                          const phaseMap = {
+                            '1': 'PreOperativePlanning',
+                            '2': 'IntraOperative',
+                            '3': 'PostOperative',
+                            '4': 'FollowUp'
+                          };
+
+                          const clinicalPhase = phaseMap[phase] || 'PreOperativePlanning';
+                          console.log(`📋 Clinical phase: ${clinicalPhase}`);
+
+                          caseService.enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase)
+                            .then(() => {
+                              console.log(`✅ Study added to case ${activeCaseId}`);
+                              window.location.reload();
+                            })
+                            .catch(err => {
+                              console.error('❌ Failed to add study to case:', err);
+                              alert('Failed to add study to case: ' + err.message);
+                            });
+                        }
+                      }}
+                      className="hover:bg-blue-900/50 flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors"
+                      title="Add to Case"
+                    >
+                      <Icons.Add className="h-4 w-4 text-blue-400" />
+                      <span className="text-xs text-blue-300">Add</span>
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-500">Select case first</span>
+                  )}
+                </div>
+              ),
+              gridCol: 2,
+            },
           ],
           expandedContent: (
             <StudyListExpandedRow
@@ -1709,6 +1802,152 @@ function WorkList({
           )}
         </ScrollArea>
       </div>
+
+      {/* Add Study Modal */}
+      {showAddStudyModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setShowAddStudyModal(false)}
+        >
+          <div
+            className="bg-primary-dark relative max-h-[80vh] w-[90vw] max-w-4xl overflow-hidden rounded-lg border border-gray-700 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="border-secondary-light flex items-center justify-between border-b px-6 py-4">
+              <h2 className="text-xl font-bold text-white">
+                Add Study to Case: {addStudyToCaseId}
+              </h2>
+              <button
+                onClick={() => setShowAddStudyModal(false)}
+                className="hover:bg-secondary-dark rounded p-2 transition-colors"
+              >
+                <Icons.Close className="h-5 w-5 text-white" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="max-h-[60vh] overflow-y-auto p-6">
+              {loadingOrthancStudies ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-center">
+                    <div className="mb-4 text-white">Loading studies from Orthanc...</div>
+                    <div className="text-gray-400">Please wait</div>
+                  </div>
+                </div>
+              ) : orthancStudies.length === 0 ? (
+                <div className="py-12 text-center text-gray-400">
+                  No studies found in Orthanc
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {orthancStudies.map((study) => (
+                    <div
+                      key={study.studyInstanceUID}
+                      className={classnames(
+                        'hover:bg-secondary-dark flex items-center justify-between rounded border p-4 transition-colors',
+                        {
+                          'border-yellow-500/50 bg-yellow-900/20': study.hasCaseId,
+                          'border-gray-700 bg-secondary-main cursor-pointer': !study.hasCaseId,
+                        }
+                      )}
+                      onClick={async () => {
+                        if (study.hasCaseId) {
+                          const confirmAdd = window.confirm(
+                            `⚠️ WARNING: This study is already assigned to case "${study.existingCaseId}".\n\nDo you want to add it to "${addStudyToCaseId}" anyway?`
+                          );
+                          if (!confirmAdd) return;
+                        }
+
+                        // Prompt for clinical phase
+                        const phase = window.prompt(
+                          'Enter clinical phase:\n\n1. PreOperativePlanning\n2. IntraOperative\n3. PostOperative\n4. FollowUp\n\nEnter number (1-4):',
+                          '1'
+                        );
+
+                        const phaseMap = {
+                          '1': 'PreOperativePlanning',
+                          '2': 'IntraOperative',
+                          '3': 'PostOperative',
+                          '4': 'FollowUp',
+                        };
+
+                        const clinicalPhase = phaseMap[phase] || 'PreOperativePlanning';
+
+                        try {
+                          if (caseService && addStudyToCaseId) {
+                            await caseService.enrollStudy(
+                              addStudyToCaseId,
+                              study.studyInstanceUID,
+                              clinicalPhase
+                            );
+                            console.log(`✅ Study added to case ${addStudyToCaseId}`);
+                            setShowAddStudyModal(false);
+                            window.location.reload();
+                          }
+                        } catch (err) {
+                          console.error('Failed to add study:', err);
+                          alert('Failed to add study to case: ' + err.message);
+                        }
+                      }}
+                    >
+                      <div className="flex-1">
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="font-semibold text-white">
+                            {study.patientName || 'Unknown'}
+                          </span>
+                          {study.hasCaseId && (
+                            <span className="rounded border border-yellow-500 bg-yellow-900/40 px-2 py-0.5 text-xs text-yellow-300">
+                              ⚠️ Case: {study.existingCaseId}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-400">
+                          <span className="mr-4">MRN: {study.patientId || 'N/A'}</span>
+                          <span className="mr-4">Date: {study.studyDate || 'N/A'}</span>
+                          <span className="mr-4">Modality: {study.modalities || 'N/A'}</span>
+                          <span>Series: {study.seriesCount}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          {study.studyDescription || 'No description'}
+                        </div>
+                      </div>
+                      <div>
+                        {study.hasCaseId ? (
+                          <span className="text-xs text-yellow-400">Click to override</span>
+                        ) : (
+                          <Icons.Add className="h-6 w-6 text-green-400" />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-secondary-light border-t px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-gray-400">
+                  {orthancStudies.length} studies available
+                  {orthancStudies.filter((s) => s.hasCaseId).length > 0 && (
+                    <span className="ml-2 text-yellow-400">
+                      ({orthancStudies.filter((s) => s.hasCaseId).length} already assigned)
+                    </span>
+                  )}
+                </div>
+                <Button
+                  onClick={() => setShowAddStudyModal(false)}
+                  size="small"
+                  className="bg-secondary-dark hover:bg-secondary-light"
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

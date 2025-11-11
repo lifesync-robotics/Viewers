@@ -236,6 +236,43 @@ class CaseService extends PubSubService {
   }
 
   /**
+   * Get all studies from Orthanc with case ID check
+   */
+  public async getAllOrthancStudies(): Promise<any[]> {
+    try {
+      const response = await fetch(`${this.apiUrl}/api/orthanc/studies`);
+      if (!response.ok) {
+        throw new Error(`Failed to get Orthanc studies: ${response.statusText}`);
+      }
+      const data = await response.json();
+      return data.studies || [];
+    } catch (error) {
+      console.error('❌ Failed to get Orthanc studies:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a study has an existing case ID
+   */
+  public async checkStudyCaseId(studyInstanceUID: string): Promise<{ hasCaseId: boolean; caseId: string | null }> {
+    try {
+      const response = await fetch(`${this.apiUrl}/api/orthanc/studies/${studyInstanceUID}/check-case`);
+      if (!response.ok) {
+        throw new Error(`Failed to check study case ID: ${response.statusText}`);
+      }
+      const data = await response.json();
+      return {
+        hasCaseId: data.hasCaseId,
+        caseId: data.caseId
+      };
+    } catch (error) {
+      console.error('❌ Failed to check study case ID:', error);
+      throw error;
+    }
+  }
+
+  /**
    * List all cases
    */
   public async getCases(): Promise<CaseSummary[]> {
