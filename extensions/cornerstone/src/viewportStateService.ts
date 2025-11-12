@@ -766,6 +766,97 @@ class ViewportStateService {
       return {};
     }
   }
+
+  /**
+   * Get current viewport states for all viewports
+   * Used for saving UI state with screw data
+   */
+  getCurrentViewportStates(): any {
+    try {
+      const engine = this.getEngine();
+      if (!engine) {
+        console.warn('⚠️ No rendering engine found for viewport states');
+        return {};
+      }
+
+      const viewportStates = {};
+
+      // Get all viewports
+      const viewports = engine.getViewports();
+      for (const vp of viewports) {
+        if (vp && vp.id) {
+          viewportStates[vp.id] = {
+            camera: vp.getCamera(),
+            zoom: vp.getZoom(),
+            pan: vp.getPan(),
+            type: vp.type
+          };
+        }
+      }
+
+      console.log(`📊 Captured states for ${Object.keys(viewportStates).length} viewports`);
+      return viewportStates;
+
+    } catch (error) {
+      console.error('❌ Error getting viewport states:', error);
+      return {};
+    }
+  }
+
+  /**
+   * Restore viewport states
+   * Used for restoring UI state when loading screws
+   */
+  restoreViewportStates(viewportStates: any): boolean {
+    try {
+      if (!viewportStates || typeof viewportStates !== 'object') {
+        console.warn('⚠️ Invalid viewport states provided');
+        return false;
+      }
+
+      const engine = this.getEngine();
+      if (!engine) {
+        console.warn('⚠️ No rendering engine found for restoring viewport states');
+        return false;
+      }
+
+      let restoredCount = 0;
+
+      // Restore each viewport state
+      for (const [viewportId, state] of Object.entries(viewportStates)) {
+        try {
+          const viewport = engine.getViewport(viewportId);
+          if (viewport && state) {
+            // Restore camera if available
+            if (state.camera) {
+              viewport.setCamera(state.camera);
+            }
+
+            // Restore zoom if available
+            if (typeof state.zoom === 'number') {
+              viewport.setZoom(state.zoom);
+            }
+
+            // Restore pan if available
+            if (Array.isArray(state.pan)) {
+              viewport.setPan(state.pan);
+            }
+
+            restoredCount++;
+          }
+        } catch (vpError) {
+          console.warn(`⚠️ Failed to restore state for viewport ${viewportId}:`, vpError);
+        }
+      }
+
+      console.log(`✅ Restored states for ${restoredCount} viewports`);
+      return restoredCount > 0;
+
+    } catch (error) {
+      console.error('❌ Error restoring viewport states:', error);
+      return false;
+    }
+  }
 }
 
 export default ViewportStateService;

@@ -13,20 +13,214 @@ import { getRenderingEngine } from '@cornerstonejs/core';
 import { crosshairsHandler } from './utils/crosshairsHandler';
 
 export default function ScrewManagementPanel({ servicesManager }) {
-  const { viewportStateService, modelStateService } = servicesManager.services;
+  const { viewportStateService, modelStateService, planeCutterService } = servicesManager.services;
   const [screws, setScrews] = useState([]);
+  const [sessionId, setSessionId] = useState(null);
   const [screwName, setScrewName] = useState('');
   const [radius, setRadius] = useState('');
   const [length, setLength] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState('initializing'); // 'initializing', 'ready', 'error'
 
   useEffect(() => {
-    loadScrews();
+    initializeSession();
   }, []);
 
-  const loadScrews = () => {
+  /**
+   * Initialize planning session and load existing screws
+   */
+  const initializeSession = async () => {
+    try {
+      setIsLoading(true);
+      setSessionStatus('initializing');
+
+      // Get case information (would come from case manager service)
+      const caseId = 'OHIF-CASE-' + Date.now(); // TODO: Get from actual case service
+      const studyInstanceUID = '1.2.3.4.5'; // TODO: Get from actual DICOM data
+      const seriesInstanceUID = '1.2.3.4.5.6'; // TODO: Get from actual DICOM data
+      const surgeon = 'OHIF User'; // TODO: Get from user service
+
+      console.log('🔄 Initializing planning session...');
+      console.log(`   API: http://localhost:3001/api/planning/session/start`);
+      console.log(`   Case ID: ${caseId}`);
+
+      // Start planning session
+      const response = await fetch('http://localhost:3001/api/planning/session/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          caseId,
+          studyInstanceUID,
+          seriesInstanceUID,
+          surgeon
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('📡 Session API response:', data);
+
+      if (data.success && data.session_id) {
+        setSessionId(data.session_id);
+        setSessionStatus('ready');
+        console.log('✅ Planning session started:', data.session_id);
+
+        // Load existing screws for this session
+        await loadScrews(data.session_id);
+      } else {
+        throw new Error(data.error || 'Session creation failed');
+      }
+    } catch (error) {
+      console.error('❌ Error initializing session:', error);
+      setSessionStatus('error');
+
+      // Show user-friendly error
+      console.warn('⚠️ Falling back to localStorage-only mode');
+      console.warn('   Planning API may not be available. Check:');
+      console.warn('   1. Is SyncForge API running on port 3001?');
+      console.warn('   2. Is Planning Service running on port 6000?');
+
+      // Fallback to localStorage
+      loadScrewsLocal();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Load screws from planning API
+   */
+  const loadScrews = async (sessionId) => {
+    if (!sessionId) {
+      console.warn('⚠️ No session ID available, cannot load screws');
+      return;
+    }
+
+    try {
+      console.log('📥 Loading screws from API...');
+
+      const response = await fetch(`http://localhost:3001/api/planning/screws/${sessionId}/list`);
+      const data = await response.json();
+
+      if (data.success) {
+        setScrews(data.screws || []);
+        console.log(`✅ Loaded ${data.screws?.length || 0} screws from API`);
+      } else {
+        console.error('❌ Failed to load screws:', data.error);
+        // Fallback to localStorage
+        loadScrewsLocal();
+      }
+    } catch (error) {
+      console.error('❌ Error loading screws:', error);
+      // Fallback to localStorage
+      loadScrewsLocal();
+    }
+  };
+
+  /**
+   * Load screws from localStorage (fallback)
+   */
+  const loadScrewsLocal = () => {
+    console.log('📁 Falling back to localStorage...');
     const allScrews = viewportStateService.getAllSnapshots();
     setScrews(allScrews);
+    console.log(`✅ Loaded ${allScrews.length} screws from localStorage`);
+  };
+
+  /**
+   * Load and display a 3D screw model using the planning API
+   */
+  const loadScrewModel = async (radius, length, transform) => {
+    try {
+      console.log(`🔍 Querying model for radius=${radius}, length=${length}`);
+
+      // Query model from planning API
+      const queryResponse = await fetch(
+        `http://localhost:3001/api/planning/models/query?radius=${radius}&length=${length}`
+      );
+
+      const queryData = await queryResponse.json();
+
+      if (!queryData.success || !queryData.model) {
+        throw new Error('Model query failed');
+      }
+
+      const modelInfo = queryData.model;
+      console.log(`📦 Model found: ${modelInfo.model_id} (${modelInfo.source})`);
+
+      // Ensure plane cutters are initialized and enabled
+      if (planeCutterService) {
+        if (!planeCutterService.getIsEnabled()) {
+          console.log('🔪 [ScrewManagement] Auto-enabling plane cutters for 2D views...');
+          try {
+            await planeCutterService.initialize();
+            planeCutterService.enable();
+            console.log('✅ [ScrewManagement] Plane cutters enabled - screws will appear in 2D MPR views');
+          } catch (error) {
+            console.warn('⚠️ [ScrewManagement] Could not enable plane cutters:', error);
+          }
+        }
+      }
+
+      // Get model OBJ file URL
+      const modelUrl = `http://localhost:3001/api/planning/models/${modelInfo.model_id}/obj`;
+
+      // Load model using modelStateService
+      await modelStateService.loadModelFromServer(modelUrl, {
+        viewportId: getCurrentViewportId(),
+        color: [1.0, 0.84, 0.0],  // Gold color for screws
+        opacity: 0.9
+      });
+
+      // Apply transform if provided
+      if (transform && transform.length === 16) {
+        // Find the loaded model and apply transform
+        const loadedModels = modelStateService.getAllModels();
+        const latestModel = loadedModels[loadedModels.length - 1];
+
+        if (latestModel) {
+          modelStateService.setModelTransform(latestModel.metadata.id, transform);
+          console.log(`🔧 Applied transform to model: ${latestModel.metadata.id}`);
+        }
+      }
+
+    } catch (error) {
+      console.error('❌ Failed to load screw model:', error);
+
+      // Fallback: Try to load using old method
+      try {
+        console.log('⚠️ Falling back to old model loading method...');
+        await viewportStateService.queryAndLoadModel(radius, length, transform);
+      } catch (fallbackError) {
+        console.error('❌ Fallback model loading also failed:', fallbackError);
+        throw error; // Re-throw original error
+      }
+    }
+  };
+
+  /**
+   * Get the current 3D viewport ID
+   */
+  const getCurrentViewportId = () => {
+    try {
+      const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+      if (!renderingEngine) return 'volume3d-viewport';
+
+      const viewports = renderingEngine.getViewports();
+      for (const vp of viewports) {
+        if (vp.type === 'volume3d' || vp.type === 'VOLUME_3D') {
+          return vp.id;
+        }
+      }
+    } catch (error) {
+      console.error('Error getting viewport ID:', error);
+    }
+
+    return 'volume3d-viewport'; // Default fallback
   };
 
   /**
@@ -199,61 +393,132 @@ export default function ScrewManagementPanel({ servicesManager }) {
       }
 
       // ═════════════════════════════════════════════════════════
-      // STEP 1: Load and position the model BEFORE saving
-      // This ensures the model is visible and matches what will be restored
+      // STEP 1: Save screw to planning API
       // ═════════════════════════════════════════════════════════
       console.log('═══════════════════════════════════════════════════════');
-      console.log('🔧 [ScrewManagement] LOADING MODEL BEFORE SAVE');
+      console.log('🔧 [ScrewManagement] SAVING SCREW TO PLANNING API');
       console.log('═══════════════════════════════════════════════════════');
 
-      // Check if we've reached the maximum number of models
+      if (!sessionId) {
+        console.error('❌ No active session. Cannot save screw.');
+        console.error('   Session status:', sessionStatus);
+        console.error('   Attempting to create session now...');
+
+        // Try to create session now
+        await initializeSession();
+
+        // Check if session was created
+        if (!sessionId) {
+          alert('⚠️ Planning API not available.\n\nScrew will be saved locally only.\nCheck console for details.');
+          // Continue with localStorage save as fallback
+          console.warn('⚠️ Saving to localStorage only (no backend session)');
+        } else {
+          console.log('✅ Session created successfully, continuing with save...');
+        }
+      }
+
+      // Get current viewport states for UI restoration
+      const viewportStates = viewportStateService.getCurrentViewportStates();
+
+      try {
+        const response = await fetch('http://localhost:3001/api/planning/screws/add-with-transform', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionId,
+            screw: {
+              caseId: 'OHIF-CASE-' + Date.now(), // TODO: Get from actual case service
+              radius: finalRadiusValue,
+              length: finalLengthValue,
+              name: name,
+              screwVariantId: `generated-${finalRadiusValue}-${finalLengthValue}`,
+              vertebralLevel: 'unknown',  // Could be auto-detected later
+              side: 'unknown',           // Could be auto-detected later
+              entryPoint: { x: 0, y: 0, z: 0 },  // From transform if available
+              trajectory: {
+                direction: [0, 1, 0],    // From transform if available
+                insertionDepth: finalLengthValue,
+                convergenceAngle: 0,
+                cephaladAngle: 0
+              },
+              notes: `Saved from OHIF Viewer: ${name}`,
+              transformMatrix: transform,
+              viewportStatesJson: JSON.stringify(viewportStates),
+              placedAt: new Date().toISOString()
+            }
+          })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to save screw');
+        }
+
+        console.log(`✅ Screw saved to planning API: ${data.screw_id}`);
+
+      } catch (apiError) {
+        console.error('❌ Failed to save screw to API:', apiError);
+        // TODO: Could fallback to localStorage here, but for now just show error
+        alert('Failed to save screw. Please check the console for details.');
+        return;
+      }
+
+      // ═════════════════════════════════════════════════════════
+      // STEP 2: Load and display the 3D model
+      // ═════════════════════════════════════════════════════════
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔧 [ScrewManagement] LOADING 3D MODEL');
+      console.log('═══════════════════════════════════════════════════════');
+
+      // Check model limit
       const existingModels = modelStateService.getAllModels();
-      const maxModels = viewportStateService.getMaxSnapshots();
+      const maxModels = 20; // TODO: Get from service
 
       if (existingModels.length >= maxModels) {
-        console.warn(`⚠️ Maximum number of models (${maxModels}) reached. Cannot add more screws.`);
+        console.warn(`⚠️ Maximum number of models (${maxModels}) reached.`);
         alert(`Maximum of ${maxModels} screws reached. Please delete some screws before adding more.`);
         return;
       }
 
       console.log(`📊 Current models: ${existingModels.length}/${maxModels}`);
 
-      // Query and load the model (same as restore does)
-      // Models will coexist - no need to clear existing ones
+      // Load the 3D model using the new API
       try {
-        await viewportStateService.queryAndLoadModel(finalRadiusValue, finalLengthValue, transform);
-        console.log(`✅ Model loaded and positioned successfully - Total: ${modelStateService.getAllModels().length}/${maxModels}`);
+        await loadScrewModel(finalRadiusValue, finalLengthValue, transform);
+        console.log(`✅ Model loaded successfully - Total: ${modelStateService.getAllModels().length}/${maxModels}`);
       } catch (modelError) {
-        console.warn('⚠️ Could not load model before saving:', modelError.message);
-        console.warn('⚠️ Continuing with save anyway...');
+        console.warn('⚠️ Could not load model:', modelError.message);
+        console.warn('⚠️ Screw saved but model may not be visible');
       }
 
-      console.log('═══════════════════════════════════════════════════════');
-
       // ═════════════════════════════════════════════════════════
-      // STEP 2: Save the screw snapshot with current viewport states
+      // STEP 3: Update UI
       // ═════════════════════════════════════════════════════════
-      const screw = viewportStateService.saveSnapshot(name, finalRadiusValue, finalLengthValue, transform);
-
       setScrewName('');
       setRadius('');
       setLength('');
-      loadScrews();
 
-      console.log(`✅ Saved screw: "${screw.name}" (R: ${finalRadiusValue}mm, L: ${finalLengthValue}mm)`);
+      // Reload screws from API
+      if (sessionId) {
+        await loadScrews(sessionId);
+      }
+
+      console.log(`✅ Saved screw: "${name}" (R: ${finalRadiusValue}mm, L: ${finalLengthValue}mm)`);
 
     } catch (error) {
       console.error('Failed to save screw:', error);
+      alert('Failed to save screw. Please check the console for details.');
     }
   };
 
-  const restoreScrew = async (name) => {
+  const restoreScrew = async (screwData) => {
     try {
       setIsRestoring(true);
 
       // Check if we've reached the maximum number of models
       const existingModels = modelStateService.getAllModels();
-      const maxModels = viewportStateService.getMaxSnapshots();
+      const maxModels = 20; // TODO: Get from service
 
       if (existingModels.length >= maxModels) {
         console.warn(`⚠️ Maximum number of models (${maxModels}) reached. Cannot restore more screws.`);
@@ -262,65 +527,113 @@ export default function ScrewManagementPanel({ servicesManager }) {
         return;
       }
 
-      console.log(`🔄 Restoring screw: "${name}" (${existingModels.length + 1}/${maxModels} models)`);
+      console.log(`🔄 Restoring screw: "${screwData.name || screwData.screw_id}" (${existingModels.length + 1}/${maxModels} models)`);
 
-      // Restore the screw (viewport state + loads model)
-      // Models will coexist - no need to clear existing ones
-      await viewportStateService.restoreSnapshot(name);
-      console.log(`✅ Restored screw: "${name}" - Total models: ${modelStateService.getAllModels().length}/${maxModels}`);
+      // For API-based screws, we need to load the model manually
+      const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1] || 3.5;
+      const length = screwData.length || screwData.screw_variant_id?.split('-')[2] || 40;
+      const transform = screwData.transform_matrix || screwData.transform || [];
+
+      // Load and display the 3D model
+      await loadScrewModel(radius, length, transform);
+
+      // Restore viewport states if available
+      if (screwData.viewport_states_json || screwData.viewportStates) {
+        try {
+          const viewportStates = screwData.viewport_states_json ?
+            JSON.parse(screwData.viewport_states_json) :
+            screwData.viewportStates;
+
+          viewportStateService.restoreViewportStates(viewportStates);
+          console.log('✅ Viewport states restored');
+        } catch (stateError) {
+          console.warn('⚠️ Could not restore viewport states:', stateError);
+        }
+      }
+
+      console.log(`✅ Restored screw - Total models: ${modelStateService.getAllModels().length}/${maxModels}`);
 
     } catch (error) {
       console.error('Failed to restore screw:', error);
+      alert('Failed to restore screw. Please check the console for details.');
     } finally {
       setIsRestoring(false);
     }
   };
 
-  const deleteScrew = (name) => {
+  const deleteScrew = async (screwData) => {
     try {
-      // Get the screw data before deleting
-      const screw = viewportStateService.getSnapshot(name);
+      const screwId = screwData.screw_id || screwData.id || screwData.name;
+      const screwName = screwData.name || screwData.screw_id || 'Unknown Screw';
 
-      if (screw) {
-        // Find and remove any models that match this screw's dimensions
-        const loadedModels = modelStateService.getAllModels();
-        let modelsRemoved = 0;
+      console.log(`🗑️ Deleting screw: "${screwName}" (${screwId})`);
 
-        for (const model of loadedModels) {
-          // Check if this model matches the screw by checking its metadata or name
-          // Since models loaded for screws have specific naming patterns
-          const modelName = model.metadata.name.toLowerCase();
-          const screwRadius = screw.radius || 0;
-          const screwLength = screw.length || 0;
+      // Try to delete from API first
+      if (sessionId && screwId) {
+        try {
+          const response = await fetch(`http://localhost:3001/api/planning/screws/${screwId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId })
+          });
 
-          // Check if model name contains the screw dimensions
-          if (modelName.includes(`${screwRadius}`) || modelName.includes(`${screwLength}`)) {
-            console.log(`🗑️ Removing model: ${model.metadata.id} (${model.metadata.name})`);
-            modelStateService.removeModel(model.metadata.id);
-            modelsRemoved++;
+          const data = await response.json();
+
+          if (!data.success) {
+            console.warn('⚠️ API delete failed, continuing with local cleanup:', data.error);
+          } else {
+            console.log('✅ Deleted screw from API');
           }
+        } catch (apiError) {
+          console.warn('⚠️ API delete failed, continuing with local cleanup:', apiError);
         }
-
-        if (modelsRemoved === 0) {
-          // If no models found by name matching, remove all models as fallback
-          // This ensures the UI stays clean
-          console.log('⚠️ No models found by dimension matching, clearing all models');
-          for (const model of loadedModels) {
-            modelStateService.removeModel(model.metadata.id);
-          }
-        }
-
-        console.log(`✅ Removed ${modelsRemoved > 0 ? modelsRemoved : loadedModels.length} model(s)`);
       }
 
-      // Delete the screw snapshot
-      viewportStateService.deleteSnapshot(name);
-      loadScrews();
+      // Remove associated 3D models
+      const loadedModels = modelStateService.getAllModels();
+      let modelsRemoved = 0;
 
-      console.log(`✅ Deleted screw: "${name}"`);
+      // Try to match by dimensions first
+      const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1];
+      const length = screwData.length || screwData.screw_variant_id?.split('-')[2];
+
+      for (const model of loadedModels) {
+        const modelName = model.metadata.name.toLowerCase();
+
+        // Check if model matches screw dimensions
+        if ((radius && modelName.includes(radius.toString())) ||
+            (length && modelName.includes(length.toString())) ||
+            modelName.includes(screwName.toLowerCase())) {
+          console.log(`🗑️ Removing model: ${model.metadata.id} (${model.metadata.name})`);
+          modelStateService.removeModel(model.metadata.id);
+          modelsRemoved++;
+        }
+      }
+
+      if (modelsRemoved === 0) {
+        // If no specific models found, remove the most recently loaded model as fallback
+        const latestModel = loadedModels[loadedModels.length - 1];
+        if (latestModel) {
+          console.log(`🗑️ Removing latest model as fallback: ${latestModel.metadata.id}`);
+          modelStateService.removeModel(latestModel.metadata.id);
+          modelsRemoved = 1;
+        }
+      }
+
+      console.log(`✅ Removed ${modelsRemoved} model(s)`);
+
+      // Reload screws from API
+      if (sessionId) {
+        await loadScrews(sessionId);
+      } else {
+        loadScrewsLocal();
+      }
+
+      console.log(`✅ Deleted screw: "${screwName}"`);
 
     } catch (error) {
       console.error('Error deleting screw:', error);
+      alert('Failed to delete screw. Please check the console for details.');
     }
   };
 
@@ -478,11 +791,26 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const maxScrews = viewportStateService.getMaxSnapshots();
   const remainingSlots = viewportStateService.getRemainingSlots();
 
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-full bg-gray-900 text-white p-4 space-y-4 items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin text-4xl mb-4">🔄</div>
+          <h2 className="text-xl font-bold text-white mb-2">🔗 Initializing Planning Session</h2>
+          <p className="text-gray-400">Connecting to planning service...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 space-y-4 h-full flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-white">🔩 Screw Management</h2>
+        <h2 className="text-xl font-bold text-white">
+          🔩 Screw Management
+          {sessionId && <span className="text-sm font-normal text-green-400 ml-2">(API Connected)</span>}
+        </h2>
         <div className="flex gap-1">
           <button
             onClick={testCrosshairDetection}
@@ -518,6 +846,29 @@ export default function ScrewManagementPanel({ servicesManager }) {
           )}
         </div>
       </div>
+
+      {/* Session Status Indicator */}
+      {sessionStatus === 'initializing' && (
+        <div className="p-2 bg-yellow-900 bg-opacity-30 border border-yellow-600 rounded text-xs text-yellow-300">
+          🔄 Connecting to planning service...
+        </div>
+      )}
+      {sessionStatus === 'ready' && sessionId && (
+        <div className="p-2 bg-green-900 bg-opacity-30 border border-green-600 rounded text-xs text-green-300">
+          ✅ Planning session ready ({sessionId.substring(0, 8)}...)
+        </div>
+      )}
+      {sessionStatus === 'error' && (
+        <div className="p-2 bg-red-900 bg-opacity-30 border border-red-600 rounded text-xs">
+          <div className="text-red-300 mb-1">⚠️ Planning API unavailable</div>
+          <button
+            onClick={initializeSession}
+            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs"
+          >
+            🔄 Retry Connection
+          </button>
+        </div>
+      )}
 
       {/* Save Section */}
       <div className="space-y-2 border border-blue-600 rounded p-3 bg-blue-900 bg-opacity-20">
@@ -597,57 +948,82 @@ export default function ScrewManagementPanel({ servicesManager }) {
               </p>
             </div>
           ) : (
-            screws.map((screw) => (
-              <div
-                key={screw.name}
-                className="border border-gray-700 rounded p-3 hover:border-blue-500 transition bg-gray-800 bg-opacity-50"
-              >
-                <div className="flex justify-between items-start gap-2">
-                  {/* Screw Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-lg">🔩</span>
-                      <p className="font-medium text-sm text-white truncate" title={screw.name}>
-                        {screw.name}
-                      </p>
-                    </div>
-                    <p className="text-xs text-gray-400 mb-2">
-                      {new Date(screw.timestamp).toLocaleString()}
-                    </p>
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="inline-block px-2 py-1 bg-blue-900 bg-opacity-50 border border-blue-700 rounded text-xs text-blue-300 font-semibold">
-                        ⌀ {(screw.radius * 2)?.toFixed(1) ?? 0} mm
-                      </span>
-                      <span className="inline-block px-2 py-1 bg-green-900 bg-opacity-50 border border-green-700 rounded text-xs text-green-300 font-semibold">
-                        ↕ {screw.length?.toFixed(1) ?? 0} mm
-                      </span>
-                      <span className="inline-block px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-400">
-                        {screw.viewports.length} views
-                      </span>
-                    </div>
-                  </div>
+            screws.map((screw, index) => {
+              // Handle both old localStorage format and new API format
+              const screwName = screw.name || screw.screw_id || `Screw ${index + 1}`;
+              const screwRadius = screw.radius || (screw.screw_variant_id?.split('-')[1] ?
+                parseFloat(screw.screw_variant_id.split('-')[1]) / 10 : 3.25);
+              const screwLength = screw.length || (screw.screw_variant_id?.split('-')[2] ?
+                parseFloat(screw.screw_variant_id.split('-')[2]) : 40);
+              const timestamp = screw.timestamp || screw.placed_at || screw.created_at || Date.now();
 
-                  {/* Action Buttons */}
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => restoreScrew(screw.name)}
-                      disabled={isRestoring}
-                      className="px-2 py-2 bg-blue-600 hover:bg-blue-700 text-white text-base rounded transition disabled:bg-gray-600 disabled:cursor-not-allowed"
-                      title={`Load "${screw.name}"`}
-                    >
-                      {isRestoring ? '⏳' : '🔄'}
-                    </button>
-                    <button
-                      onClick={() => deleteScrew(screw.name)}
-                      className="px-2 py-2 bg-red-600 hover:bg-red-700 text-white text-base rounded transition"
-                      title={`Delete "${screw.name}"`}
-                    >
-                      🗑️
-                    </button>
+              // Check if this is API data (has screw_id) or localStorage data (has name)
+              const isApiData = !!screw.screw_id;
+
+              return (
+                <div
+                  key={screw.screw_id || screw.name || index}
+                  className="border border-gray-700 rounded p-3 hover:border-blue-500 transition bg-gray-800 bg-opacity-50"
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    {/* Screw Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-lg">🔩</span>
+                        <p className="font-medium text-sm text-white truncate" title={screwName}>
+                          {screwName}
+                        </p>
+                        {isApiData && (
+                          <span className="inline-block px-1 py-0.5 bg-green-900 bg-opacity-50 border border-green-700 rounded text-xs text-green-300">
+                            API
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mb-2">
+                        {new Date(timestamp).toLocaleString()}
+                      </p>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <span className="inline-block px-2 py-1 bg-blue-900 bg-opacity-50 border border-blue-700 rounded text-xs text-blue-300 font-semibold">
+                          ⌀ {(screwRadius * 2).toFixed(1)} mm
+                        </span>
+                        <span className="inline-block px-2 py-1 bg-green-900 bg-opacity-50 border border-green-700 rounded text-xs text-green-300 font-semibold">
+                          ↕ {screwLength.toFixed(1)} mm
+                        </span>
+                        {screw.viewports && (
+                          <span className="inline-block px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-400">
+                            {screw.viewports.length} views
+                          </span>
+                        )}
+                        {screw.transform_matrix && (
+                          <span className="inline-block px-2 py-0.5 bg-purple-900 bg-opacity-50 border border-purple-700 rounded text-xs text-purple-300">
+                            3D transform
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => restoreScrew(screw)}
+                        disabled={isRestoring}
+                        className="px-2 py-2 bg-blue-600 hover:bg-blue-700 text-white text-base rounded transition disabled:bg-gray-600 disabled:cursor-not-allowed"
+                        title={`Load "${screwName}"`}
+                      >
+                        {isRestoring ? '⏳' : '🔄'}
+                      </button>
+                      <button
+                        onClick={() => deleteScrew(screw)}
+                        className="px-2 py-2 bg-red-600 hover:bg-red-700 text-white text-base rounded transition"
+                        title={`Delete "${screwName}"`}
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

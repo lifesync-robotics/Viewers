@@ -81,7 +81,7 @@ class PlaneCutterService extends PubSubService {
     super(EVENTS);
     this.servicesManager = servicesManager;
     this.planeCutters = [];
-    this.isEnabled = false;
+    this.isEnabled = true; // Enable plane cutters by default for 2D cross-sections
     this.colorIndex = 0;
     this.modelColors = new Map();
 
