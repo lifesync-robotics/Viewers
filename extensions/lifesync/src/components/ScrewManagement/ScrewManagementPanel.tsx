@@ -196,7 +196,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log('🔧 Applying transform to loaded model...');
         console.log(`   Transform type: ${transform.constructor.name}`);
         console.log(`   Translation: (${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)})`);
-        
+
         // Find the loaded model and apply transform
         const loadedModels = modelStateService.getAllModels();
         const latestModel = loadedModels[loadedModels.length - 1];
@@ -204,7 +204,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         if (latestModel) {
           // CRITICAL: Pass length as 3rd parameter for proper offset
           await modelStateService.setModelTransform(
-            latestModel.metadata.id, 
+            latestModel.metadata.id,
             transform,
             length
           );
@@ -578,7 +578,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // For API-based screws, we need to load the model manually
       const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1] || 3.5;
       const length = screwData.length || screwData.screw_variant_id?.split('-')[2] || 40;
-      
+
       // ═══════════════════════════════════════════════════════════
       // Get transform - API now returns it already parsed as array
       // ═══════════════════════════════════════════════════════════
@@ -594,9 +594,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.warn(`⚠️ Loading screw without transform - will appear at origin`);
         transformArray = null;
       } else {
-        // Convert to Float32Array for VTK
-        transformArray = new Float32Array(transformArray);
-        console.log(`✅ Valid transform array converted to Float32Array`);
+        // Keep as regular number[] array (modelStateService expects number[], not Float32Array)
+        console.log(`✅ Valid transform array`);
         console.log(`📐 Translation: (${transformArray[3].toFixed(2)}, ${transformArray[7].toFixed(2)}, ${transformArray[11].toFixed(2)})`);
       }
 
