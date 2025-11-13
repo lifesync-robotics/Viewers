@@ -151,7 +151,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const loadScrewModel = async (radius, length, transform) => {
     try {
       console.log(`🔍 Querying model for radius=${radius}, length=${length}`);
-
+      console.log(`🔍 transform:`, transform);
+      console.log(`🔍 transform.length:`, transform.length);
       // Query model from planning API
       const queryResponse = await fetch(
         `http://localhost:3001/api/planning/models/query?radius=${radius}&length=${length}`
@@ -192,14 +193,27 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Apply transform if provided
       if (transform && transform.length === 16) {
+        console.log('🔧 Applying transform to loaded model...');
+        console.log(`   Transform type: ${transform.constructor.name}`);
+        console.log(`   Translation: (${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)})`);
+        
         // Find the loaded model and apply transform
         const loadedModels = modelStateService.getAllModels();
         const latestModel = loadedModels[loadedModels.length - 1];
 
         if (latestModel) {
-          modelStateService.setModelTransform(latestModel.metadata.id, transform);
-          console.log(`🔧 Applied transform to model: ${latestModel.metadata.id}`);
+          // CRITICAL: Pass length as 3rd parameter for proper offset
+          await modelStateService.setModelTransform(
+            latestModel.metadata.id, 
+            transform,
+            length
+          );
+          console.log(`✅ Applied transform to model: ${latestModel.metadata.id} with length offset: ${length}mm`);
+        } else {
+          console.error('❌ No model found to apply transform to!');
         }
+      } else {
+        console.warn(`⚠️ No valid transform to apply (length: ${transform?.length || 0})`);
       }
 
     } catch (error) {
@@ -564,10 +578,30 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // For API-based screws, we need to load the model manually
       const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1] || 3.5;
       const length = screwData.length || screwData.screw_variant_id?.split('-')[2] || 40;
-      const transform = screwData.transform_matrix || screwData.transform || [];
+      
+      // ═══════════════════════════════════════════════════════════
+      // Get transform - API now returns it already parsed as array
+      // ═══════════════════════════════════════════════════════════
+      let transformArray = screwData.transform_matrix;
+      
+      console.log(`🔍 transform_matrix type: ${typeof transformArray}`);
+      console.log(`🔍 transform_matrix is array: ${Array.isArray(transformArray)}`);
+      console.log(`🔍 transform_matrix length: ${transformArray?.length}`);
+      
+      // Validate it's a proper array with 16 elements
+      if (!transformArray || !Array.isArray(transformArray) || transformArray.length !== 16) {
+        console.error(`❌ Invalid transform_matrix! Type: ${typeof transformArray}, Length: ${transformArray?.length}`);
+        console.warn(`⚠️ Loading screw without transform - will appear at origin`);
+        transformArray = null;
+      } else {
+        // Convert to Float32Array for VTK
+        transformArray = new Float32Array(transformArray);
+        console.log(`✅ Valid transform array converted to Float32Array`);
+        console.log(`📐 Translation: (${transformArray[3].toFixed(2)}, ${transformArray[7].toFixed(2)}, ${transformArray[11].toFixed(2)})`);
+      }
 
       // Load and display the 3D model
-      await loadScrewModel(radius, length, transform);
+      await loadScrewModel(radius, length, transformArray);
 
       // Restore viewport states if available
       if (screwData.viewport_states_json || screwData.viewportStates) {
