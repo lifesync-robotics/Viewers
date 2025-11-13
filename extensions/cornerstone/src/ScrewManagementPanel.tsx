@@ -334,6 +334,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const loadScrewModel = async (radius, length, transform) => {
     try {
       console.log(`🔍 Querying model for radius=${radius}, length=${length}`);
+      console.log(`🔍 Transform provided: ${transform ? 'YES' : 'NO'} (length: ${transform?.length || 0})`);
 
       // Query model from planning API
       const queryResponse = await fetch(
@@ -348,6 +349,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       const modelInfo = queryData.model;
       console.log(`📦 Model found: ${modelInfo.model_id} (${modelInfo.source})`);
+      console.log(`🔧 About to load model with transform: ${transform ? 'YES' : 'NO'}`);
 
       // Ensure plane cutters are initialized and enabled
       if (planeCutterService) {
@@ -367,15 +369,22 @@ export default function ScrewManagementPanel({ servicesManager }) {
       const modelUrl = `http://localhost:3001/api/planning/models/${modelInfo.model_id}/obj`;
 
       // Load model using modelStateService
+      console.log(`🔧 Loading model to viewport: ${getCurrentViewportId()}`);
       await modelStateService.loadModelFromServer(modelUrl, {
         viewportId: getCurrentViewportId(),
         color: [1.0, 0.84, 0.0],  // Gold color for screws
         opacity: 0.9
       });
 
+      console.log(`🔧 Model loaded, checking transform condition...`);
+      console.log(`🔧 Transform exists: ${!!transform}`);
+      console.log(`🔧 Transform length: ${transform?.length}`);
+      console.log(`🔧 Transform is array: ${Array.isArray(transform)}`);
+
       // Apply transform if provided
       if (transform && transform.length === 16) {
         console.log('🔧 Applying transform matrix to model...');
+        console.log(`   Screw dimensions: radius=${radius}mm, length=${length}mm`);
         console.log(`   Transform type: ${typeof transform}`);
         console.log(`   Transform length: ${transform.length}`);
         console.log(`   Transform sample: [${transform.slice(0, 4).map(v => v.toFixed(2)).join(', ')}, ...]`);
@@ -387,7 +396,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
         if (latestModel) {
           console.log(`   Target model ID: ${latestModel.metadata.id}`);
-          modelStateService.setModelTransform(latestModel.metadata.id, transform);
+          // CRITICAL: Pass length as 3rd parameter for proper offset calculation
+          await modelStateService.setModelTransform(latestModel.metadata.id, transform, length);
           console.log(`✅ Transform applied to model: ${latestModel.metadata.id}`);
         } else {
           console.error('❌ No model found to apply transform to!');
@@ -744,10 +754,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // For API-based screws, we need to load the model manually
       const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1] || 3.5;
       const length = screwData.length || screwData.screw_variant_id?.split('-')[2] || 40;
-      
+
       // Get transform - prefer parsed 'transform' over string 'transform_matrix'
       let transform = screwData.transform || [];
-      
+
       // If transform is still a string (from transform_matrix), parse it
       if (typeof transform === 'string') {
         try {
@@ -758,11 +768,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
           transform = [];
         }
       }
-      
+
       // If we got transform_matrix but no transform, try to parse it
       if ((!transform || transform.length === 0) && screwData.transform_matrix) {
         try {
-          transform = typeof screwData.transform_matrix === 'string' 
+          transform = typeof screwData.transform_matrix === 'string'
             ? JSON.parse(screwData.transform_matrix)
             : screwData.transform_matrix;
           console.log('📐 Parsed transform matrix from transform_matrix field');
@@ -771,7 +781,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
           transform = [];
         }
       }
-      
+
       console.log(`📐 Transform array length: ${transform?.length || 0}`);
       if (transform && transform.length === 16) {
         console.log(`📐 Transform values: [${transform.slice(0, 4).join(', ')}, ...]`);
