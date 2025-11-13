@@ -609,12 +609,12 @@ export default function ScrewManagementPanel({ servicesManager }) {
           // API now returns viewport_states_json already parsed as object
           // Check if it's already an object or still a string
           let viewportStates = screwData.viewport_states_json || screwData.viewportStates;
-          
+
           if (typeof viewportStates === 'string') {
             console.log('🔄 Parsing viewport_states_json from string');
             viewportStates = JSON.parse(viewportStates);
           }
-          
+
           console.log('📊 Viewport states type:', typeof viewportStates);
           console.log('📊 Viewport IDs:', Object.keys(viewportStates || {}));
 

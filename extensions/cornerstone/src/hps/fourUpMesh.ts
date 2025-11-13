@@ -14,9 +14,7 @@ export const fourUpMesh = {
   protocolMatchingRules: [],
   imageLoadStrategy: 'interleaveCenter',
   callbacks: {
-    // Use onViewportDataInitialized instead of onProtocolEnter to ensure
-    // viewports are fully initialized with data before creating plane cutters
-    onViewportDataInitialized: [
+    onProtocolEnter: [
       {
         commandName: 'initializePlaneCutters',
         context: 'CORNERSTONE',

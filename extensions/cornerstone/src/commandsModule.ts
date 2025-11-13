@@ -2732,7 +2732,7 @@ function commandsModule({
 
       // Wait for viewports to be ready before initializing plane cutters
       // This prevents race conditions where plane cutters are created before viewports exist
-      const initializeWithRetry = async (maxRetries = 10, delayMs = 500) => {
+      const initializeWithRetry = async (maxRetries = 5, delayMs = 200) => {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           console.log(`🔄 [initializePlaneCutters] Initialization attempt ${attempt}/${maxRetries}`);
 
@@ -2743,7 +2743,7 @@ function commandsModule({
             planeCutterService.enable();
             console.log('✅ [initializePlaneCutters] Plane cutters initialized and enabled');
             console.log('═══════════════════════════════════════════════════════');
-            return true;
+            return;
           }
 
           if (attempt < maxRetries) {
@@ -2753,16 +2753,10 @@ function commandsModule({
         }
 
         console.warn('⚠️ [initializePlaneCutters] Could not initialize plane cutters after multiple attempts');
-        console.warn('⚠️ This usually means viewports failed to initialize properly');
-        return false;
       };
 
       // Run initialization with retry logic
-      const success = await initializeWithRetry();
-      
-      if (!success) {
-        console.warn('💡 Tip: You can manually initialize plane cutters by running the command again');
-      }
+      await initializeWithRetry();
     },
     /**
      * Disable plane cutters when exiting fourUpMesh layout

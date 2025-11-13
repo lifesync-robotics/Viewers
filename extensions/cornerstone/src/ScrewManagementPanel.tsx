@@ -757,7 +757,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // For API-based screws, we need to load the model manually
       const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1] || 3.5;
       const length = screwData.length || screwData.screw_variant_id?.split('-')[2] || 40;
-      
+
       // Get transform - prefer parsed 'transform' over string 'transform_matrix'
       let transform = screwData.transform || [];
       console.log(`🔍 Initial transform value:`, transform);
