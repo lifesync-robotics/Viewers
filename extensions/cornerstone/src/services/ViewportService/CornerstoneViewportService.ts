@@ -796,7 +796,7 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
     // is being used to navigate to the initial view position for measurement
     // navigation and other navigation forcing specific views.
     let initialImageIndexToUse =
-      presentations?.positionPresentation?.initialImageIndex ?? <number>initialImageIndex;
+      presentations?.positionPresentation?.initialImageIndex ?? (initialImageIndex as number);
 
     const { rotation, flipHorizontal, displayArea } = viewportInfo.getViewportOptions();
 
@@ -1015,6 +1015,10 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
     const displaySet = displaySetService.getDisplaySetByUID(displaySetUIDs[0]);
     const displaySetModality = displaySet?.Modality;
 
+    // seems like a hack but we need the actor to be ready first before
+    // we set the properties
+    const timeoutViewportCallback = (callback: () => void) => setTimeout(callback, 0);
+
     // filter overlay display sets (e.g. segmentation) since they will get handled below via the segmentation service
     const filteredVolumeInputArray = volumeInputArray
       .map((volumeInput, index) => {
@@ -1066,11 +1070,20 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
           const backgroundDisplaySet = displaySetService.getDisplaySetsBy(
             displaySet =>
               !displaySet.isOverlayDisplaySet &&
-              displaySet.images.some(image => image.imageId === sampleImageId)
+              displaySet.images?.some(image => image.imageId === sampleImageId)
           );
 
           if (backgroundDisplaySet.length !== 1) {
             throw new Error('Background display set not found');
+          }
+
+          if (viewport.type === csEnums.ViewportType.VOLUME_3D) {
+            timeoutViewportCallback(() => {
+              viewportGridService.setDisplaySetsForViewport({
+                viewportId: viewport.id,
+                displaySetInstanceUIDs: [backgroundDisplaySet[0].displaySetInstanceUID],
+              });
+            });
           }
         }
       });
@@ -1116,9 +1129,7 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
     viewport.render();
 
     volumesProperties.forEach(({ properties, volumeId }) => {
-      setTimeout(() => {
-        // seems like a hack but we need the actor to be ready first before
-        // we set the properties
+      timeoutViewportCallback(() => {
         viewport.setProperties(properties, volumeId);
 
         // After setting properties (especially preset), ensure maximum samples per ray is safe
@@ -1128,10 +1139,10 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
         }
 
         viewport.render();
-      }, 0);
+      });
     });
 
-    this.setPresentations(viewport.id, presentations, viewportInfo);
+    this.setPresentations(viewport.id, presentations);
 
     if (!presentations.positionPresentation) {
       const imageIndex = this._getInitialImageIndexForViewport(viewportInfo);
@@ -1461,17 +1472,12 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
       const { segmentationId, type, hydrated } = presentationItem;
 
       const { Labelmap, Surface } = csToolsEnums.SegmentationRepresentations;
-      const representationType = (() => {
-        if (type === Surface) {
-          if (viewport.type === csEnums.ViewportType.VOLUME_3D) {
-            return Surface;
-          } else {
-            return Labelmap;
-          }
-        }
+      const isVolume3D = viewport.type === csEnums.ViewportType.VOLUME_3D;
 
-        return type;
-      })();
+      // Determine the appropriate segmentation representation for the viewport.
+      // If the current type is Surface but the viewport is not 3D, fallback to Labelmap.
+      // Otherwise, use the existing type.
+      const representationType = type === Surface && !isVolume3D ? Labelmap : type;
 
       if (hydrated) {
         segmentationService.addSegmentationRepresentation(viewport.id, {

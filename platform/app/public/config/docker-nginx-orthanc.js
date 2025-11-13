@@ -36,7 +36,7 @@ window.config = {
   // =========================================================================
   // PERFORMANCE & DISPLAY SETTINGS
   // =========================================================================
-  
+
   // Web Workers - Windows systems may have issues with >3 workers
   maxNumberOfWebWorkers: 3,
 

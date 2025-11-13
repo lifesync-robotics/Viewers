@@ -1,56 +1,70 @@
 import React from 'react';
-
+import { useTranslation } from 'react-i18next';
 import { Toolbox } from '@ohif/extension-default';
 import PanelSegmentation from './panels/PanelSegmentation';
 import ActiveViewportWindowLevel from './components/ActiveViewportWindowLevel';
 import PanelMeasurement from './panels/PanelMeasurement';
+import { SegmentationRepresentations } from '@cornerstonejs/tools/enums';
+import i18n from '@ohif/i18n';
 import PanelTracking from './panels/PanelTracking';
 import ViewportStatePanel from './viewportStatePanel';
 import ScrewManagementPanel from './ScrewManagementPanel';
 
 const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: withAppTypes) => {
-  const wrappedPanelSegmentation = ({ configuration }) => {
+  const { toolbarService } = servicesManager.services;
+
+  const toolSectionMap = {
+    [SegmentationRepresentations.Labelmap]: toolbarService.sections.labelMapSegmentationToolbox,
+    [SegmentationRepresentations.Contour]: toolbarService.sections.contourSegmentationToolbox,
+  };
+
+  const wrappedPanelSegmentation = props => {
     return (
       <PanelSegmentation
         commandsManager={commandsManager}
         servicesManager={servicesManager}
         extensionManager={extensionManager}
         configuration={{
-          ...configuration,
+          ...props?.configuration,
         }}
+        segmentationRepresentationType={props?.segmentationRepresentationType}
       />
     );
   };
 
-  const wrappedPanelSegmentationNoHeader = ({ configuration }) => {
+  const wrappedPanelSegmentationNoHeader = props => {
     return (
       <PanelSegmentation
         commandsManager={commandsManager}
         servicesManager={servicesManager}
         extensionManager={extensionManager}
         configuration={{
-          ...configuration,
+          ...props?.configuration,
         }}
+        segmentationRepresentationType={props?.segmentationRepresentationType}
       />
     );
   };
 
-  const wrappedPanelSegmentationWithTools = ({ configuration }) => {
-    const { toolbarService } = servicesManager.services;
+  const wrappedPanelSegmentationWithTools = props => {
+    const { t } = useTranslation('SegmentationTable');
+    const tKey = `${props.segmentationRepresentationType ?? 'Segmentation'} tools`;
+    const tValue = t(tKey);
 
     return (
       <>
         <Toolbox
-          buttonSectionId={toolbarService.sections.segmentationToolbox}
-          title="Segmentation Tools"
+          buttonSectionId={toolSectionMap[props.segmentationRepresentationType]}
+          title={tValue}
         />
         <PanelSegmentation
           commandsManager={commandsManager}
           servicesManager={servicesManager}
           extensionManager={extensionManager}
           configuration={{
-            ...configuration,
+            ...props?.configuration,
           }}
+          segmentationRepresentationType={props?.segmentationRepresentationType}
         />
       </>
     );
@@ -85,11 +99,62 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
       component: wrappedPanelSegmentationNoHeader,
     },
     {
-      name: 'panelSegmentationWithTools',
+      name: 'panelSegmentationWithToolsLabelMap',
       iconName: 'tab-segmentation',
       iconLabel: 'Segmentation',
-      label: 'Segmentation',
-      component: wrappedPanelSegmentationWithTools,
+      label: i18n.t('SegmentationTable:Labelmap'),
+      component: props =>
+        wrappedPanelSegmentationWithTools({
+          ...props,
+          segmentationRepresentationType: SegmentationRepresentations.Labelmap,
+        }),
+    },
+    {
+      name: 'panelSegmentationWithToolsContour',
+      iconName: 'tab-contours',
+      iconLabel: 'Segmentation',
+      label: i18n.t('SegmentationTable:Contour'),
+      component: props =>
+        wrappedPanelSegmentationWithTools({
+          ...props,
+          segmentationRepresentationType: SegmentationRepresentations.Contour,
+        }),
+    },
+    // Viewport state panel (legacy)
+    {
+      name: 'viewport-state',
+      label: 'Viewport States',
+      iconName: 'icon-panel-seg',
+      component: (props) => (
+        <ViewportStatePanel
+          servicesManager={servicesManager}
+          commandsManager={commandsManager}
+          extensionManager={extensionManager}
+          {...props}
+        />
+      ),
+    },
+    // Tracking control panel (integrated with asset management)
+    {
+      name: 'panelTracking',
+      iconName: 'tab-linear',
+      iconLabel: 'Tracking',
+      label: 'Tracking Control',
+      component: PanelTracking,
+    },
+    // Screw management panel (pedicle screw planning)
+    {
+      name: 'screw-management',
+      label: 'Screw Management',
+      iconName: 'tool-more-menu',
+      component: (props) => (
+        <ScrewManagementPanel
+          servicesManager={servicesManager}
+          commandsManager={commandsManager}
+          extensionManager={extensionManager}
+          {...props}
+        />
+      ),
     },
     // Viewport state panel (legacy)
     {

@@ -108,6 +108,12 @@ export default async function init({
     colorbarService.EVENTS.STATE_CHANGED,
   ]);
 
+  toolbarService.registerEventForToolbarUpdate(segmentationService, [
+    segmentationService.EVENTS.SEGMENTATION_MODIFIED,
+    segmentationService.EVENTS.SEGMENTATION_REPRESENTATION_MODIFIED,
+    segmentationService.EVENTS.SEGMENTATION_ANNOTATION_CUT_MERGE_PROCESS_COMPLETED,
+  ]);
+
   window.services = servicesManager.services;
   window.servicesManager = servicesManager;
   window.extensionManager = extensionManager;
