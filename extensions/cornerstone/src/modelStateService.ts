@@ -1416,10 +1416,11 @@ class ModelStateService extends PubSubService {
  *
  * @param modelId - The unique identifier for the model
  * @param transform - 4x4 transformation matrix as a flat array of 16 elements (row-major order)
+ *                     Can be number[] or Float32Array
  * @param length - Optional screw length in mm (used to offset model along its Y-axis)
  * @returns true if successful, false otherwise
  */
-async setModelTransform(modelId: string, transform: number[], length?: number): Promise<boolean> {
+async setModelTransform(modelId: string, transform: number[] | Float32Array, length?: number): Promise<boolean> {
   try {
     const loadedModel = this.loadedModels.get(modelId);
     if (!loadedModel) {
@@ -1427,11 +1428,17 @@ async setModelTransform(modelId: string, transform: number[], length?: number): 
       return false;
     }
 
-    // Validate and convert transform
-    if (!Array.isArray(transform) || transform.length !== 16) {
-      console.error(`❌ Invalid transform`);
+    // Validate transform - accept both Array and Float32Array
+    const isValidArray = Array.isArray(transform);
+    const isValidTypedArray = transform instanceof Float32Array;
+    
+    if ((!isValidArray && !isValidTypedArray) || transform.length !== 16) {
+      console.error(`❌ Invalid transform - must be Array or Float32Array with 16 elements`);
+      console.error(`   Got type: ${transform?.constructor?.name}, length: ${transform?.length}`);
       return false;
     }
+    
+    console.log(`✅ Valid transform: ${transform.constructor.name}[${transform.length}]`);
 
     console.log('═══════════════════════════════════════════════════════');
     console.log('🔧 [ModelStateService] APPLYING TRANSFORM WITH LENGTH OFFSET');
