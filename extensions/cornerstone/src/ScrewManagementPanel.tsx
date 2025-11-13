@@ -104,31 +104,31 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const loadExistingPlan = async (planId) => {
     try {
       console.log(`📂 Loading existing plan: ${planId}`);
-      
+
       const response = await fetch(`http://localhost:3001/api/planning/plan/${planId}`);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to load plan: ${response.statusText}`);
       }
 
       const data = await response.json();
       console.log('📡 Plan API response:', data);
-      
+
       if (!data.success || !data.plan) {
         throw new Error('Plan data not available');
       }
 
       const plan = data.plan;
       console.log(`📋 Plan details: "${plan.name}", session=${plan.session_id}, screws=${plan.screws?.length || 0}`);
-      
+
       // Set the session ID from the plan
       setSessionId(plan.session_id);
       setSessionStatus('ready');
-      
+
       // Load screws from the plan
       if (plan.screws && plan.screws.length > 0) {
         console.log(`✅ Loading ${plan.screws.length} screws from plan`);
-        
+
         // Convert plan screws to the format expected by the UI
         const screwsData = plan.screws.map((screw, index) => ({
           screw_id: screw.screw_id || `screw-${index + 1}`, // Use screw_id to match UI expectations
@@ -147,7 +147,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log('🔍 Screws data being set:', screwsData);
         setScrews(screwsData);
         console.log(`✅ UI state updated with ${screwsData.length} screws`);
-        
+
         // Restore each screw's 3D model (do this after setting state so UI updates immediately)
         let restoredCount = 0;
         for (const screwData of screwsData) {
@@ -164,13 +164,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
             console.warn(`⚠️ Skipping screw without transform/dimensions: ${screwData.name || screwData.screw_id}`);
           }
         }
-        
+
         console.log(`✅ Loaded plan "${plan.name}": ${screwsData.length} screws in list, ${restoredCount} 3D models restored`);
       } else {
         console.log('ℹ️ Plan has no screws');
         setScrews([]); // Explicitly set empty array to ensure UI updates
       }
-      
+
       return true;
     } catch (error) {
       console.error('❌ Error loading plan:', error);
@@ -189,9 +189,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Get actual DICOM UIDs from viewport
       const dicomUIDs = getDicomUIDs();
-      
+
       let studyInstanceUID, seriesInstanceUID;
-      
+
       if (dicomUIDs) {
         studyInstanceUID = dicomUIDs.studyInstanceUID;
         seriesInstanceUID = dicomUIDs.seriesInstanceUID;
@@ -208,25 +208,33 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // Check for existing plans for this series
       console.log('🔍 Checking for existing plans...');
       const existingPlans = await checkExistingPlans(seriesInstanceUID);
-      
+
       if (existingPlans && existingPlans.length > 0) {
         console.log(`✅ Found ${existingPlans.length} existing plan(s) for this series`);
-        
+
         // Load the most recent plan automatically
         const mostRecentPlan = existingPlans[0];
         console.log(`📂 Auto-loading most recent plan: ${mostRecentPlan.name}`);
-        
+
         const loaded = await loadExistingPlan(mostRecentPlan.plan_id);
-        
+
         if (loaded) {
-          console.log('✅ Successfully loaded existing plan');
-          return; // Exit early, we're done
+          console.log('✅ Successfully loaded existing plan - initialization complete');
+          // Don't return here - let the finally block run to clear isLoading
+          // Just skip creating a new session
         } else {
           console.warn('⚠️ Failed to load existing plan, creating new session');
+          // Continue to create new session below
         }
       } else {
         console.log('ℹ️ No existing plans found for this series, creating new session');
       }
+      
+      // Only create a new session if we didn't successfully load an existing plan
+      if (existingPlans && existingPlans.length > 0 && sessionId) {
+        // We successfully loaded a plan, skip session creation
+        console.log('ℹ️ Skipping new session creation - plan already loaded');
+      } else {
 
       // No existing plans or failed to load - create new session
       const caseId = null; // Use null for atomic planning (will be assigned to dummy case)
@@ -262,6 +270,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       } else {
         throw new Error(data.error || 'Session creation failed');
       }
+      } // End of session creation else block
     } catch (error) {
       console.error('❌ Error initializing session:', error);
       setSessionStatus('error');
