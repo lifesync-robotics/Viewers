@@ -781,12 +781,60 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`   Session ID: ${sessionId}`);
       console.log(`   Screws: ${screws.length}`);
 
+      // Determine case ID to use
+      let effectiveCaseId = caseId;
+
+      if (!effectiveCaseId) {
+        // No case ID - inform user and create a default case
+        const userConfirmed = confirm(
+          '⚠️ No case is currently selected.\n\n' +
+          'This plan will be saved to a default case for now.\n\n' +
+          'You can organize cases properly later through the case management system.\n\n' +
+          'Continue?'
+        );
+
+        if (!userConfirmed) {
+          setIsSavingPlan(false);
+          return; // User cancelled
+        }
+
+        // Create a default case
+        console.log('🏥 Creating default case for plan...');
+        const caseResponse = await fetch('http://localhost:3001/api/cases', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patientInfo: {
+              mrn: 'DEFAULT-PATIENT',
+              name: 'Default Patient',
+              dateOfBirth: null
+            },
+            caseId: `DEFAULT-CASE-${Date.now()}`
+          })
+        });
+
+        if (!caseResponse.ok) {
+          throw new Error(`Failed to create default case: ${caseResponse.status}`);
+        }
+
+        const caseData = await caseResponse.json();
+        if (!caseData.success) {
+          throw new Error(`Case creation failed: ${caseData.error}`);
+        }
+
+        effectiveCaseId = caseData.caseId;
+        console.log(`✅ Created default case: ${effectiveCaseId}`);
+
+        // Update our local caseId state
+        setCaseId(effectiveCaseId);
+      }
+
       const response = await fetch('http://localhost:3001/api/planning/plan/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
-          caseId,
+          caseId: effectiveCaseId,
           studyInstanceUID,
           seriesInstanceUID,
           planData: {
