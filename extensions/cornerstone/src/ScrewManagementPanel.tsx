@@ -28,6 +28,158 @@ export default function ScrewManagementPanel({ servicesManager }) {
   }, []);
 
   /**
+   * Get actual DICOM UIDs from the active viewport
+   */
+  const getDicomUIDs = () => {
+    try {
+      // Get rendering engine and viewports
+      const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+      if (!renderingEngine) {
+        console.warn('⚠️ Rendering engine not found');
+        return null;
+      }
+
+      // Try to get any viewport
+      const viewportIds = renderingEngine.getViewportIds();
+      if (!viewportIds || viewportIds.length === 0) {
+        console.warn('⚠️ No viewports available');
+        return null;
+      }
+
+      // Get the first viewport's DICOM data
+      const viewport = renderingEngine.getViewport(viewportIds[0]);
+      if (!viewport) {
+        console.warn('⚠️ Viewport not found');
+        return null;
+      }
+
+      // Try to get image data from the viewport
+      const imageData = viewport.getImageData?.();
+      if (!imageData) {
+        console.warn('⚠️ No image data in viewport');
+        return null;
+      }
+
+      // Get metadata from the image
+      const metadata = imageData.metadata || {};
+      const studyInstanceUID = metadata.StudyInstanceUID || metadata.studyInstanceUID;
+      const seriesInstanceUID = metadata.SeriesInstanceUID || metadata.seriesInstanceUID;
+
+      if (!studyInstanceUID || !seriesInstanceUID) {
+        console.warn('⚠️ Could not extract DICOM UIDs from viewport');
+        return null;
+      }
+
+      return { studyInstanceUID, seriesInstanceUID };
+    } catch (error) {
+      console.error('❌ Error getting DICOM UIDs:', error);
+      return null;
+    }
+  };
+
+  /**
+   * Check for existing plans for a series
+   */
+  const checkExistingPlans = async (seriesInstanceUID) => {
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/planning/plan/by-series/${encodeURIComponent(seriesInstanceUID)}`
+      );
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = await response.json();
+      return data.success ? data.plans : [];
+    } catch (error) {
+      console.error('❌ Error checking existing plans:', error);
+      return [];
+    }
+  };
+
+  /**
+   * Load an existing plan
+   */
+  const loadExistingPlan = async (planId) => {
+    try {
+      console.log(`📂 Loading existing plan: ${planId}`);
+      
+      const response = await fetch(`http://localhost:3001/api/planning/plan/${planId}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load plan: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('📡 Plan API response:', data);
+      
+      if (!data.success || !data.plan) {
+        throw new Error('Plan data not available');
+      }
+
+      const plan = data.plan;
+      console.log(`📋 Plan details: "${plan.name}", session=${plan.session_id}, screws=${plan.screws?.length || 0}`);
+      
+      // Set the session ID from the plan
+      setSessionId(plan.session_id);
+      setSessionStatus('ready');
+      
+      // Load screws from the plan
+      if (plan.screws && plan.screws.length > 0) {
+        console.log(`✅ Loading ${plan.screws.length} screws from plan`);
+        
+        // Convert plan screws to the format expected by the UI
+        const screwsData = plan.screws.map((screw, index) => ({
+          screw_id: screw.screw_id || `screw-${index + 1}`, // Use screw_id to match UI expectations
+          name: screw.name || `Screw ${index + 1}`,
+          radius: screw.radius || 3.5,
+          length: screw.length || 40,
+          transform_matrix: screw.transform_matrix, // Keep original field name
+          transform: screw.transform_matrix ? JSON.parse(screw.transform_matrix) : null,
+          viewportStates: screw.viewport_states_json ? JSON.parse(screw.viewport_states_json) : null,
+          viewport_states_json: screw.viewport_states_json, // Keep original field
+          timestamp: screw.placed_at || new Date().toISOString(),
+          placed_at: screw.placed_at,
+          created_at: screw.created_at
+        }));
+
+        console.log('🔍 Screws data being set:', screwsData);
+        setScrews(screwsData);
+        console.log(`✅ UI state updated with ${screwsData.length} screws`);
+        
+        // Restore each screw's 3D model (do this after setting state so UI updates immediately)
+        let restoredCount = 0;
+        for (const screwData of screwsData) {
+          if (screwData.transform && screwData.radius && screwData.length) {
+            try {
+              await restoreScrew(screwData);
+              restoredCount++;
+              console.log(`✅ Restored screw ${restoredCount}/${screwsData.length}: ${screwData.name}`);
+            } catch (error) {
+              console.error(`❌ Failed to restore screw: ${screwData.name}`, error);
+              // Continue with next screw even if this one fails
+            }
+          } else {
+            console.warn(`⚠️ Skipping screw without transform/dimensions: ${screwData.name || screwData.screw_id}`);
+          }
+        }
+        
+        console.log(`✅ Loaded plan "${plan.name}": ${screwsData.length} screws in list, ${restoredCount} 3D models restored`);
+      } else {
+        console.log('ℹ️ Plan has no screws');
+        setScrews([]); // Explicitly set empty array to ensure UI updates
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Error loading plan:', error);
+      console.error('Error details:', error.message, error.stack);
+      return false;
+    }
+  };
+
+  /**
    * Initialize planning session and load existing screws
    */
   const initializeSession = async () => {
@@ -35,15 +187,54 @@ export default function ScrewManagementPanel({ servicesManager }) {
       setIsLoading(true);
       setSessionStatus('initializing');
 
-      // Get case information (would come from case manager service)
-      const caseId = 'OHIF-CASE-' + Date.now(); // TODO: Get from actual case service
-      const studyInstanceUID = '1.2.3.4.5'; // TODO: Get from actual DICOM data
-      const seriesInstanceUID = '1.2.3.4.5.6'; // TODO: Get from actual DICOM data
-      const surgeon = 'OHIF User'; // TODO: Get from user service
+      // Get actual DICOM UIDs from viewport
+      const dicomUIDs = getDicomUIDs();
+      
+      let studyInstanceUID, seriesInstanceUID;
+      
+      if (dicomUIDs) {
+        studyInstanceUID = dicomUIDs.studyInstanceUID;
+        seriesInstanceUID = dicomUIDs.seriesInstanceUID;
+        console.log('✅ Got DICOM UIDs from viewport:');
+        console.log(`   Study UID: ${studyInstanceUID}`);
+        console.log(`   Series UID: ${seriesInstanceUID}`);
+      } else {
+        // Fallback to dummy values if we can't get real UIDs
+        studyInstanceUID = '1.2.3.4.5';
+        seriesInstanceUID = '1.2.3.4.5.6';
+        console.warn('⚠️ Using fallback DICOM UIDs');
+      }
 
-      console.log('🔄 Initializing planning session...');
-      console.log(`   API: http://localhost:3001/api/planning/session/start`);
-      console.log(`   Case ID: ${caseId}`);
+      // Check for existing plans for this series
+      console.log('🔍 Checking for existing plans...');
+      const existingPlans = await checkExistingPlans(seriesInstanceUID);
+      
+      if (existingPlans && existingPlans.length > 0) {
+        console.log(`✅ Found ${existingPlans.length} existing plan(s) for this series`);
+        
+        // Load the most recent plan automatically
+        const mostRecentPlan = existingPlans[0];
+        console.log(`📂 Auto-loading most recent plan: ${mostRecentPlan.name}`);
+        
+        const loaded = await loadExistingPlan(mostRecentPlan.plan_id);
+        
+        if (loaded) {
+          console.log('✅ Successfully loaded existing plan');
+          return; // Exit early, we're done
+        } else {
+          console.warn('⚠️ Failed to load existing plan, creating new session');
+        }
+      } else {
+        console.log('ℹ️ No existing plans found for this series, creating new session');
+      }
+
+      // No existing plans or failed to load - create new session
+      const caseId = null; // Use null for atomic planning (will be assigned to dummy case)
+      const surgeon = 'OHIF User';
+
+      console.log('🔄 Creating new planning session...');
+      console.log(`   Study UID: ${studyInstanceUID}`);
+      console.log(`   Series UID: ${seriesInstanceUID}`);
 
       // Start planning session
       const response = await fetch('http://localhost:3001/api/planning/session/start', {
@@ -67,10 +258,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (data.success && data.session_id) {
         setSessionId(data.session_id);
         setSessionStatus('ready');
-        console.log('✅ Planning session started:', data.session_id);
-
-        // Load existing screws for this session
-        await loadScrews(data.session_id);
+        console.log('✅ New planning session started:', data.session_id);
       } else {
         throw new Error(data.error || 'Session creation failed');
       }
