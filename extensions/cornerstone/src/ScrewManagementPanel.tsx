@@ -229,7 +229,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       } else {
         console.log('ℹ️ No existing plans found for this series, creating new session');
       }
-      
+
       // Only create a new session if we didn't successfully load an existing plan
       if (existingPlans && existingPlans.length > 0 && sessionId) {
         // We successfully loaded a plan, skip session creation
@@ -765,22 +765,37 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       console.log(`🗑️ Deleting screw: "${screwName}" (${screwId})`);
 
-      // Try to delete from API first
+      // Try to delete from API first (both from gRPC session AND database)
       if (sessionId && screwId) {
         try {
-          const response = await fetch(`http://localhost:3001/api/planning/screws/${screwId}`, {
+          // Delete from gRPC service (query param)
+          const response = await fetch(`http://localhost:3001/api/planning/screws/${screwId}?sessionId=${sessionId}`, {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId })
+            headers: { 'Content-Type': 'application/json' }
           });
 
           const data = await response.json();
 
           if (!data.success) {
-            console.warn('⚠️ API delete failed, continuing with local cleanup:', data.error);
+            console.warn('⚠️ gRPC delete failed:', data.error);
           } else {
-            console.log('✅ Deleted screw from API');
+            console.log('✅ Deleted screw from gRPC service');
           }
+          
+          // ALSO delete from database directly
+          try {
+            const dbResponse = await fetch(`http://localhost:3001/api/planning/screws/${screwId}/database`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (dbResponse.ok) {
+              console.log('✅ Deleted screw from database');
+            }
+          } catch (dbError) {
+            console.warn('⚠️ Database delete failed:', dbError);
+          }
+          
         } catch (apiError) {
           console.warn('⚠️ API delete failed, continuing with local cleanup:', apiError);
         }
@@ -819,12 +834,16 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       console.log(`✅ Removed ${modelsRemoved} model(s)`);
 
-      // Reload screws from API
-      if (sessionId) {
-        await loadScrews(sessionId);
-      } else {
-        loadScrewsLocal();
-      }
+      // Update UI state by filtering out the deleted screw
+      // Don't rely on API reload since screws might not be in gRPC session
+      setScrews(prevScrews => {
+        const filtered = prevScrews.filter(s => {
+          const id = s.screw_id || s.id || s.name;
+          return id !== screwId;
+        });
+        console.log(`📋 Updated screw list: ${filtered.length} screws remaining`);
+        return filtered;
+      });
 
       console.log(`✅ Deleted screw: "${screwName}"`);
 
