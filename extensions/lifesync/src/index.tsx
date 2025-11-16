@@ -1,5 +1,6 @@
 import getPanelModule from './panels/getPanelModule';
 import getToolbarModule from './tools/getToolbarModule';
+import TrackingService from './services/TrackingService';
 import { id } from './id.js';
 
 const lifesyncExtension = {
@@ -14,6 +15,17 @@ const lifesyncExtension = {
   /**
    * Service configuration
    */
+  getServicesModule({ servicesManager }) {
+    return [
+      {
+        name: 'trackingService',
+        create: ({ configuration = {} }) => {
+          return new TrackingService(servicesManager);
+        },
+      },
+    ];
+  },
+
   preRegistration({ servicesManager }) {
     // Register LifeSync-specific services here if needed
     console.log('LifeSync extension pre-registration completed');

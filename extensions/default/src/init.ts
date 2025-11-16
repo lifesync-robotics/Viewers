@@ -4,7 +4,6 @@ import { calculateSUVScalingFactors } from '@cornerstonejs/calculate-suv';
 import getPTImageIdInstanceMetadata from './getPTImageIdInstanceMetadata';
 import { registerHangingProtocolAttributes } from './hangingprotocols';
 import { HotkeysManager } from '@ohif/core';
-import TrackingService from './services/TrackingService';
 import RegistrationService from './services/RegistrationService';
 import CaseService from './services/CaseService';
 
@@ -20,9 +19,6 @@ export default function init({
   commandsManager,
   hotkeysManager,
 }: withAppTypes): void {
-  // Register TrackingService
-  servicesManager.registerService(TrackingService.REGISTRATION);
-
   // Register RegistrationService
   servicesManager.registerService(RegistrationService.REGISTRATION);
 

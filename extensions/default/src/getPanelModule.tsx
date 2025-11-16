@@ -1,6 +1,5 @@
 import React from 'react';
 import { WrappedPanelStudyBrowser } from './Panels';
-import TrackingPanel from './Panels/TrackingPanel';
 import RegistrationPanel from './Panels/RegistrationPanel';
 import i18n from 'i18next';
 
@@ -24,13 +23,6 @@ function getPanelModule({ commandsManager, extensionManager, servicesManager }) 
           servicesManager={servicesManager}
         />
       ),
-    },
-    {
-      name: 'trackingPanel',
-      iconName: 'tool-more-menu',
-      iconLabel: 'Nav',
-      label: 'Nav',
-      component: TrackingPanel,
     },
     {
       name: 'registrationPanel',
