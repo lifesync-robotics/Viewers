@@ -21,7 +21,7 @@ export const ohif = {
   layout: '@ohif/extension-default.layoutTemplateModule.viewerLayout',
   sopClassHandler: '@ohif/extension-default.sopClassHandlerModule.stack',
   thumbnailList: '@ohif/extension-default.panelModule.seriesList',
-  trackingPanel: '@ohif/extension-default.panelModule.trackingPanel',
+  trackingPanel: '@ohif/extension-lifesync.panelModule.trackingPanel',
   wsiSopClassHandler:
     '@ohif/extension-cornerstone.sopClassHandlerModule.DicomMicroscopySopClassHandler',
 };
