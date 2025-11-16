@@ -1,5 +1,6 @@
 import getPanelModule from './panels/getPanelModule';
 import getToolbarModule from './tools/getToolbarModule';
+import getCommandsModule from './commandsModule';
 import TrackingService from './services/TrackingService';
 import { id } from './id.js';
 
@@ -11,6 +12,7 @@ const lifesyncExtension = {
 
   getPanelModule,
   getToolbarModule,
+  getCommandsModule,
 
   /**
    * Service configuration
