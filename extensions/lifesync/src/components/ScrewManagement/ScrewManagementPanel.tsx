@@ -30,6 +30,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [showPlanDialog, setShowPlanDialog] = useState(false);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
 
+  // Debug: Log screws whenever they change
+  useEffect(() => {
+    console.log(`🔍 [ScrewManagement] Screws state changed. Count: ${screws.length}`);
+    if (screws.length > 0) {
+      console.log('🔍 [ScrewManagement] Screws data:', screws);
+    }
+  }, [screws]);
+
   useEffect(() => {
     initializeSession();
   }, []);
@@ -56,12 +64,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
       setSurgeon(newSurgeon);
 
       console.log('🔄 Initializing planning session...');
-      console.log(`   API: http://localhost:3001/api/planning/session/start`);
+      console.log(`   API: /api/planning/session/start (via proxy)`);
       console.log(`   Case ID: ${newCaseId || 'none (session without case)'}`);
 
       // Start planning session (caseId is now optional)
-      const response = await fetch('http://localhost:3001/api/planning/session/start', {
+      const response = await fetch('/api/planning/session/start', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           studyInstanceUID: newStudyUID,
@@ -117,7 +126,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       console.log('📥 Loading screws from API...');
 
-      const response = await fetch(`http://localhost:3001/api/planning/screws/${sessionId}/list`);
+      const response = await fetch(`/api/planning/screws/${sessionId}/list`, {
+        credentials: 'include'
+      });
       const data = await response.json();
 
       if (data.success) {
@@ -155,7 +166,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`🔍 transform.length:`, transform.length);
       // Query model from planning API
       const queryResponse = await fetch(
-        `http://localhost:3001/api/planning/models/query?radius=${radius}&length=${length}`
+        `/api/planning/models/query?radius=${radius}&length=${length}`,
+        {
+          credentials: 'include'
+        }
       );
 
       const queryData = await queryResponse.json();
@@ -182,7 +196,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       }
 
       // Get model OBJ file URL
-      const modelUrl = `http://localhost:3001/api/planning/models/${modelInfo.model_id}/obj`;
+      const modelUrl = `/api/planning/models/${modelInfo.model_id}/obj`;
 
       // Load model using modelStateService
       await modelStateService.loadModelFromServer(modelUrl, {
@@ -467,8 +481,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('🎯 Extracted screw direction:', direction);
 
       try {
-        const response = await fetch('http://localhost:3001/api/planning/screws/add-with-transform', {
+        const response = await fetch('/api/planning/screws/add-with-transform', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             sessionId: sessionId,
@@ -646,8 +661,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // Try to delete from API first
       if (sessionId && screwId) {
         try {
-          const response = await fetch(`http://localhost:3001/api/planning/screws/${screwId}`, {
+          const response = await fetch(`/api/planning/screws/${screwId}`, {
             method: 'DELETE',
+            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionId })
           });
@@ -843,8 +859,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
         // Create a default case
         console.log('🏥 Creating default case for plan...');
-        const caseResponse = await fetch('http://localhost:3001/api/cases', {
+        const caseResponse = await fetch('/api/cases', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             patientInfo: {
@@ -872,8 +889,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
         setCaseId(effectiveCaseId);
       }
 
-      const response = await fetch('http://localhost:3001/api/planning/plan/save', {
+      const response = await fetch('/api/planning/plan/save', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
@@ -912,7 +930,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
       setIsLoading(true);
       console.log('📥 Loading plan:', planId);
 
-      const response = await fetch(`http://localhost:3001/api/planning/plan/${planId}`);
+      const response = await fetch(`/api/planning/plan/${planId}`, {
+        credentials: 'include'
+      });
       const data = await response.json();
 
       if (!data.success) {
@@ -921,16 +941,30 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       const plan = data.plan;
       console.log('✅ Plan loaded:', plan);
-      console.log(`   Screws: ${plan.screws.length}`);
-      console.log(`   Rods: ${plan.rods.length}`);
+      console.log(`   Plan ID: ${plan.plan_id}`);
+      console.log(`   Plan Name: ${plan.name}`);
+      console.log(`   Screws array:`, plan.screws);
+      console.log(`   Screws count: ${plan.screws?.length || 0}`);
+      console.log(`   Rods count: ${plan.rods?.length || 0}`);
+      
+      // Detailed screw logging
+      if (plan.screws && plan.screws.length > 0) {
+        console.log('📋 Screw details:');
+        plan.screws.forEach((screw, idx) => {
+          console.log(`  [${idx}] Screw ID: ${screw.screw_id}, Name: ${screw.name}, Radius: ${screw.radius}, Length: ${screw.length}`);
+        });
+      }
 
       // Update screws in UI
+      console.log('🔄 Setting screws state with:', plan.screws);
       setScrews(plan.screws || []);
+      
+      console.log('✅ Screws state should now be updated. Current screws.length:', (plan.screws || []).length);
 
       // TODO: Restore 3D models for each screw
       // This would require iterating through plan.screws and calling loadScrewModel for each
 
-      alert(`Plan loaded successfully!\n${plan.name}\nScrews: ${plan.screws.length}\nRods: ${plan.rods.length}`);
+      alert(`Plan loaded successfully!\n${plan.name}\nScrews: ${plan.screws?.length || 0}\nRods: ${plan.rods?.length || 0}`);
     } catch (error) {
       console.error('❌ Error loading plan:', error);
       alert(`Failed to load plan: ${error.message}`);

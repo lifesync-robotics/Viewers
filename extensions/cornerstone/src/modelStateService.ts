@@ -144,7 +144,9 @@ class ModelStateService extends PubSubService {
   public async fetchAvailableModels(): Promise<any[]> {
     try {
       const baseUrl = this._getModelServerBaseUrl();
-      const response = await fetch(`${baseUrl}/api/models/list`);
+      const response = await fetch(`${baseUrl}/api/models/list`, {
+        credentials: 'include'
+      });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
@@ -193,6 +195,7 @@ class ModelStateService extends PubSubService {
       const baseUrl = this._getModelServerBaseUrl();
       const response = await fetch(`${baseUrl}/api/models/upload`, {
         method: 'POST',
+        credentials: 'include',
         body: formData,
       });
 
@@ -360,7 +363,9 @@ class ModelStateService extends PubSubService {
     options: ModelLoadOptions
   ): Promise<LoadedModel> {
     return new Promise((resolve, reject) => {
-      fetch(metadata.filePath)
+      fetch(metadata.filePath, {
+        credentials: 'include'
+      })
         .then(response => {
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);

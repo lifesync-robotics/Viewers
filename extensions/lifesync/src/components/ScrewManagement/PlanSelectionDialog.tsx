@@ -52,16 +52,18 @@ export default function PlanSelectionDialog({
       let url = '';
 
       if (filterBy === 'case' && caseId) {
-        url = `http://localhost:3001/api/planning/plan/${caseId}/list`;
+        url = `/api/planning/plan/${caseId}/list`;
       } else if (filterBy === 'series' && seriesInstanceUID) {
-        url = `http://localhost:3001/api/planning/plan/by-series/${seriesInstanceUID}`;
+        url = `/api/planning/plan/by-series/${seriesInstanceUID}`;
       } else {
         throw new Error('Missing case ID or series UID');
       }
 
       console.log('📥 Loading plans from:', url);
 
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        credentials: 'include'
+      });
       const data = await response.json();
 
       if (data.success) {
