@@ -27,8 +27,9 @@ const lifesyncExtension = {
   },
 
   preRegistration({ servicesManager }) {
-    // Register LifeSync-specific services here if needed
-    console.log('LifeSync extension pre-registration completed');
+    // Register TrackingService using the REGISTRATION pattern
+    servicesManager.registerService(TrackingService.REGISTRATION);
+    console.log('✅ LifeSync extension pre-registration completed - TrackingService registered');
   },
 
   onModeEnter({ servicesManager }) {
