@@ -86,6 +86,7 @@ class TrackingService extends PubSubService {
       const response = await fetch(`${apiUrl}/api/tracking/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // Include cookies for OAuth2 authentication
         body: JSON.stringify({
           case_id: this.caseId || 'OHIF_SESSION',
           tools: ['pr', 'EE', 'pointer', 'crosshair'],
