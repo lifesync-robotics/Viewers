@@ -83,7 +83,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const checkExistingPlans = async (seriesInstanceUID) => {
     try {
       const response = await fetch(
-        `http://localhost:3001/api/planning/plan/by-series/${encodeURIComponent(seriesInstanceUID)}`
+        `/api/planning/plan/by-series/${encodeURIComponent(seriesInstanceUID)}`
       );
 
       if (!response.ok) {
@@ -105,7 +105,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       console.log(`📂 Loading existing plan: ${planId}`);
 
-      const response = await fetch(`http://localhost:3001/api/planning/plan/${planId}`);
+      const response = await fetch(`/api/planning/plan/${planId}`);
 
       if (!response.ok) {
         throw new Error(`Failed to load plan: ${response.statusText}`);
@@ -245,7 +245,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`   Series UID: ${seriesInstanceUID}`);
 
       // Start planning session
-      const response = await fetch('http://localhost:3001/api/planning/session/start', {
+      const response = await fetch('/api/planning/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -300,7 +300,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       console.log('📥 Loading screws from API...');
 
-      const response = await fetch(`http://localhost:3001/api/planning/screws/${sessionId}/list`);
+      const response = await fetch(`/api/planning/screws/${sessionId}/list`);
       const data = await response.json();
 
       if (data.success) {
@@ -338,7 +338,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Query model from planning API
       const queryResponse = await fetch(
-        `http://localhost:3001/api/planning/models/query?radius=${radius}&length=${length}`
+        `/api/planning/models/query?radius=${radius}&length=${length}`
       );
 
       const queryData = await queryResponse.json();
@@ -366,7 +366,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       }
 
       // Get model OBJ file URL
-      const modelUrl = `http://localhost:3001/api/planning/models/${modelInfo.model_id}/obj`;
+      const modelUrl = `/api/planning/models/${modelInfo.model_id}/obj`;
 
       // Load model using modelStateService
       console.log(`🔧 Loading model to viewport: ${getCurrentViewportId()}`);
@@ -643,7 +643,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       const viewportStates = viewportStateService.getCurrentViewportStates();
 
       try {
-        const response = await fetch('http://localhost:3001/api/planning/screws/add-with-transform', {
+        const response = await fetch('/api/planning/screws/add-with-transform', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -833,7 +833,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (sessionId && screwId) {
         try {
           // Delete from gRPC service (query param)
-          const response = await fetch(`http://localhost:3001/api/planning/screws/${screwId}?sessionId=${sessionId}`, {
+          const response = await fetch(`/api/planning/screws/${screwId}?sessionId=${sessionId}`, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' }
           });
@@ -848,7 +848,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
           // ALSO delete from database directly
           try {
-            const dbResponse = await fetch(`http://localhost:3001/api/planning/screws/${screwId}/database`, {
+            const dbResponse = await fetch(`/api/planning/screws/${screwId}/database`, {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' }
             });

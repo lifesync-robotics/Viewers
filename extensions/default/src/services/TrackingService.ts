@@ -47,12 +47,19 @@ class TrackingService extends PubSubService {
     super(EVENTS);
     this.servicesManager = servicesManager;
 
-    // Automatically determine API URL based on current hostname
+    // Get global config for API URL determination
+    const globalConfig = (window as any).config || {};
+
+    // Check for syncforge config (automatically determined based on current location)
+    const syncforgeApiUrl = globalConfig.syncforge?.apiUrl;
+
+    // Fallback: automatically determine API URL based on current hostname
     // This allows remote access from other machines on the LAN
     const hostname = window.location.hostname;
     const defaultApiUrl = `http://${hostname}:3001`;
 
-    this.apiUrl = config.apiUrl || defaultApiUrl;
+    // Priority: config.apiUrl > syncforge config > hostname-based default
+    this.apiUrl = config.apiUrl || syncforgeApiUrl || defaultApiUrl;
     this.caseId = config.caseId || null;
     console.log('🎯 TrackingService initialized', {
       apiUrl: this.apiUrl,

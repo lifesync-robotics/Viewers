@@ -224,6 +224,11 @@ window.config = {
       qidoRoot: '/dicom-web',
       wadoRoot: '/dicom-web',
 
+      // Orthanc authentication
+      headers: {
+        Authorization: 'Basic ' + btoa('lsr:lsr#!$$!59'),
+      },
+
       // Orthanc does NOT support includefield=all
       qidoSupportsIncludeField: false,
 
@@ -308,4 +313,12 @@ window.config = {
   //     );
   //   },
   // },
+
+  // SyncForge API Configuration
+  // Automatically determine API URL based on current location
+  // When accessed via Ngrok/other reverse proxy, API calls go through the same domain
+  syncforge: {
+    apiUrl: window.location.protocol + '//' + window.location.host,
+    apiBasePath: '/api',
+  },
 };

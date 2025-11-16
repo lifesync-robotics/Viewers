@@ -115,12 +115,20 @@ class CaseService extends PubSubService {
     super(EVENTS);
     this.servicesManager = servicesManager;
 
+    // Get global config for API URL determination
+    const globalConfig = (window as any).config || {};
+
     // Default to localhost for local development (most common case)
     const defaultApiUrl = 'http://localhost:3001';
 
+    // Check for syncforge config (automatically determined based on current location)
+    const syncforgeApiUrl = globalConfig.syncforge?.apiUrl;
+
     // Check localStorage for saved API URL (for remote access via ngrok)
     const savedApiUrl = localStorage.getItem('syncforge_api_url');
-    this.apiUrl = config.apiUrl || savedApiUrl || defaultApiUrl;
+
+    // Priority: config.apiUrl > syncforge config > saved localStorage > default
+    this.apiUrl = config.apiUrl || syncforgeApiUrl || savedApiUrl || defaultApiUrl;
 
     // Load active case from localStorage
     this.activeCaseId = localStorage.getItem('syncforge_active_case_id');
