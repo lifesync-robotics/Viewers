@@ -920,7 +920,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId,
+          // sessionId: sessionId,  // Omitted - save directly to DB without Python session
           caseId: effectiveCaseId,
           studyInstanceUID,
           seriesInstanceUID,
