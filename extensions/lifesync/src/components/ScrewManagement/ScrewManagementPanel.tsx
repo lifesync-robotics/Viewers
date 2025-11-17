@@ -54,14 +54,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
       const { displaySetService, viewportGridService } = servicesManager.services;
       const { activeViewportId, viewports } = viewportGridService.getState();
       const viewport = viewports.get(activeViewportId);
-      
+
       let newStudyUID = null;
       let newSeriesUID = null;
-      
+
       if (viewport && viewport.displaySetInstanceUIDs && viewport.displaySetInstanceUIDs.length > 0) {
         const displaySetInstanceUID = viewport.displaySetInstanceUIDs[0];
         const displaySet = displaySetService.getDisplaySetByUID(displaySetInstanceUID);
-        
+
         if (displaySet) {
           newStudyUID = displaySet.StudyInstanceUID;
           newSeriesUID = displaySet.SeriesInstanceUID;
@@ -70,7 +70,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
           console.log(`   Series UID: ${newSeriesUID}`);
         }
       }
-      
+
       // Fallback if no viewport data available
       if (!newStudyUID || !newSeriesUID) {
         console.warn('⚠️ Could not get DICOM UIDs from viewport, using placeholders');
@@ -928,7 +928,28 @@ export default function ScrewManagementPanel({ servicesManager }) {
             name: planName,
             description: `Plan with ${screws.length} screws`,
             surgeon
-          }
+          },
+          screws: screws.map(screw => {
+            // Handle both current session screws (entryPoint object) and loaded screws (entry_point_x/y/z fields)
+            const entryPointX = screw.entryPoint?.x ?? screw.entry_point_x ?? null;
+            const entryPointY = screw.entryPoint?.y ?? screw.entry_point_y ?? null;
+            const entryPointZ = screw.entryPoint?.z ?? screw.entry_point_z ?? null;
+
+            return {
+              screw_id: screw.screwId || screw.screw_id,
+              screw_variant_id: screw.screwVariantId || screw.screw_variant_id,
+              radius: screw.radius,
+              length: screw.length,
+              vertebral_level: screw.vertebralLevel || screw.vertebral_level,
+              side: screw.side,
+              entry_point_x: entryPointX,
+              entry_point_y: entryPointY,
+              entry_point_z: entryPointZ,
+              transform_matrix: screw.transformMatrix || screw.transform_matrix,
+              viewport_states_json: screw.viewportStates ? JSON.stringify(screw.viewportStates) : screw.viewport_states_json,
+              notes: screw.notes || ''
+            };
+          })
         })
       });
 
@@ -972,7 +993,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`   Screws array:`, plan.screws);
       console.log(`   Screws count: ${plan.screws?.length || 0}`);
       console.log(`   Rods count: ${plan.rods?.length || 0}`);
-      
+
       // Detailed screw logging
       if (plan.screws && plan.screws.length > 0) {
         console.log('📋 Screw details:');
@@ -984,7 +1005,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // Update screws in UI
       console.log('🔄 Setting screws state with:', plan.screws);
       setScrews(plan.screws || []);
-      
+
       console.log('✅ Screws state should now be updated. Current screws.length:', (plan.screws || []).length);
 
       // TODO: Restore 3D models for each screw
