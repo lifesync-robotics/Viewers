@@ -6,10 +6,11 @@ import NavigationPanel from '../components/Navigation/NavigationPanel';
 import RegistrationPanel from '../components/Registration/RegistrationPanel';
 import LifeSyncWorklist from '../components/Worklist/LifeSyncWorklist';
 import TrackingPanel from '../components/Tracking/TrackingPanel';
+import SimpleTrackingPanel from '../components/Tracking/SimpleTrackingPanel';
 
 const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: withAppTypes) => {
   return [
-    // LifeSync panels
+    // LifeSync panels (Updated: Added SimpleTrackingPanel)
     {
       name: 'screw-management',
       label: 'Screw Management',
@@ -66,9 +67,30 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
     {
       name: 'trackingPanel',
       iconName: 'tool-more-menu',
-      iconLabel: 'Nav',
-      label: 'Nav',
-      component: TrackingPanel,
+      iconLabel: 'Tracking',
+      label: 'Tracking Control',
+      component: (props) => (
+        <TrackingPanel
+          servicesManager={servicesManager}
+          commandsManager={commandsManager}
+          extensionManager={extensionManager}
+          {...props}
+        />
+      ),
+    },
+    {
+      name: 'simpleTrackingPanel',
+      iconName: 'tool-crosshair',
+      iconLabel: 'Navigate',
+      label: 'Surgical Navigation',
+      component: (props) => (
+        <SimpleTrackingPanel
+          servicesManager={servicesManager}
+          commandsManager={commandsManager}
+          extensionManager={extensionManager}
+          {...props}
+        />
+      ),
     },
     // Additional LifeSync panels will be added here as components are moved
     // Example structure for future panels:

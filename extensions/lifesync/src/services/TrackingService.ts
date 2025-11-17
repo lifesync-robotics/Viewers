@@ -153,6 +153,18 @@ class TrackingService extends PubSubService {
           this.lastMessageTime = now;
 
           const message = JSON.parse(event.data);
+
+          // DEBUG: Log first few messages to see what we're receiving
+          if (this.statsData.framesReceived < 3) {
+            console.log('🔍 [TrackingService] Received message:', {
+              type: message.type,
+              hasData: !!message.data,
+              hasTools: !!message.tools,
+              dataHasTools: !!(message.data && message.data.tools),
+              keys: Object.keys(message)
+            });
+          }
+
           this._handleMessage(message);
         } catch (error) {
           console.error('❌ Error parsing tracking message:', error);
@@ -275,10 +287,11 @@ class TrackingService extends PubSubService {
         console.log('✅ Server connection confirmed');
         break;
 
-      case 'tracking_update':
+      case 'tracking_data': // Server sends 'tracking_data', not 'tracking_update'
+      case 'tracking_update': // Keep for backward compatibility
         // NEW FORMAT: Extract data from tools object
-        if (message.tools && message.tools.crosshair) {
-          const crosshair = message.tools.crosshair;
+        if (message.data && message.data.tools && message.data.tools.crosshair) {
+          const crosshair = message.data.tools.crosshair;
 
           // Extract position, orientation, and matrix
           const position = crosshair.coordinates.register.position_mm;
@@ -290,12 +303,36 @@ class TrackingService extends PubSubService {
             position: position,
             orientation: rotation,
             matrix: matrix,
+            timestamp: message.data.timestamp,
+            frame_id: message.data.frame_number,
+            quality: crosshair.quality,
+            quality_score: crosshair.quality_score,
+            visible: crosshair.visible,
+            // Include full message data for TrackingPanel
+            patient_reference_id: message.data.patient_reference?.id,
+            patient_reference_visible: message.data.patient_reference?.visible,
+            patient_reference_quality: message.data.patient_reference?.quality,
+            patient_reference_moved: message.data.patient_reference?.moved,
+            patient_reference_movement: message.data.patient_reference?.movement_mm,
+            tools: message.data.tools,
+          });
+        } else if (message.tools && message.tools.crosshair) {
+          // OLD FORMAT: Direct tools object (backward compatibility)
+          const crosshair = message.tools.crosshair;
+
+          const position = crosshair.coordinates.register.position_mm;
+          const rotation = crosshair.coordinates.register.rotation_deg || [0, 0, 0];
+          const matrix = crosshair.coordinates.register.rMcrosshair;
+
+          this._handleTrackingUpdate({
+            position: position,
+            orientation: rotation,
+            matrix: matrix,
             timestamp: message.timestamp,
             frame_id: message.frame_number,
             quality: crosshair.quality,
             quality_score: crosshair.quality_score,
             visible: crosshair.visible,
-            // Include other tools if needed
             tools: message.tools,
           });
         }
