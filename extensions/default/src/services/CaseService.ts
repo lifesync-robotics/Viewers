@@ -118,8 +118,21 @@ class CaseService extends PubSubService {
     // Get global config for API URL determination
     const globalConfig = (window as any).config || {};
 
-    // Default to localhost for local development (most common case)
-    const defaultApiUrl = 'http://localhost:3001';
+    // Check if we're being served through a proxy (nginx)
+    // If so, use same origin so API calls go through the proxy
+    const isProxied = window.location.port === '8081' ||
+                      window.location.port === '8080' ||
+                      (window.location.port === '' && window.location.protocol === 'https:');
+
+    // Default API URL logic
+    let defaultApiUrl: string;
+    if (isProxied) {
+      // Use same origin when served through nginx (relative to current URL)
+      defaultApiUrl = window.location.origin;
+    } else {
+      // Use localhost:3001 for direct development access
+      defaultApiUrl = 'http://localhost:3001';
+    }
 
     // Check for syncforge config (automatically determined based on current location)
     const syncforgeApiUrl = globalConfig.syncforge?.apiUrl;
@@ -135,6 +148,8 @@ class CaseService extends PubSubService {
 
     console.log('📁 CaseService initialized', {
       apiUrl: this.apiUrl,
+      isProxied: isProxied,
+      currentOrigin: window.location.origin,
       fromLocalStorage: !!savedApiUrl,
       activeCaseId: this.activeCaseId,
     });
