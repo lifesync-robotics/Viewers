@@ -50,11 +50,37 @@ export default function ScrewManagementPanel({ servicesManager }) {
       setIsLoading(true);
       setSessionStatus('initializing');
 
+      // Get real DICOM UIDs from active viewport
+      const { displaySetService, viewportGridService } = servicesManager.services;
+      const { activeViewportId, viewports } = viewportGridService.getState();
+      const viewport = viewports.get(activeViewportId);
+      
+      let newStudyUID = null;
+      let newSeriesUID = null;
+      
+      if (viewport && viewport.displaySetInstanceUIDs && viewport.displaySetInstanceUIDs.length > 0) {
+        const displaySetInstanceUID = viewport.displaySetInstanceUIDs[0];
+        const displaySet = displaySetService.getDisplaySetByUID(displaySetInstanceUID);
+        
+        if (displaySet) {
+          newStudyUID = displaySet.StudyInstanceUID;
+          newSeriesUID = displaySet.SeriesInstanceUID;
+          console.log('✅ Got real DICOM UIDs from active viewport:');
+          console.log(`   Study UID: ${newStudyUID}`);
+          console.log(`   Series UID: ${newSeriesUID}`);
+        }
+      }
+      
+      // Fallback if no viewport data available
+      if (!newStudyUID || !newSeriesUID) {
+        console.warn('⚠️ Could not get DICOM UIDs from viewport, using placeholders');
+        console.warn('   Make sure a study is loaded before using planning features');
+        newStudyUID = 'NO_STUDY_LOADED';
+        newSeriesUID = 'NO_SERIES_LOADED';
+      }
+
       // Get case information (would come from case manager service)
-      // For now, use null caseId to allow sessions without cases
       const newCaseId = null; // TODO: Get from actual case service when available
-      const newStudyUID = '1.2.3.4.5'; // TODO: Get from actual DICOM data
-      const newSeriesUID = '1.2.3.4.5.6'; // TODO: Get from actual DICOM data
       const newSurgeon = 'OHIF User'; // TODO: Get from user service
 
       // Store in state for later use in save/load
