@@ -7,7 +7,7 @@ import PanelMeasurement from './panels/PanelMeasurement';
 import { SegmentationRepresentations } from '@cornerstonejs/tools/enums';
 import i18n from '@ohif/i18n';
 import PanelTracking from './panels/PanelTracking';
-import ViewportStatePanel from './viewportStatePanel';
+import { ViewportStatePanel } from '@ohif/extension-lifesync';
 // NOTE: ScrewManagementPanel moved to @ohif/extension-lifesync
 
 const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: withAppTypes) => {

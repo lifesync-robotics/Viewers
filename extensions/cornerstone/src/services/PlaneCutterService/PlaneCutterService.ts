@@ -31,9 +31,10 @@ interface PlaneCutterData {
 }
 
 /**
- * Color palette for multi-model visualization
+ * Fallback color palette for models without metadata color
+ * This should rarely be used as models should have colors assigned
  */
-const COLOR_PALETTE = [
+const FALLBACK_COLOR_PALETTE = [
   [1.0, 0.5, 0.0], // Orange (default, first model)
   [0.0, 1.0, 1.0], // Cyan
   [1.0, 0.0, 1.0], // Magenta
@@ -890,21 +891,47 @@ class PlaneCutterService extends PubSubService {
   /**
    * Get color for a specific model ID
    * Returns the same color for the same model across all viewports
+   * Priority: 1. Model metadata color, 2. Cached color, 3. Fallback palette
    */
   private _getColorForModel(modelId: string): [number, number, number] {
-    // Check if this model already has a color assigned
-    if (this.modelColors.has(modelId)) {
-      return this.modelColors.get(modelId)!;
+    // First, try to get color from model metadata (source of truth)
+    const { modelStateService } = this.servicesManager.services;
+    const loadedModel = modelStateService?.getModel(modelId);
+
+    if (loadedModel && loadedModel.metadata && loadedModel.metadata.color) {
+      const metadataColor = loadedModel.metadata.color;
+
+      // Validate it's a proper RGB array
+      if (Array.isArray(metadataColor) && metadataColor.length === 3) {
+        const color: [number, number, number] = [
+          metadataColor[0],
+          metadataColor[1],
+          metadataColor[2]
+        ];
+
+        // Cache it for future lookups
+        this.modelColors.set(modelId, color);
+
+        console.log(`🎨 [PlaneCutterService] Using metadata color [${color}] for model ${modelId}`);
+        return color;
+      }
     }
 
-    // Assign a new color from the palette
-    const color = COLOR_PALETTE[this.colorIndex % COLOR_PALETTE.length] as [number, number, number];
+    // Second, check if we already have a cached color
+    if (this.modelColors.has(modelId)) {
+      const cachedColor = this.modelColors.get(modelId)!;
+      console.log(`🎨 [PlaneCutterService] Using cached color [${cachedColor}] for model ${modelId}`);
+      return cachedColor;
+    }
+
+    // Last resort: Assign a new color from the fallback palette
+    const color = FALLBACK_COLOR_PALETTE[this.colorIndex % FALLBACK_COLOR_PALETTE.length] as [number, number, number];
     this.colorIndex++;
 
     // Store the color for this model
     this.modelColors.set(modelId, color);
 
-    console.log(`🎨 [PlaneCutterService] Assigned color [${color}] to model ${modelId}`);
+    console.log(`🎨 [PlaneCutterService] Assigned fallback color [${color}] to model ${modelId} (no metadata color)`);
 
     return color;
   }

@@ -2,6 +2,10 @@ import getPanelModule from './panels/getPanelModule';
 import getToolbarModule from './tools/getToolbarModule';
 import { id } from './id.js';
 
+// Export services for use by other extensions
+export { ModelStateService } from './components/CustomizedModels';
+export { ViewportStateService, ViewportStatePanel } from './components/CustomizedViewport';
+
 const lifesyncExtension = {
   /**
    * Only required property. Should be a unique value across all extensions.
@@ -25,4 +29,3 @@ const lifesyncExtension = {
 };
 
 export default lifesyncExtension;
-
