@@ -180,7 +180,7 @@ export default function PlanSelectionDialog({
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <h3 className="font-bold text-white mb-1">{plan.name}</h3>
+                      <h3 className="font-bold text-white mb-1">{plan.plan_name}</h3>
                       <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
                         <div>
                           <span className="text-gray-400">Plan ID:</span>{' '}

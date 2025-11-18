@@ -989,7 +989,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       const plan = data.plan;
       console.log('✅ Plan loaded:', plan);
       console.log(`   Plan ID: ${plan.plan_id}`);
-      console.log(`   Plan Name: ${plan.name}`);
+      console.log(`   Plan Name: ${plan.plan_name}`);
       console.log(`   Screws array:`, plan.screws);
       console.log(`   Screws count: ${plan.screws?.length || 0}`);
       console.log(`   Rods count: ${plan.rods?.length || 0}`);
@@ -998,7 +998,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (plan.screws && plan.screws.length > 0) {
         console.log('📋 Screw details:');
         plan.screws.forEach((screw, idx) => {
-          console.log(`  [${idx}] Screw ID: ${screw.screw_id}, Name: ${screw.name}, Radius: ${screw.radius}, Length: ${screw.length}`);
+          console.log(`  [${idx}] Screw ID: ${screw.screw_id}, Variant: ${screw.screw_variant_id}, Radius: ${screw.radius}, Length: ${screw.length}`);
         });
       }
 
@@ -1011,7 +1011,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // TODO: Restore 3D models for each screw
       // This would require iterating through plan.screws and calling loadScrewModel for each
 
-      alert(`Plan loaded successfully!\n${plan.name}\nScrews: ${plan.screws?.length || 0}\nRods: ${plan.rods?.length || 0}`);
+      alert(`Plan loaded successfully!\n${plan.plan_name}\nScrews: ${plan.screws?.length || 0}\nRods: ${plan.rods?.length || 0}`);
     } catch (error) {
       console.error('❌ Error loading plan:', error);
       alert(`Failed to load plan: ${error.message}`);
