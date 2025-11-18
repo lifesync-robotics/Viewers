@@ -368,8 +368,15 @@ class CaseService extends PubSubService {
         throw new Error(data.error || 'Failed to fetch studies for case');
       }
 
-      console.log(`✅ Fetched studies for case: ${caseId}`);
-      return data.case;
+      console.log(`✅ Fetched ${data.count || 0} studies for case: ${caseId}`);
+
+      // API returns { success, count, studies }
+      // Transform to expected format
+      return {
+        caseId: caseId,
+        patientInfo: null, // Not included in this endpoint
+        studies: data.studies || []
+      };
     } catch (error) {
       console.error(`❌ Failed to fetch studies for case ${caseId}:`, error);
       throw error;
@@ -521,13 +528,20 @@ class CaseService extends PubSubService {
     console.log(`📁 Enrolling study ${studyInstanceUID} in case ${caseId}`);
 
     try {
+      // Convert modalities array to single string for API
+      const modality = metadata?.modalities && metadata.modalities.length > 0
+        ? metadata.modalities[0]
+        : '';
+
       const response = await fetch(`${this.apiUrl}/api/cases/${caseId}/studies`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           studyInstanceUID,
           clinicalPhase,
-          ...metadata,
+          studyDate: metadata?.studyDate || '',
+          modality: modality,
+          studyDescription: metadata?.description || '',
         }),
       });
 

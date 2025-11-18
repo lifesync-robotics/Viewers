@@ -2,6 +2,7 @@ import getPanelModule from './panels/getPanelModule';
 import getToolbarModule from './tools/getToolbarModule';
 import getCommandsModule from './commandsModule';
 import TrackingService from './services/TrackingService';
+import LifeSyncWorklist from './components/Worklist/LifeSyncWorklist';
 import { id } from './id.js';
 
 const lifesyncExtension = {
@@ -13,6 +14,33 @@ const lifesyncExtension = {
   getPanelModule,
   getToolbarModule,
   getCommandsModule,
+
+  /**
+   * Customization module to override default routes and components
+   */
+  getCustomizationModule() {
+    return [
+      {
+        name: 'routes.customRoutes',
+        value: {
+          routes: [
+            {
+              path: '/',
+              children: (props) => {
+                const DataSourceWrapper = props.route.children;
+                return (
+                  <DataSourceWrapper {...props}>
+                    {(childProps) => <LifeSyncWorklist {...childProps} />}
+                  </DataSourceWrapper>
+                );
+              },
+              private: true,
+            },
+          ],
+        },
+      },
+    ];
+  },
 
   /**
    * Service configuration
@@ -40,4 +68,3 @@ const lifesyncExtension = {
 };
 
 export default lifesyncExtension;
-

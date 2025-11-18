@@ -9,15 +9,21 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { crosshairsHandler } from '../../utils/crosshairsHandler';
 import PlanSelectionDialog from './PlanSelectionDialog';
 
 export default function ScrewManagementPanel({ servicesManager }) {
   const { viewportStateService, modelStateService, planeCutterService } = servicesManager.services;
+
+  // Get caseId from URL parameters
+  const [searchParams] = useSearchParams();
+  const urlCaseId = searchParams.get('caseId');
+
   const [screws, setScrews] = useState([]);
   const [sessionId, setSessionId] = useState(null);
-  const [caseId, setCaseId] = useState(null);
+  const [caseId, setCaseId] = useState(urlCaseId);
   const [studyInstanceUID, setStudyInstanceUID] = useState(null);
   const [seriesInstanceUID, setSeriesInstanceUID] = useState(null);
   const [surgeon, setSurgeon] = useState('OHIF User');
@@ -79,12 +85,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
         newSeriesUID = 'NO_SERIES_LOADED';
       }
 
-      // Get case information (would come from case manager service)
-      const newCaseId = null; // TODO: Get from actual case service when available
+      // Get case information from URL params (set during navigation from WorkList)
+      const newCaseId = urlCaseId; // Read from URL query parameter
       const newSurgeon = 'OHIF User'; // TODO: Get from user service
 
-      // Store in state for later use in save/load
-      setCaseId(newCaseId);
+      // Store in state for later use in save/load (redundant if already set, but kept for clarity)
+      if (newCaseId && newCaseId !== caseId) {
+        setCaseId(newCaseId);
+      }
       setStudyInstanceUID(newStudyUID);
       setSeriesInstanceUID(newSeriesUID);
       setSurgeon(newSurgeon);
@@ -864,18 +872,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       console.log('💾 Saving plan...');
       console.log(`   Session ID: ${sessionId}`);
+      console.log(`   Case ID: ${caseId || 'none (standalone plan)'}`);
       console.log(`   Screws: ${screws.length}`);
 
-      // Determine case ID to use
-      let effectiveCaseId = caseId;
+      // Use caseId from URL params if available
+      // Plans can be saved without a case (standalone plans)
+      const effectiveCaseId = caseId || null;
 
       if (!effectiveCaseId) {
-        // No case ID - inform user and create a default case
         const userConfirmed = confirm(
           '⚠️ No case is currently selected.\n\n' +
-          'This plan will be saved to a default case for now.\n\n' +
-          'You can organize cases properly later through the case management system.\n\n' +
-          'Continue?'
+          'This plan will be saved as a standalone plan (not associated with any case).\n\n' +
+          'To associate plans with cases, please open planning from a case in the WorkList.\n\n' +
+          'Continue saving as standalone plan?'
         );
 
         if (!userConfirmed) {
@@ -883,36 +892,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
           return; // User cancelled
         }
 
-        // Create a default case
-        console.log('🏥 Creating default case for plan...');
-        const caseResponse = await fetch('/api/cases', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            patientInfo: {
-              mrn: 'DEFAULT-PATIENT',
-              name: 'Default Patient',
-              dateOfBirth: null
-            },
-            caseId: `DEFAULT-CASE-${Date.now()}`
-          })
-        });
-
-        if (!caseResponse.ok) {
-          throw new Error(`Failed to create default case: ${caseResponse.status}`);
-        }
-
-        const caseData = await caseResponse.json();
-        if (!caseData.success) {
-          throw new Error(`Case creation failed: ${caseData.error}`);
-        }
-
-        effectiveCaseId = caseData.caseId;
-        console.log(`✅ Created default case: ${effectiveCaseId}`);
-
-        // Update our local caseId state
-        setCaseId(effectiveCaseId);
+        console.log('ℹ️ Saving as standalone plan (no case association)');
       }
 
       const response = await fetch('/api/planning/plan/save', {

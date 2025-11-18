@@ -513,9 +513,12 @@ function WorkList({
 
     try {
       const caseStudiesData = await caseService.getStudiesForCase(caseId);
-      setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData.studies)));
+      // Safe access with fallback to empty array
+      setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData?.studies || [])));
     } catch (error) {
       console.warn(`Failed to load studies for case ${caseId}:`, error);
+      // Set empty array on error
+      setCaseStudies(prev => new Map(prev.set(caseId, [])));
     }
   };
 
@@ -1183,6 +1186,12 @@ function WorkList({
                           query.append('configUrl', filterValues.configUrl);
                         }
                         query.append('StudyInstanceUIDs', studyInstanceUid);
+
+                        // Add caseId if available (case-centric view)
+                        if (caseItem && caseItem.caseId) {
+                          query.append('caseId', caseItem.caseId);
+                        }
+
                         preserveQueryParameters(query);
 
                         return (
@@ -1471,6 +1480,12 @@ function WorkList({
                     query.append('configUrl', filterValues.configUrl);
                   }
                   query.append('StudyInstanceUIDs', studyInstanceUid);
+
+                  // Add caseId if there's an active case selected (study-centric view)
+                  if (activeCaseId) {
+                    query.append('caseId', activeCaseId);
+                  }
+
                   preserveQueryParameters(query);
 
                   return (
@@ -1664,7 +1679,7 @@ function WorkList({
                     Filtering studies for case: {activeCase.caseId}
                   </span>
                   <span className="text-xs opacity-80">
-                    Patient: {activeCase.patientInfo.name || activeCase.patientInfo.mrn} • {activeCase.studies.length} enrolled {activeCase.studies.length === 1 ? 'study' : 'studies'}
+                    Patient: {activeCase?.patientInfo?.name || activeCase?.patientInfo?.mrn || 'Unknown'} • {activeCase?.studies?.length || 0} enrolled {(activeCase?.studies?.length || 0) === 1 ? 'study' : 'studies'}
                   </span>
                 </div>
               </div>
@@ -1784,7 +1799,12 @@ function WorkList({
                             await caseService.enrollStudy(
                               addStudyToCaseId,
                               study.studyInstanceUID,
-                              clinicalPhase
+                              clinicalPhase,
+                              {
+                                studyDate: study.studyDate,
+                                modalities: study.modalities,
+                                description: study.studyDescription
+                              }
                             );
                             console.log(`✅ Study added to case ${addStudyToCaseId}`);
                             setShowAddStudyModal(false);

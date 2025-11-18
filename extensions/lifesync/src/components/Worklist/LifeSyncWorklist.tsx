@@ -139,12 +139,18 @@ function LifeSyncWorklist({
 
     try {
       const caseData = await caseService.getStudiesForCase(caseId);
+      // Safe access to studies array with fallback
       setCaseStudies(prev => ({
         ...prev,
-        [caseId]: caseData.studies
+        [caseId]: caseData?.studies || []
       }));
     } catch (error) {
       console.error('Failed to load case studies:', error);
+      // Set empty array on error to prevent undefined access
+      setCaseStudies(prev => ({
+        ...prev,
+        [caseId]: []
+      }));
     }
   };
 
@@ -240,7 +246,8 @@ function LifeSyncWorklist({
   const getStudyClinicalPhase = (studyInstanceUID) => {
     if (!activeCaseId || !caseStudies[activeCaseId]) return null;
 
-    const study = caseStudies[activeCaseId].find(s => s.studyInstanceUID === studyInstanceUID);
+    const studies = caseStudies[activeCaseId] || [];
+    const study = studies.find(s => s?.studyInstanceUID === studyInstanceUID);
     return study?.clinicalPhase || null;
   };
 
