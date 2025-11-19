@@ -88,9 +88,7 @@ class TrackingService extends PubSubService {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include', // Include cookies for OAuth2 authentication
         body: JSON.stringify({
-          case_id: this.caseId || 'OHIF_SESSION',
-          tools: ['pr', 'EE', 'pointer', 'crosshair'],
-          frequency_hz: 100
+          mode: 'simulation' // Default to simulation mode
         })
       });
 
