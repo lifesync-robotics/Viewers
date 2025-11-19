@@ -278,10 +278,10 @@ function PanelTracking() {
     console.log('✅ Configuration saved:', savedConfig);
     setCurrentTrackingConfig(savedConfig);
     setConfigDialogOpen(false);
-    
+
     // Reload the tracking configuration to apply changes
     await loadConfig();
-    
+
     // Show success message
     setError(null);
   }, [loadConfig]);
@@ -289,7 +289,7 @@ function PanelTracking() {
   const handleConfigApplied = React.useCallback(async (appliedConfig: any) => {
     console.log('✅ Configuration applied:', appliedConfig);
     setCurrentTrackingConfig(appliedConfig);
-    
+
     // Reload the tracking configuration
     await loadConfig();
   }, [loadConfig]);
@@ -370,34 +370,7 @@ function PanelTracking() {
   return (
     <div className="h-full overflow-hidden bg-black p-4">
       <div className="h-full overflow-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold text-white">Tracking Control</h2>
-          <button
-            onClick={handleOpenConfigDialog}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors text-sm"
-          >
-            ⚙️ Configure
-          </button>
-        </div>
-
-        {/* Current Configuration Display */}
-        {currentTrackingConfig && (
-          <div className="mb-4 p-3 bg-gray-800 border border-gray-600 rounded">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs text-gray-400">Active Configuration</div>
-                <div className="text-white font-medium">{currentTrackingConfig.name}</div>
-              </div>
-              <div className={`text-xs px-2 py-1 rounded ${
-                currentTrackingConfig.tracking_mode === 'simulation'
-                  ? 'bg-blue-900 text-blue-300'
-                  : 'bg-green-900 text-green-300'
-              }`}>
-                {currentTrackingConfig.tracking_mode === 'simulation' ? '🖥️ Simulation' : '🔧 Hardware'}
-              </div>
-            </div>
-          </div>
-        )}
+        <h2 className="text-2xl font-bold text-white mb-4">Tracking Control</h2>
 
         {error && (
           <div className="mb-4 p-3 bg-red-900 border border-red-700 rounded text-red-200">
@@ -721,6 +694,32 @@ function PanelTracking() {
 
         {/* Actions */}
         <div className="space-y-2">
+          {/* Current Configuration Display */}
+          {currentTrackingConfig && (
+            <div className="p-3 bg-gray-800 border border-gray-600 rounded">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-gray-400">Active Configuration</div>
+                  <div className="text-white font-medium">{currentTrackingConfig.name}</div>
+                </div>
+                <div className={`text-xs px-2 py-1 rounded ${
+                  currentTrackingConfig.tracking_mode === 'simulation'
+                    ? 'bg-blue-900 text-blue-300'
+                    : 'bg-green-900 text-green-300'
+                }`}>
+                  {currentTrackingConfig.tracking_mode === 'simulation' ? '🖥️ Simulation' : '🔧 Hardware'}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={handleOpenConfigDialog}
+            className="w-full p-3 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition-colors"
+          >
+            ⚙️ Configure Tracking
+          </button>
+
           <button
             onClick={loadConfig}
             disabled={loading}
@@ -773,11 +772,10 @@ function PanelTracking() {
 
       {/* Phase 7: Tracking Configuration Dialog */}
       <TrackingConfigDialog
-        isOpen={configDialogOpen}
+        open={configDialogOpen}
         onClose={handleCloseConfigDialog}
-        onSave={handleConfigSaved}
-        onApply={handleConfigApplied}
-        initialConfig={currentTrackingConfig}
+        onConfigurationSaved={handleConfigSaved}
+        onConfigurationApplied={handleConfigApplied}
       />
     </div>
   );
