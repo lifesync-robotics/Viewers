@@ -10,6 +10,10 @@ window.config = {
   // CRITICAL CORRECTION APPLIED HERE
   customizationService: {}, // =========================================================================
   showStudyList: true,
+  // Disable investigational use dialog banner
+  investigationalUseDialog: {
+    option: 'never',
+  },
   // some windows systems have issues with more than 3 web workers
   maxNumberOfWebWorkers: 3,
   // below flag is for performance reasons, but it might not work for all servers
