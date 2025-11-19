@@ -53,7 +53,13 @@ const ReferenceMarkerSelector: React.FC<ReferenceMarkerSelectorProps> = ({
         const result = await response.json();
 
         if (result.success) {
-          setMarkers(result.markers || []);
+          // Map markers to ensure consistent field names
+          const mappedMarkers = (result.markers || []).map((marker: any) => ({
+            ...marker,
+            marker_id: marker.id || marker.marker_id, // Support both field names
+          }));
+          console.log('Loaded markers:', mappedMarkers);
+          setMarkers(mappedMarkers);
         } else {
           setError(result.error || 'Failed to load markers');
         }

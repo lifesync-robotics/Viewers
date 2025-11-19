@@ -152,12 +152,37 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
         return;
       }
 
+      // Filter out null/undefined instrument IDs
+      const validInstrumentIds = selectedInstrumentIds.filter(id => id && id !== 'null' && id !== 'undefined');
+      
+      // Filter out null/undefined keys from ROM selections
+      const validRomSelections: { [key: string]: string } = {};
+      Object.entries(alternativeRomSelections).forEach(([key, value]) => {
+        if (key && key !== 'null' && key !== 'undefined' && value) {
+          validRomSelections[key] = value;
+        }
+      });
+
+      // Validate reference marker ID
+      const validReferenceMarkerId = selectedReferenceMarkerId && 
+                                     selectedReferenceMarkerId !== 'null' && 
+                                     selectedReferenceMarkerId !== 'undefined' 
+                                     ? selectedReferenceMarkerId 
+                                     : undefined;
+
+      console.log('Saving configuration:', {
+        name: configName,
+        reference_marker: validReferenceMarkerId,
+        instruments: validInstrumentIds,
+        rom_selections: validRomSelections,
+      });
+
       // Build configuration object
       const configuration: TrackingConfiguration = {
         name: configName,
         description: configDescription,
-        default_reference_marker_id: selectedReferenceMarkerId,
-        default_instrument_ids: selectedInstrumentIds,
+        default_reference_marker_id: validReferenceMarkerId,
+        default_instrument_ids: validInstrumentIds,
         settings: {
           tracking_frequency: trackingFrequency,
           coordinate_system: coordinateSystem,
@@ -166,7 +191,7 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
           tracking_mode: trackingMode,
           ...(trackingMode === 'hardware' && { ndi_config: ndiConfig }),
         },
-        alternative_rom_selections: alternativeRomSelections,
+        alternative_rom_selections: validRomSelections,
       };
 
       // Save via API
@@ -256,6 +281,14 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
 
   // Handle instrument toggle
   const handleInstrumentToggle = (instrumentId: string, enabled: boolean) => {
+    // Validate instrument ID
+    if (!instrumentId || instrumentId === 'null' || instrumentId === 'undefined') {
+      console.error('Invalid instrument ID:', instrumentId);
+      return;
+    }
+
+    console.log('handleInstrumentToggle:', instrumentId, enabled);
+
     if (enabled) {
       setSelectedInstrumentIds([...selectedInstrumentIds, instrumentId]);
       // Set default ROM selection
