@@ -1,0 +1,718 @@
+/**
+ * TrackingConfigDialog CSS
+ * Styles for tracking configuration dialog and all child components
+ */
+
+/* Dialog Overlay */
+.tracking-config-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+}
+
+/* Dialog Container */
+.tracking-config-dialog {
+  background: #1e1e1e;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  max-width: 800px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  color: #e0e0e0;
+}
+
+/* Header */
+.tracking-config-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #333;
+}
+
+.tracking-config-dialog-header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  font-size: 32px;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.close-button:hover {
+  color: #fff;
+}
+
+/* Content */
+.tracking-config-dialog-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+/* Footer */
+.tracking-config-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #333;
+}
+
+/* Alerts */
+.alert {
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.alert-icon {
+  font-size: 20px;
+}
+
+.alert-error {
+  background-color: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  color: #fca5a5;
+}
+
+.alert-success {
+  background-color: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #86efac;
+}
+
+/* Config Sections */
+.config-section {
+  margin-bottom: 24px;
+  padding: 16px;
+  background-color: #252525;
+  border-radius: 6px;
+}
+
+.config-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+/* Form Elements */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: #d0d0d0;
+}
+
+.form-input,
+.form-textarea,
+.form-select {
+  width: 100%;
+  padding: 10px 12px;
+  background-color: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+
+.form-input:focus,
+.form-textarea:focus,
+.form-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+  color: #666;
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.form-help {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #888;
+}
+
+/* Buttons */
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: #3b82f6;
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.btn-secondary {
+  background-color: #4b5563;
+  color: #fff;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #374151;
+}
+
+.btn-danger {
+  background-color: #dc2626;
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #b91c1c;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Config Manager Toggle */
+.config-manager-toggle {
+  margin-bottom: 16px;
+}
+
+/* Advanced Settings */
+.advanced-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-icon {
+  font-size: 14px;
+  color: #888;
+}
+
+.advanced-settings {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #333;
+}
+
+/* Loading Spinner */
+.loading-spinner {
+  padding: 20px;
+  text-align: center;
+  color: #888;
+}
+
+/* No Results */
+.no-results {
+  padding: 20px;
+  text-align: center;
+  color: #888;
+  font-style: italic;
+}
+
+/* Reference Marker Selector */
+.reference-marker-selector {
+  /* Inherits styles from parent */
+}
+
+.marker-details,
+.instrument-details {
+  margin-top: 12px;
+  padding: 12px;
+  background-color: #1a1a1a;
+  border-radius: 4px;
+}
+
+.marker-details h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-weight: 500;
+  color: #999;
+}
+
+.detail-value {
+  color: #e0e0e0;
+}
+
+/* Instrument Selector */
+.instrument-selector {
+  /* Inherits styles from parent */
+}
+
+.instrument-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.instrument-item {
+  padding: 12px;
+  background-color: #1a1a1a;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.instrument-header {
+  margin-bottom: 8px;
+}
+
+.instrument-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.instrument-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.instrument-name {
+  font-weight: 500;
+  color: #fff;
+}
+
+.instrument-id {
+  color: #888;
+  font-size: 12px;
+}
+
+.rom-selection {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.rom-selection label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #999;
+}
+
+.selection-summary {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background-color: #1a1a1a;
+  border-radius: 4px;
+  text-align: center;
+  color: #888;
+}
+
+.selection-summary strong {
+  color: #3b82f6;
+}
+
+/* Tracking Mode Toggle */
+.tracking-mode-toggle {
+  /* Inherits styles from parent */
+}
+
+.mode-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.mode-option {
+  padding: 16px;
+  background-color: #1a1a1a;
+  border: 2px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.mode-option:hover {
+  border-color: #444;
+}
+
+.mode-option.active {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.mode-option input[type="radio"] {
+  display: none;
+}
+
+.mode-icon {
+  font-size: 32px;
+}
+
+.mode-label {
+  font-weight: 600;
+  color: #fff;
+}
+
+.mode-description {
+  font-size: 12px;
+  color: #888;
+  text-align: center;
+}
+
+.mode-info {
+  margin-top: 12px;
+}
+
+.info-box {
+  padding: 12px;
+  border-radius: 4px;
+  border-left: 4px solid;
+}
+
+.info-simulation {
+  background-color: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+}
+
+.info-hardware {
+  background-color: rgba(234, 179, 8, 0.1);
+  border-color: #eab308;
+}
+
+.info-box strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #fff;
+}
+
+.info-box p {
+  margin: 0;
+  font-size: 13px;
+  color: #d0d0d0;
+}
+
+/* NDI Connection Settings */
+.ndi-connection-settings {
+  /* Inherits styles from parent */
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.connection-status {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 4px;
+  border-left: 4px solid;
+}
+
+.connection-status.success {
+  background-color: rgba(34, 197, 94, 0.1);
+  border-color: #22c55e;
+}
+
+.connection-status.error {
+  background-color: rgba(220, 38, 38, 0.1);
+  border-color: #dc2626;
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.status-icon {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.status-message {
+  font-weight: 500;
+  color: #fff;
+}
+
+.tracker-info {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #333;
+}
+
+.tracker-info h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.info-label {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.info-value {
+  font-size: 13px;
+  color: #e0e0e0;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background-color: #22c55e;
+  color: #000;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.error-details {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #fca5a5;
+}
+
+/* Configuration Manager */
+.configuration-manager {
+  /* Inherits styles from parent */
+}
+
+.configuration-list {
+  max-height: 400px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.configuration-item {
+  padding: 16px;
+  background-color: #1a1a1a;
+  border: 2px solid #333;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  transition: border-color 0.2s;
+}
+
+.configuration-item:hover {
+  border-color: #444;
+}
+
+.configuration-item.active {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+.config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.config-info {
+  flex: 1;
+}
+
+.config-name {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.config-description {
+  margin: 0;
+  font-size: 13px;
+  color: #888;
+}
+
+.config-badge {
+  /* Badge container */
+}
+
+.mode-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.mode-badge.mode-simulation {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
+.mode-badge.mode-hardware {
+  background-color: rgba(234, 179, 8, 0.2);
+  color: #fbbf24;
+}
+
+.config-details {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.delete-confirm {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.confirm-text {
+  font-size: 13px;
+  color: #fca5a5;
+  font-weight: 500;
+}
+
+.manager-footer {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+/* Scrollbar Styling */
+.tracking-config-dialog-content::-webkit-scrollbar,
+.instrument-list::-webkit-scrollbar,
+.configuration-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tracking-config-dialog-content::-webkit-scrollbar-track,
+.instrument-list::-webkit-scrollbar-track,
+.configuration-list::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.tracking-config-dialog-content::-webkit-scrollbar-thumb,
+.instrument-list::-webkit-scrollbar-thumb,
+.configuration-list::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.tracking-config-dialog-content::-webkit-scrollbar-thumb:hover,
+.instrument-list::-webkit-scrollbar-thumb:hover,
+.configuration-list::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .tracking-config-dialog {
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .mode-options {
+    grid-template-columns: 1fr;
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
