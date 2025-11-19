@@ -40,7 +40,7 @@ The extension uses two core services:
 ### 2. User Interface
 
 #### ScrewManagementPanel
-- **Location**: `extensions/cornerstone/src/ScrewManagementPanel.tsx`
+- **Location**: `extensions/lifesync/src/components/ScrewManagement/ScrewManagementPanel.tsx`
 - **Purpose**: Main UI component for managing screw placements
 - **Features**:
 
@@ -397,7 +397,7 @@ const models = modelStateService.getAllModels();
 ## File Changes Summary
 
 ### New Files Created
-1. **`extensions/cornerstone/src/ScrewManagementPanel.tsx`**
+1. **`extensions/lifesync/src/components/ScrewManagement/ScrewManagementPanel.tsx`**
    - Complete UI for screw management
    - Integrates both viewport and model services
    - Handles save, restore, delete with model synchronization

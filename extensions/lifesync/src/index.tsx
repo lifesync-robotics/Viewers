@@ -3,6 +3,10 @@ import getToolbarModule from './tools/getToolbarModule';
 import getCustomizationModule from './getCustomizationModule';
 import { id } from './id.js';
 
+// Export services for use by other extensions
+export { ModelStateService } from './components/CustomizedModels';
+export { ViewportStateService, ViewportStatePanel } from './components/CustomizedViewport';
+
 const lifesyncExtension = {
   /**
    * Only required property. Should be a unique value across all extensions.

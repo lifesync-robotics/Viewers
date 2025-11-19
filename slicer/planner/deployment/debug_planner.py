@@ -3194,7 +3194,8 @@ sliceNode.GetSagittalSliceToRASMatrix(temp)
 SAGITTAL = np.array(temp.GetData()).reshape(3, 3)
 
 
-new_dir = r"C:\Users\hp\tableTop\mvisioner\3dslicer_sampleData\CTChest"
+new_dir = r"C:\Users\hp\tableTop\mvisioner\3dslicer_sampleData\ChestCT"
+
 
 mhd_path = os.path.join(new_dir, "301 No series description.mhd")
 
