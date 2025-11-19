@@ -64,7 +64,13 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
         const result = await response.json();
 
         if (result.success) {
-          setInstruments(result.instruments || []);
+          // Map instruments to ensure consistent field names
+          const mappedInstruments = (result.instruments || []).map((inst: any) => ({
+            ...inst,
+            instrument_id: inst.id || inst.instrument_id, // Support both field names
+          }));
+          console.log('Loaded instruments:', mappedInstruments);
+          setInstruments(mappedInstruments);
         } else {
           setError(result.error || 'Failed to load instruments');
         }
@@ -87,7 +93,9 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
 
   // Check if instrument is selected
   const isSelected = (instrumentId: string) => {
-    return selectedInstrumentIds.includes(instrumentId);
+    const result = selectedInstrumentIds.includes(instrumentId);
+    console.log(`isSelected(${instrumentId}):`, result, 'selectedIds:', selectedInstrumentIds);
+    return result;
   };
 
   // Get available ROMs for instrument
@@ -135,8 +143,8 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
               const currentRom = alternativeRomSelections[instrument.instrument_id] || 'default';
 
               return (
-                <div 
-                  key={instrument.instrument_id} 
+                <div
+                  key={instrument.instrument_id}
                   className={`instrument-item ${selected ? 'selected' : ''}`}
                 >
                   {/* Checkbox and Name */}
@@ -145,7 +153,10 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
                       <input
                         type="checkbox"
                         checked={selected}
-                        onChange={(e) => onInstrumentToggle(instrument.instrument_id, e.target.checked)}
+                        onChange={(e) => {
+                          console.log('Toggle instrument:', instrument.instrument_id, 'to:', e.target.checked);
+                          onInstrumentToggle(instrument.instrument_id, e.target.checked);
+                        }}
                         disabled={disabled}
                       />
                       <span className="instrument-name">{instrument.name}</span>
