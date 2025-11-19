@@ -318,8 +318,19 @@
 .instrument-item {
   padding: 12px;
   background-color: #1a1a1a;
+  border: 2px solid transparent;
   border-radius: 4px;
   margin-bottom: 8px;
+  transition: all 0.2s;
+}
+
+.instrument-item:hover {
+  border-color: #333;
+}
+
+.instrument-item.selected {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.05);
 }
 
 .instrument-header {
@@ -715,4 +726,3 @@
     grid-template-columns: 1fr;
   }
 }
-

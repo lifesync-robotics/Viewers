@@ -1,6 +1,6 @@
 /**
  * InstrumentSelector - Component for selecting multiple instruments
- * 
+ *
  * Fetches available instruments from Asset Management API and allows multi-selection
  * Also supports alternative ROM selection per instrument
  */
@@ -56,7 +56,7 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
 
         const apiBase = getApiBase();
         const response = await fetch(`${apiBase}/api/assets/instruments/search?limit=100`);
-        
+
         if (!response.ok) {
           throw new Error(`Failed to load instruments: ${response.statusText}`);
         }
@@ -105,7 +105,7 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
   return (
     <div className="instrument-selector">
       {loading && <div className="loading-spinner">Loading instruments...</div>}
-      
+
       {error && (
         <div className="alert alert-error">
           <span className="alert-icon">⚠️</span>
@@ -135,7 +135,10 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
               const currentRom = alternativeRomSelections[instrument.instrument_id] || 'default';
 
               return (
-                <div key={instrument.instrument_id} className="instrument-item">
+                <div 
+                  key={instrument.instrument_id} 
+                  className={`instrument-item ${selected ? 'selected' : ''}`}
+                >
                   {/* Checkbox and Name */}
                   <div className="instrument-header">
                     <label className="instrument-checkbox">
@@ -163,7 +166,7 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
                           <span className="detail-value">{instrument.description}</span>
                         </div>
                       )}
-                      
+
                       {/* Alternative ROM Selection */}
                       {availableRoms.length > 1 && (
                         <div className="rom-selection">
@@ -217,4 +220,3 @@ const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({
 };
 
 export default InstrumentSelector;
-

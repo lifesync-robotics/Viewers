@@ -197,4 +197,3 @@ const NDIConnectionSettings: React.FC<NDIConnectionSettingsProps> = ({
 };
 
 export default NDIConnectionSettings;
-

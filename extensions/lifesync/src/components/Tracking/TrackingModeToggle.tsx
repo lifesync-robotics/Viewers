@@ -76,4 +76,3 @@ const TrackingModeToggle: React.FC<TrackingModeToggleProps> = ({
 };
 
 export default TrackingModeToggle;
-

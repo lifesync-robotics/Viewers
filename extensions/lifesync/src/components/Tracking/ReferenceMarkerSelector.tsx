@@ -1,6 +1,6 @@
 /**
  * ReferenceMarkerSelector - Component for selecting reference marker
- * 
+ *
  * Fetches available markers from Asset Management API and allows user to select one
  */
 
@@ -45,7 +45,7 @@ const ReferenceMarkerSelector: React.FC<ReferenceMarkerSelectorProps> = ({
 
         const apiBase = getApiBase();
         const response = await fetch(`${apiBase}/api/assets/markers/search?limit=100`);
-        
+
         if (!response.ok) {
           throw new Error(`Failed to load markers: ${response.statusText}`);
         }
@@ -80,7 +80,7 @@ const ReferenceMarkerSelector: React.FC<ReferenceMarkerSelectorProps> = ({
   return (
     <div className="reference-marker-selector">
       {loading && <div className="loading-spinner">Loading markers...</div>}
-      
+
       {error && (
         <div className="alert alert-error">
           <span className="alert-icon">⚠️</span>
@@ -178,4 +178,3 @@ const ReferenceMarkerSelector: React.FC<ReferenceMarkerSelectorProps> = ({
 };
 
 export default ReferenceMarkerSelector;
-

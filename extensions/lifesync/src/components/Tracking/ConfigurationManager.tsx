@@ -51,7 +51,7 @@ const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({
 
       const apiBase = getApiBase();
       const response = await fetch(`${apiBase}/api/tracking/configurations?limit=100`);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to load configurations: ${response.statusText}`);
       }
@@ -84,7 +84,7 @@ const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({
 
       const apiBase = getApiBase();
       const response = await fetch(`${apiBase}/api/tracking/configurations/${configId}`);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to load configuration: ${response.statusText}`);
       }
@@ -114,7 +114,7 @@ const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({
       const response = await fetch(`${apiBase}/api/tracking/configurations/${configId}`, {
         method: 'DELETE',
       });
-      
+
       if (!response.ok) {
         throw new Error(`Failed to delete configuration: ${response.statusText}`);
       }
@@ -155,7 +155,7 @@ const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({
   return (
     <div className="configuration-manager">
       {loading && <div className="loading-spinner">Loading configurations...</div>}
-      
+
       {error && (
         <div className="alert alert-error">
           <span className="alert-icon">⚠️</span>
@@ -233,7 +233,7 @@ const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({
                     >
                       Load
                     </button>
-                    
+
                     {deleteConfirmId === config.config_id ? (
                       <div className="delete-confirm">
                         <span className="confirm-text">Delete?</span>
@@ -284,4 +284,3 @@ const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({
 };
 
 export default ConfigurationManager;
-

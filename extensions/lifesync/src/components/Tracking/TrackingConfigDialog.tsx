@@ -1,6 +1,6 @@
 /**
  * TrackingConfigDialog - Main dialog for tracking configuration management
- * 
+ *
  * This component provides a comprehensive interface for:
  * - Creating new tracking configurations
  * - Loading saved configurations
@@ -71,7 +71,7 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
     timeout_seconds: 5,
     auto_reconnect: true,
   });
-  
+
   // Advanced settings
   const [trackingFrequency, setTrackingFrequency] = useState(60);
   const [coordinateSystem, setCoordinateSystem] = useState('ndi');
@@ -238,7 +238,7 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ndi_config: trackingMode === 'simulation' 
+          ndi_config: trackingMode === 'simulation'
             ? { ...ndiConfig, ip_address: 'simulation' }
             : ndiConfig,
         }),
@@ -517,4 +517,3 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
 };
 
 export default TrackingConfigDialog;
-
