@@ -42,6 +42,8 @@ import {
   CreateCaseDialog,
 } from '@ohif/extension-lifesync/src/components/CaseManagement';
 
+import { CLINICAL_PHASE_LABELS } from '@ohif/extension-default/src/services/CaseService';
+
 import { Types } from '@ohif/ui';
 
 import { preserveQueryParameters, preserveQueryStrings } from '../../utils/preserveQueryParameters';
@@ -862,6 +864,13 @@ function WorkList({
     return orthancStudies;
   }, [orthancStudies, searchQuery, searchFilter]);
 
+  // Select Study dialog state
+  const [selectedStudy, setSelectedStudy] = useState(null);
+  const [showEnrollDialog, setShowEnrollDialog] = useState(false);
+  const [selectedClinicalPhase, setSelectedClinicalPhase] = useState('PreOperativePlanning');
+  const [isEnrolling, setIsEnrolling] = useState(false);
+  const [enrollError, setEnrollError] = useState(null);
+
   // 暂时直接使用 orthancStudies，不进行过滤
   // const filteredOrthancStudies = orthancStudies;
 
@@ -980,6 +989,79 @@ function WorkList({
   }, [selectedFiles, addStudyToCaseId, caseService, onRefresh]);
   // }, [selectedFiles, autoEnroll, clinicalPhase, addStudyToCaseId, caseService, onRefresh]);
 
+  // Load studies for a specific case (defined early for use in handleEnrollStudy)
+  const loadStudiesForCase = useCallback(
+    async caseId => {
+      if (!caseService) {
+        return;
+      }
+
+      try {
+        const caseStudiesData = await caseService.getStudiesForCase(caseId);
+        setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData.studies)));
+      } catch (error) {
+        console.warn(`Failed to load studies for case ${caseId}:`, error);
+      }
+    },
+    [caseService]
+  );
+
+  // Handle study selection - open enroll dialog
+  const handleStudyClick = useCallback(study => {
+    setSelectedStudy(study);
+    setSelectedClinicalPhase('PreOperativePlanning');
+    setEnrollError(null);
+    setShowEnrollDialog(true);
+  }, []);
+
+  // Handle enroll study confirmation
+  const handleEnrollStudy = useCallback(async () => {
+    if (!selectedStudy || !caseService || !addStudyToCaseId) {
+      return;
+    }
+
+    setIsEnrolling(true);
+    setEnrollError(null);
+
+    try {
+      await caseService.enrollStudy(
+        addStudyToCaseId,
+        selectedStudy.studyInstanceUID,
+        selectedClinicalPhase
+      );
+
+      // Success - refresh both case list and study list
+      setShowEnrollDialog(false);
+      setShowAddStudyModal(false);
+      setSelectedStudy(null);
+
+      // Reload cases to update studyCount
+      await loadCases();
+
+      // Reload studies for this case if it's already expanded
+      if (caseStudies.has(addStudyToCaseId)) {
+        await loadStudiesForCase(addStudyToCaseId);
+      }
+
+      // Also refresh study list if needed
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to add study:', err);
+      setEnrollError(err.message || 'Failed to add study to case');
+    } finally {
+      setIsEnrolling(false);
+    }
+  }, [
+    selectedStudy,
+    addStudyToCaseId,
+    selectedClinicalPhase,
+    caseService,
+    loadCases,
+    loadStudiesForCase,
+    caseStudies,
+    onRefresh,
+  ]);
+
   // Handle file selection
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -1043,20 +1125,6 @@ function WorkList({
     } catch (err) {
       console.error('Failed to update case:', err);
       throw err; // Let EditCaseDialog show the error
-    }
-  };
-
-  // Load studies for a specific case
-  const loadStudiesForCase = async caseId => {
-    if (!caseService) {
-      return;
-    }
-
-    try {
-      const caseStudiesData = await caseService.getStudiesForCase(caseId);
-      setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData.studies)));
-    } catch (error) {
-      console.warn(`Failed to load studies for case ${caseId}:`, error);
     }
   };
 
@@ -2716,46 +2784,9 @@ function WorkList({
                                   !study.hasCaseId,
                               }
                             )}
-                            onClick={async () => {
-                              // TODO: 保持原有的点击逻辑
-                              if (study.hasCaseId) {
-                                const confirmAdd = window.confirm(
-                                  `⚠️ WARNING: This study is already assigned to case "${study.existingCaseId}".\n\nDo you want to add it to "${addStudyToCaseId}" anyway?`
-                                );
-                                if (!confirmAdd) {
-                                  return;
-                                }
-                              }
-
-                              // Prompt for clinical phase
-                              const phase = window.prompt(
-                                'Enter clinical phase:\n\n1. PreOperativePlanning\n2. IntraOperative\n3. PostOperative\n4. FollowUp\n\nEnter number (1-4):',
-                                '1'
-                              );
-
-                              const phaseMap = {
-                                '1': 'PreOperativePlanning',
-                                '2': 'IntraOperative',
-                                '3': 'PostOperative',
-                                '4': 'FollowUp',
-                              };
-
-                              const clinicalPhase = phaseMap[phase] || 'PreOperativePlanning';
-
-                              try {
-                                if (caseService && addStudyToCaseId) {
-                                  await caseService.enrollStudy(
-                                    addStudyToCaseId,
-                                    study.studyInstanceUID,
-                                    clinicalPhase
-                                  );
-                                  console.log(`✅ Study added to case ${addStudyToCaseId}`);
-                                  setShowAddStudyModal(false);
-                                  window.location.reload();
-                                }
-                              } catch (err) {
-                                console.error('Failed to add study:', err);
-                                alert('Failed to add study to case: ' + err.message);
+                            onClick={() => {
+                              if (!isEnrolling) {
+                                handleStudyClick(study);
                               }
                             }}
                           >
@@ -2796,6 +2827,94 @@ function WorkList({
               )}
             </div>
 
+            {/* Enroll Study Confirmation Dialog */}
+            {showEnrollDialog && selectedStudy && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                <div className="bg-secondary-main border-secondary-light w-full max-w-md rounded-lg border p-6 shadow-lg">
+                  <h3 className="mb-4 text-lg font-semibold text-white">Add Study to Case</h3>
+
+                  {/* Study Info */}
+                  <div className="bg-secondary-dark mb-4 rounded p-4">
+                    <div className="mb-2">
+                      <span className="text-sm text-gray-400">Patient:</span>
+                      <span className="ml-2 font-semibold text-white">
+                        {selectedStudy.patientName || 'Unknown'}
+                      </span>
+                    </div>
+                    <div className="mb-2">
+                      <span className="text-sm text-gray-400">MRN:</span>
+                      <span className="ml-2 text-white">{selectedStudy.patientId || 'N/A'}</span>
+                    </div>
+                    <div className="mb-2">
+                      <span className="text-sm text-gray-400">Date:</span>
+                      <span className="ml-2 text-white">{selectedStudy.studyDate || 'N/A'}</span>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-400">Case ID:</span>
+                      <span className="ml-2 text-white">{addStudyToCaseId}</span>
+                    </div>
+                    {selectedStudy.hasCaseId && (
+                      <div className="mt-3 rounded border border-yellow-500/50 bg-yellow-900/20 p-2">
+                        <span className="text-xs text-yellow-300">
+                          ⚠️ This study is already assigned to case &quot;
+                          {selectedStudy.existingCaseId || selectedStudy.caseId}&quot;
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Clinical Phase Selector */}
+                  <div className="mb-4">
+                    <label className="mb-2 block text-sm text-gray-300">Clinical Phase:</label>
+                    <select
+                      value={selectedClinicalPhase}
+                      onChange={e => setSelectedClinicalPhase(e.target.value)}
+                      disabled={isEnrolling}
+                      className="w-full rounded border border-gray-600 bg-black px-3 py-2 text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                    >
+                      {Object.entries(CLINICAL_PHASE_LABELS).map(([key, label]) => (
+                        <option
+                          key={key}
+                          value={key}
+                        >
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Error Message */}
+                  {enrollError && (
+                    <div className="mb-4 rounded border border-red-500/50 bg-red-900/30 p-3">
+                      <span className="text-sm text-red-300">{enrollError}</span>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end gap-3">
+                    <Button
+                      onClick={() => {
+                        setShowEnrollDialog(false);
+                        setSelectedStudy(null);
+                        setEnrollError(null);
+                      }}
+                      disabled={isEnrolling}
+                      className="bg-secondary-dark hover:bg-secondary-light"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleEnrollStudy}
+                      disabled={isEnrolling}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      {isEnrolling ? 'Adding...' : 'Confirm Add'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Modal Footer */}
             <div className="border-secondary-light border-t px-6 py-4">
               <div className="flex items-center justify-between">
@@ -2817,7 +2936,6 @@ function WorkList({
                 </div>
                 <Button
                   onClick={() => setShowAddStudyModal(false)}
-                  size="small"
                   className="bg-secondary-dark hover:bg-secondary-light"
                 >
                   Close

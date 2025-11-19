@@ -247,7 +247,7 @@ class CaseService extends PubSubService {
    */
   public async getAllOrthancStudies(): Promise<any[]> {
     try {
-      const response = await fetch(`${this.apiUrl}/api/orthanc/studies`);
+      const response = await fetch(`${this.apiUrl}/api/dicom/studies`);
       if (!response.ok) {
         throw new Error(`Failed to get Orthanc studies: ${response.statusText}`);
       }
@@ -261,21 +261,21 @@ class CaseService extends PubSubService {
 
   /**
    * Check if a study has an existing case ID
+   * Uses the new /api/dicom/studies/:studyUID endpoint which includes case info
    */
   public async checkStudyCaseId(
     studyInstanceUID: string
   ): Promise<{ hasCaseId: boolean; caseId: string | null }> {
     try {
-      const response = await fetch(
-        `${this.apiUrl}/api/orthanc/studies/${studyInstanceUID}/check-case`
-      );
+      const response = await fetch(`${this.apiUrl}/api/dicom/studies/${studyInstanceUID}`);
       if (!response.ok) {
         throw new Error(`Failed to check study case ID: ${response.statusText}`);
       }
       const data = await response.json();
+      const caseInfo = data.study?.caseInfo;
       return {
-        hasCaseId: data.hasCaseId,
-        caseId: data.caseId,
+        hasCaseId: caseInfo !== null && caseInfo !== undefined,
+        caseId: caseInfo?.caseId || null,
       };
     } catch (error) {
       console.error('❌ Failed to check study case ID:', error);
