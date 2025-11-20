@@ -326,15 +326,18 @@ class TrackingService extends PubSubService {
             hasCrosshair: !!(message.data?.tools?.crosshair)
           });
         }
-        
+
         // NEW FORMAT: Extract data from tools object
-        if (message.data && message.data.tools && message.data.tools.crosshair) {
-          const crosshair = message.data.tools.crosshair;
+        // Use EE (End Effector) as the primary tracked tool, fallback to crosshair for backward compatibility
+        const toolData = message.data?.tools?.EE || message.data?.tools?.crosshair;
+        
+        if (message.data && message.data.tools && toolData) {
+          const crosshair = toolData;
 
           // Extract position, orientation, and matrix
           const position = crosshair.coordinates.register.position_mm;
           const rotation = crosshair.coordinates.register.rotation_deg || [0, 0, 0];
-          const matrix = crosshair.coordinates.register.rMcrosshair;
+          const matrix = crosshair.coordinates.register.rMEE || crosshair.coordinates.register.rMcrosshair;
 
           // Pass to tracking update handler
           this._handleTrackingUpdate({
@@ -354,13 +357,13 @@ class TrackingService extends PubSubService {
             patient_reference_movement: message.data.patient_reference?.movement_mm,
             tools: message.data.tools,
           });
-        } else if (message.tools && message.tools.crosshair) {
+        } else if (message.tools && (message.tools.EE || message.tools.crosshair)) {
           // OLD FORMAT: Direct tools object (backward compatibility)
-          const crosshair = message.tools.crosshair;
+          const crosshair = message.tools.EE || message.tools.crosshair;
 
           const position = crosshair.coordinates.register.position_mm;
           const rotation = crosshair.coordinates.register.rotation_deg || [0, 0, 0];
-          const matrix = crosshair.coordinates.register.rMcrosshair;
+          const matrix = crosshair.coordinates.register.rMEE || crosshair.coordinates.register.rMcrosshair;
 
           this._handleTrackingUpdate({
             position: position,
