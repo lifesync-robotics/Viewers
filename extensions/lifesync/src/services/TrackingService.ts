@@ -317,6 +317,16 @@ class TrackingService extends PubSubService {
       case 'tracking_data': // Server sends 'tracking_data', not 'tracking_update'
       case 'tracking_data':  // New message type from backend
       case 'tracking_update': // Keep for backward compatibility
+        // DEBUG: Log data structure for first few messages
+        if (this.statsData.framesReceived < 3) {
+          console.log('🔍 [TrackingService] Processing tracking data:', {
+            hasData: !!message.data,
+            hasTools: !!message.data?.tools,
+            toolKeys: message.data?.tools ? Object.keys(message.data.tools) : [],
+            hasCrosshair: !!(message.data?.tools?.crosshair)
+          });
+        }
+        
         // NEW FORMAT: Extract data from tools object
         if (message.data && message.data.tools && message.data.tools.crosshair) {
           const crosshair = message.data.tools.crosshair;
