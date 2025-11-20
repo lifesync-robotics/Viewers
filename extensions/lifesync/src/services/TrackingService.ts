@@ -97,17 +97,17 @@ class TrackingService extends PubSubService {
         const errorData = await response.json();
         if (errorData.error && errorData.error.includes('already active')) {
           console.warn('⚠️ Tracking already active, disconnecting first...');
-          
+
           // Disconnect
           await fetch(`${apiUrl}/api/tracking/disconnect`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include'
           });
-          
+
           // Wait a bit for cleanup
           await new Promise(resolve => setTimeout(resolve, 500));
-          
+
           // Retry connection
           response = await fetch(`${apiUrl}/api/tracking/connect`, {
             method: 'POST',
@@ -315,6 +315,7 @@ class TrackingService extends PubSubService {
         break;
 
       case 'tracking_data': // Server sends 'tracking_data', not 'tracking_update'
+      case 'tracking_data':  // New message type from backend
       case 'tracking_update': // Keep for backward compatibility
         // NEW FORMAT: Extract data from tools object
         if (message.data && message.data.tools && message.data.tools.crosshair) {
@@ -369,6 +370,29 @@ class TrackingService extends PubSubService {
       case 'subscription':
       case 'frequency':
         console.log(`📨 Server response:`, message);
+        break;
+
+      case 'alert':
+        // Handle system alerts (warnings, errors, info)
+        const severity = message.severity || 'info';
+        const alertMessage = message.message || 'Unknown alert';
+        const category = message.category || 'system';
+
+        if (severity === 'error') {
+          console.error(`🚨 [${category}] ${alertMessage}`);
+        } else if (severity === 'warning') {
+          console.warn(`⚠️ [${category}] ${alertMessage}`);
+        } else {
+          console.info(`ℹ️ [${category}] ${alertMessage}`);
+        }
+
+        // Broadcast alert to UI
+        this._broadcastEvent('TRACKING_ALERT', {
+          severity,
+          category,
+          message: alertMessage,
+          timestamp: message.timestamp
+        });
         break;
 
       default:
