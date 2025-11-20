@@ -83,7 +83,7 @@ class TrackingService extends PubSubService {
 
     try {
       // Step 1: Call REST API to get WebSocket URL
-      const response = await fetch(`${apiUrl}/api/tracking/connect`, {
+      let response = await fetch(`${apiUrl}/api/tracking/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include', // Include cookies for OAuth2 authentication
@@ -92,8 +92,37 @@ class TrackingService extends PubSubService {
         })
       });
 
+      // If already connected, disconnect first and retry
+      if (!response.ok && response.status === 400) {
+        const errorData = await response.json();
+        if (errorData.error && errorData.error.includes('already active')) {
+          console.warn('⚠️ Tracking already active, disconnecting first...');
+          
+          // Disconnect
+          await fetch(`${apiUrl}/api/tracking/disconnect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include'
+          });
+          
+          // Wait a bit for cleanup
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Retry connection
+          response = await fetch(`${apiUrl}/api/tracking/connect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              mode: 'simulation'
+            })
+          });
+        }
+      }
+
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`API request failed: ${errorData.error || response.statusText}`);
       }
 
       const data = await response.json();
