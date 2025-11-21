@@ -81,6 +81,9 @@ class TrackingService extends PubSubService {
       console.log(`🎯 Using specified tracking mode: ${mode}`);
     }
 
+    // Clear all buffers before connecting to ensure clean state
+    this._clearBuffers();
+
     try {
       // Step 1: Check if tracking is already active and disconnect if needed
       try {
@@ -341,6 +344,29 @@ class TrackingService extends PubSubService {
   }
 
   /**
+   * Clear all tracking data buffers and statistics
+   * Called when connecting or disconnecting to ensure clean state
+   */
+  private _clearBuffers(): void {
+    console.log('  ├─ Clearing data buffers');
+    
+    // Reset statistics
+    this.statsData = {
+      framesReceived: 0,
+      lastUpdate: 0,
+      averageFPS: 0,
+      fpsHistory: [],
+    };
+    
+    // Reset message throttling
+    this.lastMessageTime = 0;
+    
+    // Reset connection metadata
+    this.connectionId = null;
+    this.lastConnectionMode = null;
+  }
+
+  /**
    * Disconnect from tracking server
    * Closes WebSocket connection (Python tracking server keeps running)
    */
@@ -354,6 +380,9 @@ class TrackingService extends PubSubService {
       this.isConnected = false;
       this.isTracking = false;
     }
+
+    // Clear all data buffers
+    this._clearBuffers();
 
     // Clear wsUrl to prevent any reconnection attempts
     this.wsUrl = null;
