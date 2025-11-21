@@ -118,6 +118,9 @@ function PanelTracking() {
   // Selected tracking mode for navigation (simulation or hardware)
   const [selectedMode, setSelectedMode] = React.useState<'simulation' | 'hardware'>('simulation');
 
+  // Orientation tracking (6-DOF vs 3-DOF)
+  const [enableOrientation, setEnableOrientation] = React.useState<boolean>(false);
+
   // Phase 7: Configuration dialog state
   const [configDialogOpen, setConfigDialogOpen] = React.useState(false);
   const [currentTrackingConfig, setCurrentTrackingConfig] = React.useState<any>(null);
@@ -229,9 +232,11 @@ function PanelTracking() {
       // 4. Connect with the new mode
 
       console.log(`🚀 Starting navigation in ${selectedMode} mode...`);
+      console.log(`   Orientation tracking: ${enableOrientation ? '6-DOF ✅' : '3-DOF ❌'}`);
       await commandsManager.runCommand('startNavigation', {
         mode: 'circular',
-        trackingMode: selectedMode
+        trackingMode: selectedMode,
+        enableOrientation: enableOrientation
       });
 
       setIsNavigating(true);
@@ -653,6 +658,39 @@ function PanelTracking() {
                 ? '⚠️ Mode locked during navigation'
                 : '💡 Select mode before starting navigation'}
             </div>
+          </div>
+
+          {/* Orientation Tracking (6-DOF) */}
+          <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
+            <div className="text-sm text-gray-300 mb-2 font-medium">Degrees of Freedom</div>
+            <label className={`flex items-center space-x-2 cursor-pointer ${isNavigating ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              <input
+                type="checkbox"
+                checked={enableOrientation}
+                onChange={(e) => setEnableOrientation(e.target.checked)}
+                disabled={isNavigating}
+                className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+              />
+              <span className="text-sm text-gray-300">
+                🔄 Enable Orientation Tracking (6-DOF)
+              </span>
+            </label>
+            <div className="text-xs text-gray-500 mt-2">
+              {enableOrientation ? (
+                <div className="text-green-400">
+                  ✅ 6-DOF: Position + Orientation (MPR views will rotate with tool)
+                </div>
+              ) : (
+                <div className="text-blue-400">
+                  📍 3-DOF: Position only (MPR views will pan only)
+                </div>
+              )}
+            </div>
+            {isNavigating && (
+              <div className="text-xs text-yellow-400 mt-1">
+                ⚠️ Setting locked during navigation
+              </div>
+            )}
           </div>
 
           {/* Status Display */}

@@ -544,8 +544,19 @@ class TrackingService extends PubSubService {
               toolName: primaryTool.tool_name,
               hasPosition: !!position,
               matrixKey: matrixKey,
-              hasMatrix: !!matrix
+              hasMatrix: !!matrix,
+              matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null',
+              matrixSample: matrix ? (Array.isArray(matrix) && matrix.length > 0 ? `First element: ${Array.isArray(matrix[0]) ? `Array[${matrix[0].length}]` : matrix[0]}` : 'Not array') : 'null'
             });
+
+            if (matrix) {
+              console.log('🔍 [TrackingService] Matrix details:', {
+                isArray: Array.isArray(matrix),
+                length: Array.isArray(matrix) ? matrix.length : 'N/A',
+                is2D: Array.isArray(matrix) && matrix.length > 0 && Array.isArray(matrix[0]),
+                firstRow: Array.isArray(matrix) && matrix.length > 0 ? matrix[0] : 'N/A'
+              });
+            }
           }
 
           // Pass to tracking update handler

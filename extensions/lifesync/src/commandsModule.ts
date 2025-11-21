@@ -13,10 +13,12 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
      * Connects to tracking server and starts receiving position updates
      * @param mode - Navigation mode (e.g., 'circular')
      * @param trackingMode - Tracking mode ('simulation' or 'hardware')
+     * @param enableOrientation - Enable 6-DOF orientation tracking (default: false)
      */
-    startNavigation: ({ mode = 'circular', trackingMode }) => {
+    startNavigation: ({ mode = 'circular', trackingMode, enableOrientation = false }) => {
       console.log('🧭 [startNavigation] Starting navigation mode:', mode);
       console.log('🎯 [startNavigation] Tracking mode:', trackingMode || 'from config');
+      console.log('🔄 [startNavigation] Orientation tracking:', enableOrientation ? 'ENABLED ✅' : 'DISABLED ❌');
 
       const { trackingService } = servicesManager.services;
 
@@ -38,6 +40,11 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
             window.__navigationController = new NavigationController(servicesManager);
           }
 
+          // Enable orientation tracking if requested
+          if (enableOrientation !== undefined) {
+            window.__navigationController.enableOrientationTracking(enableOrientation);
+          }
+
           // Connect to tracking server with specified mode
           return trackingService.connect(trackingMode);
         })
@@ -46,9 +53,10 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
           window.__navigationController.startNavigation(mode);
 
           const modeText = trackingMode ? ` (${trackingMode})` : '';
+          const dofText = enableOrientation ? ' [6-DOF]' : ' [3-DOF]';
           uiNotificationService?.show({
             title: 'Navigation Started',
-            message: `Navigation mode: ${mode}${modeText}`,
+            message: `Navigation mode: ${mode}${modeText}${dofText}`,
             type: 'success',
             duration: 2000,
           });
