@@ -16,7 +16,7 @@ class NavigationController {
   private updateCount: number = 0;
   private lastUpdateTime: number = 0;
   private lastRenderTime: number = 0;
-  private targetFPS: number = 25; // Target UI update rate (Hz)
+  private targetFPS: number = 20; // Target UI update rate (Hz)
   private minFrameTime: number = 1000 / this.targetFPS; // Min time between UI updates (ms)
   private coordinateTransformer: CoordinateTransformer;
 
@@ -173,7 +173,7 @@ class NavigationController {
 
   /**
    * Handle tracking update - update crosshair position and orientation
-   * Data received at 100Hz, but UI updates throttled to 25Hz
+   * Data received at 100Hz, but UI updates throttled to 20Hz
    * Applies coordinate transformation from register to DICOM
    */
   private _handleTrackingUpdate(event: any): void {
@@ -204,8 +204,8 @@ class NavigationController {
       ? this.coordinateTransformer.registerToDICOM(registerPosition)
       : registerPosition;
 
-    // Log every 25 renders (about once per second at 25 FPS)
-    if (this.updateCount % 25 === 0) {
+    // Log every 20 renders (about once per second at 20 FPS)
+    if (this.updateCount % 20 === 0) {
       const elapsed = (now - this.lastUpdateTime) / 1000;
       const dataHz = this.updateCount / elapsed;
       const renderHz = 1000 / timeSinceLastRender;
@@ -424,7 +424,7 @@ class NavigationController {
 
   /**
    * Update camera with orientation (6-DOF mode)
-   * Updates position, view direction, and viewUp from transformation matrix
+   * Transforms each viewport's view based on tool rotation while maintaining MPR orthogonality
    */
   private _updateCameraWithOrientation(vp: any, position: number[], matrix: number[] | number[][]): void {
     const camera = vp.getCamera();
@@ -444,42 +444,27 @@ class NavigationController {
       console.log(`   Extracted rotation matrix:`, rotationMatrix);
     }
 
-    // Extract view direction (Z-axis of tool - points forward)
-    const viewDirection = [
-      rotationMatrix[2][0],
-      rotationMatrix[2][1],
-      rotationMatrix[2][2],
-    ];
+    // Get current viewport's view direction and viewUp
+    const currentViewPlaneNormal = vec3.create();
+    vec3.subtract(currentViewPlaneNormal, camera.position, camera.focalPoint);
+    vec3.normalize(currentViewPlaneNormal, currentViewPlaneNormal);
 
-    // Extract viewUp (Y-axis of tool - points up)
-    const viewUp = [
-      rotationMatrix[1][0],
-      rotationMatrix[1][1],
-      rotationMatrix[1][2],
-    ];
+    const currentViewUp = vec3.fromValues(camera.viewUp[0], camera.viewUp[1], camera.viewUp[2]);
 
-    // Normalize vectors
-    const viewDirLength = Math.sqrt(
-      viewDirection[0] * viewDirection[0] +
-      viewDirection[1] * viewDirection[1] +
-      viewDirection[2] * viewDirection[2]
-    );
-    const normalizedViewDir = [
-      viewDirection[0] / viewDirLength,
-      viewDirection[1] / viewDirLength,
-      viewDirection[2] / viewDirLength,
-    ];
+    // Transform the viewport's current view vectors by the tool's rotation matrix
+    // This rotates each viewport according to tool orientation while preserving their relative angles
+    const transformedViewPlaneNormal = this._transformVector(currentViewPlaneNormal, rotationMatrix);
+    const transformedViewUp = this._transformVector(currentViewUp, rotationMatrix);
 
-    const viewUpLength = Math.sqrt(
-      viewUp[0] * viewUp[0] +
-      viewUp[1] * viewUp[1] +
-      viewUp[2] * viewUp[2]
-    );
-    const normalizedViewUp = [
-      viewUp[0] / viewUpLength,
-      viewUp[1] / viewUpLength,
-      viewUp[2] / viewUpLength,
-    ];
+    // Normalize transformed vectors
+    vec3.normalize(transformedViewPlaneNormal, transformedViewPlaneNormal);
+    vec3.normalize(transformedViewUp, transformedViewUp);
+
+    // Ensure viewUp is orthogonal to viewPlaneNormal (Gram-Schmidt orthogonalization)
+    const dot = vec3.dot(transformedViewUp, transformedViewPlaneNormal);
+    const projection = vec3.scale(vec3.create(), transformedViewPlaneNormal, dot);
+    const orthogonalViewUp = vec3.subtract(vec3.create(), transformedViewUp, projection);
+    vec3.normalize(orthogonalViewUp, orthogonalViewUp);
 
     // Calculate camera position (behind the focal point)
     const distance = vec3.length(vec3.subtract(vec3.create(), camera.position, camera.focalPoint));
@@ -491,26 +476,27 @@ class NavigationController {
     ];
 
     const newPosition: cs3DTypes.Point3 = [
-      newFocalPoint[0] - normalizedViewDir[0] * distance,
-      newFocalPoint[1] - normalizedViewDir[1] * distance,
-      newFocalPoint[2] - normalizedViewDir[2] * distance,
+      newFocalPoint[0] + transformedViewPlaneNormal[0] * distance,
+      newFocalPoint[1] + transformedViewPlaneNormal[1] * distance,
+      newFocalPoint[2] + transformedViewPlaneNormal[2] * distance,
     ];
 
     // Log orientation update BEFORE setting camera (for debugging)
     if (this.updateCount <= 10) {
       console.log(`🔄 ${vp.id} orientation update:`);
-      console.log(`   viewDirection: [${normalizedViewDir.map(v => v.toFixed(3)).join(', ')}]`);
-      console.log(`   viewUp: [${normalizedViewUp.map(v => v.toFixed(3)).join(', ')}]`);
+      console.log(`   Original viewPlaneNormal: [${Array.from(currentViewPlaneNormal).map(v => v.toFixed(3)).join(', ')}]`);
+      console.log(`   Transformed viewPlaneNormal: [${Array.from(transformedViewPlaneNormal).map(v => v.toFixed(3)).join(', ')}]`);
+      console.log(`   Transformed viewUp: [${Array.from(orthogonalViewUp).map(v => v.toFixed(3)).join(', ')}]`);
       console.log(`   focalPoint: [${newFocalPoint.map(v => v.toFixed(1)).join(', ')}]`);
       console.log(`   position: [${newPosition.map(v => v.toFixed(1)).join(', ')}]`);
     }
 
-    // Update camera with new orientation
+    // Update camera with transformed orientation
     try {
       vp.setCamera({
         focalPoint: newFocalPoint,
         position: newPosition,
-        viewUp: normalizedViewUp,
+        viewUp: [orthogonalViewUp[0], orthogonalViewUp[1], orthogonalViewUp[2]],
       });
 
       if (this.updateCount <= 10) {
@@ -520,6 +506,17 @@ class NavigationController {
       console.error(`   ❌ Error setting camera:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Transform a 3D vector by a 3x3 rotation matrix
+   */
+  private _transformVector(vector: vec3, rotationMatrix: number[][]): vec3 {
+    const result = vec3.create();
+    result[0] = rotationMatrix[0][0] * vector[0] + rotationMatrix[0][1] * vector[1] + rotationMatrix[0][2] * vector[2];
+    result[1] = rotationMatrix[1][0] * vector[0] + rotationMatrix[1][1] * vector[1] + rotationMatrix[1][2] * vector[2];
+    result[2] = rotationMatrix[2][0] * vector[0] + rotationMatrix[2][1] * vector[1] + rotationMatrix[2][2] * vector[2];
+    return result;
   }
 
   /**

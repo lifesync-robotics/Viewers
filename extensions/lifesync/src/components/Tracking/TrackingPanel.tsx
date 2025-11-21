@@ -119,7 +119,7 @@ function PanelTracking() {
   const [selectedMode, setSelectedMode] = React.useState<'simulation' | 'hardware'>('simulation');
 
   // Orientation tracking (6-DOF vs 3-DOF)
-  const [enableOrientation, setEnableOrientation] = React.useState<boolean>(false);
+  const [enableOrientation, setEnableOrientation] = React.useState<boolean>(true);
 
   // Phase 7: Configuration dialog state
   const [configDialogOpen, setConfigDialogOpen] = React.useState(false);
