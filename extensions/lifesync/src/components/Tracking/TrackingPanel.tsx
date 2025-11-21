@@ -215,6 +215,13 @@ function PanelTracking() {
         return;
       }
 
+      // Clear UI data buffers before starting navigation
+      console.log('  - Clearing UI data buffers');
+      setTrackingFrame(null);
+      setUpdateHz(0);
+      frameTimestampsRef.current = [];
+      setWsConnected(false);
+
       // TrackingService.connect() will now automatically:
       // 1. Check if tracking is already active
       // 2. Disconnect if needed (especially if mode is different)
@@ -241,6 +248,13 @@ function PanelTracking() {
       if (commandsManager) {
         commandsManager.runCommand('stopNavigation');
         setIsNavigating(false);
+
+        // Clear UI data buffers when stopping navigation
+        console.log('  - Clearing UI data buffers on stop');
+        setTrackingFrame(null);
+        setUpdateHz(0);
+        frameTimestampsRef.current = [];
+        setWsConnected(false);
       }
     } catch (error) {
       console.error('Failed to stop navigation:', error);

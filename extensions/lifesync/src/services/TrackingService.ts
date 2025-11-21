@@ -349,7 +349,7 @@ class TrackingService extends PubSubService {
    */
   private _clearBuffers(): void {
     console.log('  ├─ Clearing data buffers');
-    
+
     // Reset statistics
     this.statsData = {
       framesReceived: 0,
@@ -357,10 +357,10 @@ class TrackingService extends PubSubService {
       averageFPS: 0,
       fpsHistory: [],
     };
-    
+
     // Reset message throttling
     this.lastMessageTime = 0;
-    
+
     // Reset connection metadata
     this.connectionId = null;
     this.lastConnectionMode = null;
