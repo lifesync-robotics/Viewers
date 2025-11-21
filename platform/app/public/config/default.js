@@ -10,6 +10,10 @@ window.config = {
   // CRITICAL CORRECTION APPLIED HERE
   customizationService: {}, // =========================================================================
   showStudyList: true,
+  // Disable investigational use dialog banner
+  investigationalUseDialog: {
+    option: 'never',
+  },
   // some windows systems have issues with more than 3 web workers
   maxNumberOfWebWorkers: 3,
   // below flag is for performance reasons, but it might not work for all servers
@@ -212,12 +216,12 @@ window.config = {
         },
       },
     },
-  {
-    namespace: '@ohif/extension-default.dataSourcesModule.dicomweb',
-    sourceName: 'orthanc',
-    configuration: {
-      friendlyName: 'Local Orthanc DICOMWeb Server',
-      name: 'Orthanc',
+    {
+      namespace: '@ohif/extension-default.dataSourcesModule.dicomweb',
+      sourceName: 'orthanc',
+      configuration: {
+        friendlyName: 'Local Orthanc DICOMWeb Server',
+        name: 'Orthanc',
 
       // Use RELATIVE URLs for webpack proxy to intercept
       wadoUriRoot: '/dicom-web',
@@ -229,33 +233,33 @@ window.config = {
         Authorization: 'Basic ' + btoa('lsr:lsr#!$$!59'),
       },
 
-      // Orthanc does NOT support includefield=all
-      qidoSupportsIncludeField: false,
+        // Orthanc does NOT support includefield=all
+        qidoSupportsIncludeField: false,
 
-      // Orthanc doesn't support reject
-      supportsReject: false,
+        // Orthanc doesn't support reject
+        supportsReject: false,
 
-      dicomUploadEnabled: true,
-      imageRendering: 'wadors',
-      thumbnailRendering: 'wadors',
-      enableStudyLazyLoad: true,
+        dicomUploadEnabled: true,
+        imageRendering: 'wadors',
+        thumbnailRendering: 'wadors',
+        enableStudyLazyLoad: true,
 
-      // Orthanc doesn't fully support fuzzy matching
-      supportsFuzzyMatching: false,
+        // Orthanc doesn't fully support fuzzy matching
+        supportsFuzzyMatching: false,
 
-      supportsWildcard: false,
+        supportsWildcard: false,
 
-      // Required for Orthanc
-      singlepart: 'video,pdf',
+        // Required for Orthanc
+        singlepart: 'video,pdf',
 
-      omitQuotationForMultipartRequest: true,
+        omitQuotationForMultipartRequest: true,
 
-      bulkDataURI: {
-        enabled: true,
-        relativeResolution: 'studies',
+        bulkDataURI: {
+          enabled: true,
+          relativeResolution: 'studies',
+        },
       },
     },
-  },
 
     {
       namespace: '@ohif/extension-default.dataSourcesModule.dicomwebproxy',
@@ -313,12 +317,23 @@ window.config = {
   //     );
   //   },
   // },
+  whiteLabeling: {
+    createLogoComponentFn: function (React) {
+      // Original Node-style require kept for reference (not available in browser):
+      // const LifeSyncRobotics =
+      //   require('../../../extensions/lifesync/src/components/Icons/LifeSyncRobotics').default;
+      const lifeSyncLogoComponent =
+        typeof window !== 'undefined' ? window['LifeSyncRobotics'] : undefined;
 
-  // SyncForge API Configuration
-  // Automatically determine API URL based on current location
-  // When accessed via Ngrok/other reverse proxy, API calls go through the same domain
-  syncforge: {
-    apiUrl: window.location.protocol + '//' + window.location.host,
-    apiBasePath: '/api',
+      if (!lifeSyncLogoComponent) {
+        console.warn('LifeSyncRobotics logo component is not available on window.');
+        return React.createElement('img', {
+          src: './Logo.svg',
+          alt: 'LifeSync Robotics',
+        });
+      }
+
+      return React.createElement(lifeSyncLogoComponent);
+    },
   },
 };

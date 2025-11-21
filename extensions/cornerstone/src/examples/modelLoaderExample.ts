@@ -9,7 +9,7 @@
  * - vtk.js OBJ Viewer: https://kitware.github.io/vtk-js/examples/OBJViewer.html
  */
 
-import ModelStateService from '../modelStateService';
+import { ModelStateService } from '@ohif/extension-lifesync';
 
 /**
  * Example 1: Load a model from a URL

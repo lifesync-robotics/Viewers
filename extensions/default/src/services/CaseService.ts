@@ -137,7 +137,7 @@ class CaseService extends PubSubService {
     // Check for syncforge config (automatically determined based on current location)
     const syncforgeApiUrl = globalConfig.syncforge?.apiUrl;
 
-    // Check localStorage for saved API URL (for remote access via ngrok)
+    // Check localStorage for saved API URL (for remote access via ngrok or manual override)
     const savedApiUrl = localStorage.getItem('syncforge_api_url');
 
     // Priority: config.apiUrl > syncforge config > saved localStorage > default
@@ -151,6 +151,7 @@ class CaseService extends PubSubService {
       isProxied: isProxied,
       currentOrigin: window.location.origin,
       fromLocalStorage: !!savedApiUrl,
+      remoteAccess: hostname !== 'localhost' && hostname !== '127.0.0.1',
       activeCaseId: this.activeCaseId,
     });
 
@@ -263,7 +264,7 @@ class CaseService extends PubSubService {
    */
   public async getAllOrthancStudies(): Promise<any[]> {
     try {
-      const response = await fetch(`${this.apiUrl}/api/orthanc/studies`);
+      const response = await fetch(`${this.apiUrl}/api/dicom/studies`);
       if (!response.ok) {
         throw new Error(`Failed to get Orthanc studies: ${response.statusText}`);
       }
@@ -277,17 +278,21 @@ class CaseService extends PubSubService {
 
   /**
    * Check if a study has an existing case ID
+   * Uses the new /api/dicom/studies/:studyUID endpoint which includes case info
    */
-  public async checkStudyCaseId(studyInstanceUID: string): Promise<{ hasCaseId: boolean; caseId: string | null }> {
+  public async checkStudyCaseId(
+    studyInstanceUID: string
+  ): Promise<{ hasCaseId: boolean; caseId: string | null }> {
     try {
-      const response = await fetch(`${this.apiUrl}/api/orthanc/studies/${studyInstanceUID}/check-case`);
+      const response = await fetch(`${this.apiUrl}/api/dicom/studies/${studyInstanceUID}`);
       if (!response.ok) {
         throw new Error(`Failed to check study case ID: ${response.statusText}`);
       }
       const data = await response.json();
+      const caseInfo = data.study?.caseInfo;
       return {
-        hasCaseId: data.hasCaseId,
-        caseId: data.caseId
+        hasCaseId: caseInfo !== null && caseInfo !== undefined,
+        caseId: caseInfo?.caseId || null,
       };
     } catch (error) {
       console.error('❌ Failed to check study case ID:', error);
@@ -322,10 +327,87 @@ class CaseService extends PubSubService {
     }
   }
 
+  // List cases with search filters (uses /api/cases/search)
+  public async searchCases(params: {
+    patientName?: string;
+    patientMRN?: string;
+    status?: string;
+    createdAfter?: string;
+    createdBefore?: string;
+    page?: number;
+    limit?: number;
+    includeStudies?: boolean;
+  }): Promise<{ cases: CaseSummary[]; pagination: any }> {
+    console.log('📁 Searching cases with params:', params);
+
+    // 构建 query string，只带有有值的字段
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        qs.append(key, String(value));
+      }
+    });
+
+    try {
+      const queryString = qs.toString();
+      const url = queryString
+        ? `${this.apiUrl}/api/cases/search?${queryString}`
+        : `${this.apiUrl}/api/cases/search`;
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        // 后端错误格式可能是 { error: { message, code, timestamp } } 或 { error: string }
+        const errorMessage =
+          typeof data.error === 'object' && data.error?.message
+            ? data.error.message
+            : data.error || 'Failed to search cases';
+        throw new Error(errorMessage);
+      }
+
+      // 注意：后端 search 返回的是 { success, data: { cases, pagination, query } }
+      // 添加防御性检查，确保 data.data 存在
+      if (!data.data) {
+        throw new Error('Invalid response format: missing data field');
+      }
+
+      const { cases, pagination } = data.data;
+
+      // 确保 cases 是数组，如果不存在则使用空数组
+      const safeCases = Array.isArray(cases) ? cases : [];
+      const safePagination = pagination || {};
+
+      console.log(`✅ Search returned ${safeCases.length} cases`, {
+        url,
+        params,
+        responseData: data.data,
+        cases: safeCases,
+        pagination: safePagination,
+      });
+
+      if (safeCases.length === 0) {
+        console.warn('⚠️ No cases returned from search. Check backend API and database.');
+      }
+
+      return { cases: safeCases, pagination: safePagination };
+    } catch (error) {
+      console.error('❌ Failed to search cases:', error);
+      throw error;
+    }
+  }
+
   /**
    * Get all unique case IDs
    */
-  public async getUniqueCaseIds(): Promise<{ caseId: string; patientName: string; mrn: string; studyCount: number; createdAt: string; }[]> {
+  public async getUniqueCaseIds(): Promise<
+    { caseId: string; patientName: string; mrn: string; studyCount: number; createdAt: string }[]
+  > {
     console.log('📁 Fetching unique case IDs');
 
     try {
@@ -352,7 +434,9 @@ class CaseService extends PubSubService {
   /**
    * Get studies for a specific case
    */
-  public async getStudiesForCase(caseId: string): Promise<{ caseId: string; patientInfo: PatientInfo; studies: Study[]; }> {
+  public async getStudiesForCase(
+    caseId: string
+  ): Promise<{ caseId: string; patientInfo: PatientInfo; studies: Study[] }> {
     console.log(`📁 Fetching studies for case: ${caseId}`);
 
     try {
@@ -450,7 +534,10 @@ class CaseService extends PubSubService {
   /**
    * Update case
    */
-  public async updateCase(caseId: string, updates: { patientInfo?: Partial<PatientInfo> }): Promise<Case> {
+  public async updateCase(
+    caseId: string,
+    updates: { patientInfo?: Partial<PatientInfo> }
+  ): Promise<Case> {
     console.log(`📁 Updating case: ${caseId}`);
 
     try {
@@ -576,9 +663,12 @@ class CaseService extends PubSubService {
     console.log(`📁 Removing study ${studyInstanceUID} from case ${caseId}`);
 
     try {
-      const response = await fetch(`${this.apiUrl}/api/cases/${caseId}/studies/${studyInstanceUID}`, {
-        method: 'DELETE',
-      });
+      const response = await fetch(
+        `${this.apiUrl}/api/cases/${caseId}/studies/${studyInstanceUID}`,
+        {
+          method: 'DELETE',
+        }
+      );
 
       const data = await response.json();
 
@@ -614,13 +704,16 @@ class CaseService extends PubSubService {
     console.log(`📁 Updating study phase: ${studyInstanceUID} -> ${clinicalPhase}`);
 
     try {
-      const response = await fetch(`${this.apiUrl}/api/cases/${caseId}/studies/${studyInstanceUID}/phase`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clinicalPhase,
-        }),
-      });
+      const response = await fetch(
+        `${this.apiUrl}/api/cases/${caseId}/studies/${studyInstanceUID}/phase`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clinicalPhase,
+          }),
+        }
+      );
 
       const data = await response.json();
 

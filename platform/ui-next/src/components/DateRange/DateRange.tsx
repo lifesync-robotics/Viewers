@@ -62,11 +62,23 @@ export function DatePickerWithRange({
       setStart(value);
       if (isValid(date)) {
         handleStartSelect(date);
+      } else if (value.trim() === '') {
+        // 当输入框被清空时，也触发 onChange，传递空字符串
+        onChange({
+          startDate: '',
+          endDate: end.replace(/-/g, ''),
+        });
       }
     } else {
       setEnd(value);
       if (isValid(date)) {
         handleEndSelect(date);
+      } else if (value.trim() === '') {
+        // 当输入框被清空时，也触发 onChange，传递空字符串
+        onChange({
+          startDate: start.replace(/-/g, ''),
+          endDate: '',
+        });
       }
     }
   };

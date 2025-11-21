@@ -12,7 +12,25 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { crosshairsHandler } from '../../utils/crosshairsHandler';
+import { getScrewColor } from '../../utils/screwColorScheme';
+import { planningBackendService } from '../../services';
 import PlanSelectionDialog from './PlanSelectionDialog';
+import ScrewSelectionDialog from './ScrewSelectionDialog';
+import {
+  Header,
+  SessionStatus,
+  LoadingScreen,
+  SaveScrewButton,
+  ScrewListHeader,
+  EmptyScrewList,
+  ScrewTable,
+  ScrewCard,
+  InvalidScrewCard,
+  ScrewManagementContainer,
+  ScrewListContainer,
+  ScrewListScrollArea,
+  SessionStateDialog,
+} from './ScrewManagementUI';
 
 export default function ScrewManagementPanel({ servicesManager }) {
   const { viewportStateService, modelStateService, planeCutterService } = servicesManager.services;
@@ -27,22 +45,16 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [studyInstanceUID, setStudyInstanceUID] = useState(null);
   const [seriesInstanceUID, setSeriesInstanceUID] = useState(null);
   const [surgeon, setSurgeon] = useState('OHIF User');
-  const [screwName, setScrewName] = useState('');
-  const [radius, setRadius] = useState('');
-  const [length, setLength] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [sessionStatus, setSessionStatus] = useState('initializing'); // 'initializing', 'ready', 'error'
+  const [sessionStatus, setSessionStatus] = useState<'initializing' | 'ready' | 'error'>('initializing');
   const [showPlanDialog, setShowPlanDialog] = useState(false);
+  const [showScrewDialog, setShowScrewDialog] = useState(false);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
-
-  // Debug: Log screws whenever they change
-  useEffect(() => {
-    console.log(`🔍 [ScrewManagement] Screws state changed. Count: ${screws.length}`);
-    if (screws.length > 0) {
-      console.log('🔍 [ScrewManagement] Screws data:', screws);
-    }
-  }, [screws]);
+  const [showSessionStateDialog, setShowSessionStateDialog] = useState(false);
+  const [backendSummary, setBackendSummary] = useState<any | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   useEffect(() => {
     initializeSession();
@@ -98,38 +110,25 @@ export default function ScrewManagementPanel({ servicesManager }) {
       setSurgeon(newSurgeon);
 
       console.log('🔄 Initializing planning session...');
-      console.log(`   API: /api/planning/session/start (via proxy)`);
       console.log(`   Case ID: ${newCaseId || 'none (session without case)'}`);
 
-      // Start planning session (caseId is now optional)
-      const response = await fetch('/api/planning/session/start', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studyInstanceUID: newStudyUID,
-          seriesInstanceUID: newSeriesUID,
-          surgeon: newSurgeon
-          // caseId is optional and omitted when null
-        })
+      // Start planning session using backend service
+      const response = await planningBackendService.startSession({
+        studyInstanceUID: newStudyUID,
+        seriesInstanceUID: newSeriesUID,
+        surgeon: newSurgeon,
+        ...(newCaseId && { caseId: newCaseId }) // Include caseId only if not null
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      console.log('📡 Session API response:', data);
-
-      if (data.success && data.session_id) {
-        setSessionId(data.session_id);
+      if (response.success && response.session_id) {
+        setSessionId(response.session_id);
         setSessionStatus('ready');
-        console.log('✅ Planning session started:', data.session_id);
+        console.log('✅ Planning session started:', response.session_id);
 
         // Load existing screws for this session
-        await loadScrews(data.session_id);
+        await loadScrews(response.session_id);
       } else {
-        throw new Error(data.error || 'Session creation failed');
+        throw new Error(response.error || 'Session creation failed');
       }
     } catch (error) {
       console.error('❌ Error initializing session:', error);
@@ -160,16 +159,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       console.log('📥 Loading screws from API...');
 
-      const response = await fetch(`/api/planning/screws/${sessionId}/list`, {
-        credentials: 'include'
-      });
-      const data = await response.json();
+      const response = await planningBackendService.listScrews(sessionId);
 
-      if (data.success) {
-        setScrews(data.screws || []);
-        console.log(`✅ Loaded ${data.screws?.length || 0} screws from API`);
+      if (response.success) {
+        setScrews(response.screws || []);
+        console.log(`✅ Loaded ${response.screws?.length || 0} screws from API`);
       } else {
-        console.error('❌ Failed to load screws:', data.error);
+        console.error('❌ Failed to load screws:', response.error);
         // Fallback to localStorage
         loadScrewsLocal();
       }
@@ -193,26 +189,25 @@ export default function ScrewManagementPanel({ servicesManager }) {
   /**
    * Load and display a 3D screw model using the planning API
    */
-  const loadScrewModel = async (radius, length, transform) => {
+  const loadScrewModel = async (radius, length, transform, screwLabel = null, screwId = null) => {
     try {
       console.log(`🔍 Querying model for radius=${radius}, length=${length}`);
+      console.log(`🔍 Screw label: ${screwLabel}, Screw ID: ${screwId}`);
       console.log(`🔍 transform:`, transform);
-      console.log(`🔍 transform.length:`, transform.length);
-      // Query model from planning API
-      const queryResponse = await fetch(
-        `/api/planning/models/query?radius=${radius}&length=${length}`,
-        {
-          credentials: 'include'
-        }
-      );
+      console.log(`🔍 transform.length:`, transform?.length);
 
-      const queryData = await queryResponse.json();
+      // Determine color based on screw label
+      const screwColor = screwLabel ? getScrewColor(screwLabel) : [1.0, 0.84, 0.0];
+      console.log(`🎨 Using color [${screwColor}] for screw "${screwLabel || 'default'}"`);
 
-      if (!queryData.success || !queryData.model) {
+      // Query model from planning API using backend service
+      const queryResponse = await planningBackendService.queryModel(radius, length);
+
+      if (!queryResponse.success || !queryResponse.model) {
         throw new Error('Model query failed');
       }
 
-      const modelInfo = queryData.model;
+      const modelInfo = queryResponse.model;
       console.log(`📦 Model found: ${modelInfo.model_id} (${modelInfo.source})`);
 
       // Ensure plane cutters are initialized and enabled
@@ -229,14 +224,17 @@ export default function ScrewManagementPanel({ servicesManager }) {
         }
       }
 
-      // Get model OBJ file URL
-      const modelUrl = `/api/planning/models/${modelInfo.model_id}/obj`;
+      // Get model OBJ file URL using backend service
+      const modelUrl = planningBackendService.getModelUrl(modelInfo.model_id);
 
       // Load model using modelStateService
+      // Use screwId as modelId (unique identifier) and screwLabel as modelName (human-readable)
       await modelStateService.loadModelFromServer(modelUrl, {
         viewportId: getCurrentViewportId(),
-        color: [1.0, 0.84, 0.0],  // Gold color for screws
-        opacity: 0.9
+        color: screwColor,  // Color based on screw name/label
+        opacity: 0.9,
+        modelId: screwId,      // Unique ID from database (if available)
+        modelName: screwLabel  // Human-readable label (e.g., "L3-R1", "L2L")
       });
 
       // Apply transform if provided
@@ -288,7 +286,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       const viewports = renderingEngine.getViewports();
       for (const vp of viewports) {
-        if (vp.type === 'volume3d' || vp.type === 'VOLUME_3D') {
+        if (vp.type === 'volume3d' || (vp.type as string) === 'VOLUME_3D') {
           return vp.id;
         }
       }
@@ -431,22 +429,20 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
-  const saveScrew = async () => {
+  const saveScrew = async (screwData: {
+    name: string;
+    radius: number;
+    length: number;
+    source: 'custom' | 'catalog';
+    variantId?: string;
+    manufacturer?: string;
+    screwType?: string;
+  }) => {
     try {
-      const name = screwName.trim() || `Screw ${new Date().toLocaleString()}`;
-      const radiusValue = parseFloat(radius) || 0;
-      const lengthValue = parseFloat(length) || 0;
+      const { name: screwLabel, radius: radiusValue, length: lengthValue, source, variantId, manufacturer, screwType } = screwData;
 
-      // Validate input - use defaults if invalid
-      let finalRadiusValue = radiusValue;
-      let finalLengthValue = lengthValue;
-
-      if (radiusValue <= 0 || lengthValue <= 0) {
-        console.warn('⚠️ Please enter valid radius and length values (must be greater than 0)');
-        finalRadiusValue = 3.5;
-        finalLengthValue = 40;
-        console.log('Using default radius and length values: 3.5mm and 40mm');
-      }
+      console.log('💾 Saving screw:', screwData);
+      console.log('📝 Screw label:', screwLabel);
 
       // Construct screw transform from viewport cameras and crosshair center
       const transformMatrix = constructScrewTransform();
@@ -514,43 +510,50 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('📍 Extracted screw position:', entryPoint);
       console.log('🎯 Extracted screw direction:', direction);
 
+      // Construct screw variant ID based on source
+      let screwVariantId;
+      let notes;
+
+      if (source === 'catalog' && variantId) {
+        screwVariantId = variantId;
+        notes = `Catalog screw from ${manufacturer} - ${screwType}: ${screwLabel}`;
+        console.log(`📦 Using catalog screw variant: ${screwVariantId}`);
+      } else {
+        screwVariantId = `generated-${radiusValue}-${lengthValue}`;
+        notes = `Custom screw: ${screwLabel}`;
+        console.log(`⚙️ Using custom screw variant: ${screwVariantId}`);
+      }
+
       try {
-        const response = await fetch('/api/planning/screws/add-with-transform', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: sessionId,
-            screw: {
-              caseId: 'OHIF-CASE-' + Date.now(), // TODO: Get from actual case service
-              radius: finalRadiusValue,
-              length: finalLengthValue,
-              name: name,
-              screwVariantId: `generated-${finalRadiusValue}-${finalLengthValue}`,
-              vertebralLevel: 'unknown',  // Could be auto-detected later
-              side: 'unknown',           // Could be auto-detected later
-              entryPoint: entryPoint,    // Now extracted from crosshair position
-              trajectory: {
-                direction: direction,    // Now extracted from transform matrix
-                insertionDepth: finalLengthValue,
-                convergenceAngle: 0,
-                cephaladAngle: 0
-              },
-              notes: `Saved from OHIF Viewer: ${name}`,
-              transformMatrix: transform,
-              viewportStatesJson: JSON.stringify(viewportStates),
-              placedAt: new Date().toISOString()
-            }
-          })
+        const response = await planningBackendService.addScrew({
+          sessionId: sessionId,
+          screw: {
+            caseId: 'OHIF-CASE-' + Date.now(), // TODO: Get from actual case service
+            radius: radiusValue,
+            length: lengthValue,
+            screwLabel: screwLabel,  // Send user's label
+            screwVariantId: screwVariantId,
+            vertebralLevel: 'unknown',  // Could be auto-detected later
+            side: 'unknown',           // Could be auto-detected later
+            entryPoint: entryPoint,    // Now extracted from crosshair position
+            trajectory: {
+              direction: direction,    // Now extracted from transform matrix
+              insertionDepth: lengthValue,
+              convergenceAngle: 0,
+              cephaladAngle: 0
+            },
+            notes: notes,
+            transformMatrix: transform,
+            viewportStatesJson: JSON.stringify(viewportStates),
+            placedAt: new Date().toISOString()
+          }
         });
 
-        const data = await response.json();
-
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to save screw');
+        if (!response.success) {
+          throw new Error(response.error || 'Failed to save screw');
         }
 
-        console.log(`✅ Screw saved to planning API: ${data.screw_id}`);
+        console.log(`✅ Screw saved to planning API: ${response.screw_id}`);
 
       } catch (apiError) {
         console.error('❌ Failed to save screw to API:', apiError);
@@ -568,7 +571,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Check model limit
       const existingModels = modelStateService.getAllModels();
-      const maxModels = 20; // TODO: Get from service
+      const maxModels = 10; // Match Python backend MAX_SCREWS limit
 
       if (existingModels.length >= maxModels) {
         console.warn(`⚠️ Maximum number of models (${maxModels}) reached.`);
@@ -580,7 +583,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Load the 3D model using the new API
       try {
-        await loadScrewModel(finalRadiusValue, finalLengthValue, transform);
+        await loadScrewModel(radiusValue, lengthValue, transform, screwLabel);
         console.log(`✅ Model loaded successfully - Total: ${modelStateService.getAllModels().length}/${maxModels}`);
       } catch (modelError) {
         console.warn('⚠️ Could not load model:', modelError.message);
@@ -590,16 +593,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // ═════════════════════════════════════════════════════════
       // STEP 3: Update UI
       // ═════════════════════════════════════════════════════════
-      setScrewName('');
-      setRadius('');
-      setLength('');
 
       // Reload screws from API
       if (sessionId) {
         await loadScrews(sessionId);
       }
 
-      console.log(`✅ Saved screw: "${name}" (R: ${finalRadiusValue}mm, L: ${finalLengthValue}mm)`);
+      console.log(`✅ Saved screw: "${screwLabel}" (R: ${radiusValue}mm, L: ${lengthValue}mm)`);
 
     } catch (error) {
       console.error('Failed to save screw:', error);
@@ -613,7 +613,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Check if we've reached the maximum number of models
       const existingModels = modelStateService.getAllModels();
-      const maxModels = 20; // TODO: Get from service
+      const maxModels = 10; // Match Python backend MAX_SCREWS limit
 
       if (existingModels.length >= maxModels) {
         console.warn(`⚠️ Maximum number of models (${maxModels}) reached. Cannot restore more screws.`);
@@ -622,11 +622,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
         return;
       }
 
-      console.log(`🔄 Restoring screw: "${screwData.name || screwData.screw_id}" (${existingModels.length + 1}/${maxModels} models)`);
+      let displayInfo;
+      try {
+        displayInfo = getScrewDisplayInfo(screwData);
+      } catch (error) {
+        console.error('❌ Cannot restore screw - invalid dimensions:', error);
+        alert(`Cannot restore screw: ${error.message}\n\nThis screw has invalid or missing dimensions and cannot be loaded.`);
+        setIsRestoring(false);
+        return;
+      }
 
-      // For API-based screws, we need to load the model manually
-      const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1] || 3.5;
-      const length = screwData.length || screwData.screw_variant_id?.split('-')[2] || 40;
+      console.log(`🔄 Restoring screw: "${displayInfo.label}" (${existingModels.length + 1}/${maxModels} models)`);
+      console.log(`   Source: ${displayInfo.source}`);
+      console.log(`   Dimensions: R=${displayInfo.radius}mm, L=${displayInfo.length}mm`);
 
       // ═══════════════════════════════════════════════════════════
       // Get transform - API now returns it already parsed as array
@@ -649,8 +657,43 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log(`📐 Translation: (${transformArray[3].toFixed(2)}, ${transformArray[7].toFixed(2)}, ${transformArray[11].toFixed(2)})`);
       }
 
-      // Load and display the 3D model
-      await loadScrewModel(radius, length, transformArray);
+      // Check if model already exists for this screw
+      const loadedModels = modelStateService.getAllModels();
+      let modelExists = false;
+
+      for (const model of loadedModels) {
+        // PRIORITY 1: Check by name (which stores screwLabel) - most reliable exact match
+        if (model.metadata.name && model.metadata.name === displayInfo.label) {
+          modelExists = true;
+          console.log(`ℹ️ Model already exists for screw "${displayInfo.label}"`);
+          console.log(`   Existing model: ${model.metadata.id} (${model.metadata.name})`);
+          console.log(`   Matched by name (exact match)`);
+          console.log(`   Skipping model load to avoid duplicates`);
+          break;
+        }
+
+        // FALLBACK: Check if model matches by dimensions/filename (for legacy models without custom names)
+        const modelName = model.metadata.name.toLowerCase();
+        if (modelName.includes(displayInfo.label.toLowerCase()) ||
+            (displayInfo.radius && modelName.includes(displayInfo.radius.toString())) ||
+            (displayInfo.length && modelName.includes(displayInfo.length.toString()))) {
+          modelExists = true;
+          console.log(`ℹ️ Model already exists for screw "${displayInfo.label}"`);
+          console.log(`   Existing model: ${model.metadata.id} (${model.metadata.name})`);
+          console.log(`   Matched by dimensions/filename (legacy)`);
+          console.log(`   Skipping model load to avoid duplicates`);
+          break;
+        }
+      }
+
+      // Only load model if it doesn't already exist
+      if (!modelExists) {
+        // Load and display the 3D model
+        const screwId = screwData.screw_id || screwData.id || null;
+        await loadScrewModel(displayInfo.radius, displayInfo.length, transformArray, displayInfo.label, screwId);
+      } else {
+        console.log(`✅ Skipped loading duplicate model for "${displayInfo.label}"`);
+      }
 
       // Restore viewport states if available
       if (screwData.viewport_states_json || screwData.viewportStates) {
@@ -688,24 +731,35 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const deleteScrew = async (screwData) => {
     try {
       const screwId = screwData.screw_id || screwData.id || screwData.name;
-      const screwName = screwData.name || screwData.screw_id || 'Unknown Screw';
 
-      console.log(`🗑️ Deleting screw: "${screwName}" (${screwId})`);
+      // Try to get display info, but allow deletion even if dimensions are invalid
+      let displayInfo;
+      try {
+        displayInfo = getScrewDisplayInfo(screwData);
+      } catch (error) {
+        console.warn('⚠️ Deleting screw with invalid dimensions:', error);
+        displayInfo = {
+          label: screwId,
+          source: 'unknown',
+          radius: 0,
+          length: 0,
+          description: 'Invalid Data'
+        };
+      }
+
+      console.log(`🗑️ Deleting screw: "${displayInfo.label}" (${screwId})`);
+      console.log(`   Source: ${displayInfo.source}`);
 
       // Try to delete from API first
       if (sessionId && screwId) {
         try {
-          const response = await fetch(`/api/planning/screws/${screwId}`, {
-            method: 'DELETE',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId })
-          });
+          console.log('🔍 [DeleteScrew] sessionId:', sessionId);
+          console.log('   screwId:', screwId);
 
-          const data = await response.json();
+          const response = await planningBackendService.deleteScrew(screwId, sessionId);
 
-          if (!data.success) {
-            console.warn('⚠️ API delete failed, continuing with local cleanup:', data.error);
+          if (!response.success) {
+            console.warn('⚠️ API delete failed, continuing with local cleanup:', response.error);
           } else {
             console.log('✅ Deleted screw from API');
           }
@@ -718,32 +772,37 @@ export default function ScrewManagementPanel({ servicesManager }) {
       const loadedModels = modelStateService.getAllModels();
       let modelsRemoved = 0;
 
-      // Try to match by dimensions first
-      const radius = screwData.radius || screwData.screw_variant_id?.split('-')[1];
-      const length = screwData.length || screwData.screw_variant_id?.split('-')[2];
+      // Use displayInfo for better matching
+      console.log(`   Looking for models with label="${displayInfo.label}", R=${displayInfo.radius}mm, L=${displayInfo.length}mm`);
 
       for (const model of loadedModels) {
-        const modelName = model.metadata.name.toLowerCase();
-
-        // Check if model matches screw dimensions
-        if ((radius && modelName.includes(radius.toString())) ||
-            (length && modelName.includes(length.toString())) ||
-            modelName.includes(screwName.toLowerCase())) {
-          console.log(`🗑️ Removing model: ${model.metadata.id} (${model.metadata.name})`);
+        // PRIORITY 1: Check by name (which stores screwLabel) - most reliable exact match
+        if (model.metadata.name && model.metadata.name === displayInfo.label) {
+          console.log(`🗑️ Removing model: ${model.metadata.id} (${model.metadata.name}) - matched by name (exact match)`);
           modelStateService.removeModel(model.metadata.id);
           modelsRemoved++;
+          break; // Found exact match, stop searching
         }
       }
 
+      // FALLBACK: If no exact name match, try matching by dimensions/filename (for legacy models)
       if (modelsRemoved === 0) {
-        // If no specific models found, remove the most recently loaded model as fallback
-        const latestModel = loadedModels[loadedModels.length - 1];
-        if (latestModel) {
-          console.log(`🗑️ Removing latest model as fallback: ${latestModel.metadata.id}`);
-          modelStateService.removeModel(latestModel.metadata.id);
-          modelsRemoved = 1;
+        for (const model of loadedModels) {
+          const modelName = model.metadata.name.toLowerCase();
+
+          // Check if model matches screw dimensions or partial label
+          if ((displayInfo.radius && modelName.includes(displayInfo.radius.toString())) ||
+              (displayInfo.length && modelName.includes(displayInfo.length.toString())) ||
+              modelName.includes(displayInfo.label.toLowerCase())) {
+            console.log(`🗑️ Removing model: ${model.metadata.id} (${model.metadata.name}) - matched by dimensions/filename`);
+            modelStateService.removeModel(model.metadata.id);
+            modelsRemoved++;
+            break; // Remove only one model
+          }
         }
       }
+
+
 
       console.log(`✅ Removed ${modelsRemoved} model(s)`);
 
@@ -754,7 +813,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         loadScrewsLocal();
       }
 
-      console.log(`✅ Deleted screw: "${screwName}"`);
+      console.log(`✅ Deleted screw: "${displayInfo.label}"`);
 
     } catch (error) {
       console.error('Error deleting screw:', error);
@@ -830,19 +889,138 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
-  const clearAllScrews = () => {
+  /**
+   * Show session state dialog with comparison of UI state and backend state
+   */
+  const showSessionState = async () => {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('📋 [SessionState] Opening session state dialog');
+    console.log('═══════════════════════════════════════════════════════');
+
+    // Open dialog immediately
+    setShowSessionStateDialog(true);
+    setSummaryLoading(true);
+    setSummaryError(null);
+    setBackendSummary(null);
+
+    // Fetch backend summary if session exists
+    if (sessionId) {
+      try {
+        console.log('📊 [SessionState] Fetching backend summary...');
+        const response = await planningBackendService.getSessionSummary(sessionId);
+
+        if (response.success && response.summary) {
+          setBackendSummary(response.summary);
+          console.log('✅ [SessionState] Backend summary loaded');
+        } else {
+          throw new Error(response.error || 'Failed to fetch session summary');
+        }
+      } catch (error) {
+        console.error('❌ [SessionState] Error fetching backend summary:', error);
+        setSummaryError(error.message || 'Failed to fetch backend summary');
+      }
+    } else {
+      console.warn('⚠️ [SessionState] No active session ID');
+      setSummaryError('No active session');
+    }
+
+    setSummaryLoading(false);
+  };
+
+  const editScrew = async (screwData) => {
     try {
-      // Clear all models first
-      console.log('🗑️ Clearing all 3D models...');
-      modelStateService.clearAllModels();
+      const screwId = screwData.screw_id || screwData.id || screwData.name;
+      const displayInfo = getScrewDisplayInfo(screwData);
 
-      // Clear all screws
-      viewportStateService.clearAll();
-      loadScrews();
+      console.log('✏️ Edit screw requested:', displayInfo.label);
+      alert(`Edit functionality coming soon!\n\nScrew: ${displayInfo.label}\nRadius: ${displayInfo.radius}mm\nLength: ${displayInfo.length}mm\n\nFor now, please delete and recreate the screw with new values.`);
 
-      console.log('✅ All screws and models cleared');
+      // TODO: Implement edit functionality
+      // - Open edit dialog with current values
+      // - Update screw in backend
+      // - Reload 3D model with new dimensions
+
     } catch (error) {
-      console.error('Error clearing all screws:', error);
+      console.error('Failed to edit screw:', error);
+      alert('Failed to edit screw. Please check the console for details.');
+    }
+  };
+
+  const clearAllScrews = async () => {
+    try {
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🧹 [ClearAll] Clearing all screws from frontend and backend');
+      console.log('═══════════════════════════════════════════════════════');
+
+      // Confirm action
+      const confirmed = confirm(
+        `⚠️ Clear All Screws?\n\n` +
+        `This will permanently delete all ${screws.length} screw(s) from:\n` +
+        `• Frontend UI\n` +
+        `• 3D Models\n` +
+        `• Backend Session\n\n` +
+        `This action cannot be undone.\n\n` +
+        `Continue?`
+      );
+
+      if (!confirmed) {
+        console.log('❌ [ClearAll] User cancelled');
+        return;
+      }
+
+      // Step 1: Delete all screws from backend
+      if (sessionId) {
+        console.log('🗑️ [ClearAll] Step 1: Deleting screws from backend...');
+        const deleteResponse = await planningBackendService.deleteAllScrews(sessionId);
+
+        if (deleteResponse.success) {
+          console.log(`✅ [ClearAll] Deleted ${deleteResponse.deleted_count || 0} screws from backend`);
+          if (deleteResponse.failed_screw_ids && deleteResponse.failed_screw_ids.length > 0) {
+            console.warn(`⚠️ [ClearAll] Failed to delete ${deleteResponse.failed_screw_ids.length} screws from backend`);
+          }
+        } else {
+          console.error('❌ [ClearAll] Failed to delete screws from backend:', deleteResponse.error);
+          const continueAnyway = confirm(
+            `⚠️ Backend Delete Failed\n\n` +
+            `Failed to delete screws from backend:\n${deleteResponse.error}\n\n` +
+            `Do you want to clear the frontend anyway?`
+          );
+
+          if (!continueAnyway) {
+            console.log('❌ [ClearAll] User cancelled after backend error');
+            return;
+          }
+        }
+      } else {
+        console.warn('⚠️ [ClearAll] No active session - skipping backend delete');
+      }
+
+      // Step 2: Clear all 3D models from frontend
+      console.log('🗑️ [ClearAll] Step 2: Clearing all 3D models from frontend...');
+      modelStateService.clearAllModels();
+      console.log('✅ [ClearAll] 3D models cleared');
+
+      // Step 3: Clear local viewport state
+      console.log('🗑️ [ClearAll] Step 3: Clearing local viewport state...');
+      viewportStateService.clearAll();
+      console.log('✅ [ClearAll] Viewport state cleared');
+
+      // Step 4: Reload screws from backend (should now be empty)
+      console.log('🔄 [ClearAll] Step 4: Reloading screws from backend...');
+      if (sessionId) {
+        await loadScrews(sessionId);
+      } else {
+        loadScrewsLocal();
+      }
+
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('✅ [ClearAll] All screws cleared successfully!');
+      console.log(`   Frontend screws: ${screws.length}`);
+      console.log('═══════════════════════════════════════════════════════');
+
+    } catch (error) {
+      console.error('❌ [ClearAll] Error clearing all screws:', error);
+      alert(`Failed to clear all screws: ${error.message}\n\nCheck console for details.`);
     }
   };
 
@@ -895,51 +1073,23 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log('ℹ️ Saving as standalone plan (no case association)');
       }
 
-      const response = await fetch('/api/planning/plan/save', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // sessionId: sessionId,  // Omitted - save directly to DB without Python session
-          caseId: effectiveCaseId,
-          studyInstanceUID,
-          seriesInstanceUID,
-          planData: {
-            name: planName,
-            description: `Plan with ${screws.length} screws`,
-            surgeon
-          },
-          screws: screws.map(screw => {
-            // Handle both current session screws (entryPoint object) and loaded screws (entry_point_x/y/z fields)
-            const entryPointX = screw.entryPoint?.x ?? screw.entry_point_x ?? null;
-            const entryPointY = screw.entryPoint?.y ?? screw.entry_point_y ?? null;
-            const entryPointZ = screw.entryPoint?.z ?? screw.entry_point_z ?? null;
-
-            return {
-              screw_id: screw.screwId || screw.screw_id,
-              screw_variant_id: screw.screwVariantId || screw.screw_variant_id,
-              radius: screw.radius,
-              length: screw.length,
-              vertebral_level: screw.vertebralLevel || screw.vertebral_level,
-              side: screw.side,
-              entry_point_x: entryPointX,
-              entry_point_y: entryPointY,
-              entry_point_z: entryPointZ,
-              transform_matrix: screw.transformMatrix || screw.transform_matrix,
-              viewport_states_json: screw.viewportStates ? JSON.stringify(screw.viewportStates) : screw.viewport_states_json,
-              notes: screw.notes || ''
-            };
-          })
-        })
+      const response = await planningBackendService.savePlan({
+        sessionId,
+        caseId: effectiveCaseId,
+        studyInstanceUID,
+        seriesInstanceUID,
+        planData: {
+          name: planName,
+          description: `Plan with ${screws.length} screws`,
+          surgeon
+        }
       });
 
-      const data = await response.json();
-
-      if (data.success) {
-        console.log('✅ Plan saved successfully:', data.plan_id);
-        alert(`Plan saved successfully!\nPlan ID: ${data.plan_id}`);
+      if (response.success) {
+        console.log('✅ Plan saved successfully:', response.plan_id);
+        alert(`Plan saved successfully!\nPlan ID: ${response.plan_id}`);
       } else {
-        throw new Error(data.error || 'Failed to save plan');
+        throw new Error(response.error || 'Failed to save plan');
       }
     } catch (error) {
       console.error('❌ Error saving plan:', error);
@@ -950,51 +1100,177 @@ export default function ScrewManagementPanel({ servicesManager }) {
   };
 
   /**
+   * Get display name and metadata for a screw
+   * Throws error if radius/length are missing (no defaults)
+   */
+  const getScrewDisplayInfo = (screw) => {
+    // Validate required fields
+    if (!screw.radius || !screw.length) {
+      const screwId = screw.screw_id || screw.name || 'unknown';
+      throw new Error(
+        `❌ Missing required screw dimensions for screw: ${screwId}\n` +
+        `   radius: ${screw.radius}, length: ${screw.length}\n` +
+        `   This indicates a data integrity issue - screws must have valid dimensions.`
+      );
+    }
+
+    const radius = parseFloat(screw.radius);
+    const length = parseFloat(screw.length);
+
+    // Validate parsed values
+    if (isNaN(radius) || isNaN(length) || radius <= 0 || length <= 0) {
+      const screwId = screw.screw_id || screw.name || 'unknown';
+      throw new Error(
+        `❌ Invalid screw dimensions for screw: ${screwId}\n` +
+        `   radius: ${radius}, length: ${length}\n` +
+        `   Dimensions must be positive numbers.`
+      );
+    }
+
+    // Use screw_label if available (e.g., "L3-R1", "L4-L2")
+    const label = screw.screw_label || screw.name || screw.screw_id || 'Unknown Screw';
+
+    // Determine source and parse manufacturer info from screw_variant_id
+    let source: 'catalog' | 'generated' | 'unknown' = 'unknown';
+    let manufacturerInfo = null;
+    let description = 'Unknown Source';
+
+    if (screw.screw_variant_id) {
+      const variantId = screw.screw_variant_id;
+
+      // Check if it's a generated/custom screw
+      if (variantId.startsWith('generated-') || variantId.startsWith('screw-')) {
+        source = 'generated';
+        description = 'Custom Screw';
+      } else {
+        // It's a catalog screw - parse manufacturer info
+        source = 'catalog';
+        const parts = variantId.split('-');
+        if (parts.length >= 4) {
+          manufacturerInfo = {
+            vendor: parts[0].toUpperCase(),
+            model: parts.slice(1, -2).join('-').toUpperCase()
+          };
+          description = `${manufacturerInfo.vendor} ${manufacturerInfo.model}`;
+        } else {
+          description = 'Catalog Screw';
+        }
+      }
+    }
+
+    return {
+      label,
+      description,
+      source,
+      radius,
+      length,
+      manufacturerInfo
+    };
+  };
+
+  /**
    * Load a saved plan
    */
   const loadPlan = async (planId: string) => {
     try {
+      // Check if there are existing screws in the current session
+      if (screws.length > 0) {
+        const confirmed = confirm(
+          '⚠️ Warning: Current Session Has Unsaved Work\n\n' +
+          `You currently have ${screws.length} screw(s) in this session.\n\n` +
+          'Loading another plan will DISCARD your current work.\n\n' +
+          'Do you want to:\n' +
+          '  ✓ YES - Discard current session and load the selected plan\n' +
+          '  ✗ NO - Cancel and keep working on current session\n\n' +
+          '💡 Tip: Save your current plan first if you want to keep it!'
+        );
+
+        if (!confirmed) {
+          console.log('❌ Load plan cancelled by user - keeping current session');
+          return; // User chose to keep current session
+        }
+
+        console.log('✅ User confirmed: discarding current session and loading plan');
+
+        // Clear current screws and models before loading new plan
+        console.log('🗑️ Clearing current session data...');
+        modelStateService.clearAllModels();
+        setScrews([]);
+      }
+
       setIsLoading(true);
-      console.log('📥 Loading plan:', planId);
+      console.log('📥 Loading and restoring plan:', planId);
 
-      const response = await fetch(`/api/planning/plan/${planId}`, {
-        credentials: 'include'
-      });
-      const data = await response.json();
+      // Restore session from plan using backend service
+      const response = await planningBackendService.restoreSessionFromPlan(planId);
 
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to load plan');
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to restore session from plan');
       }
 
-      const plan = data.plan;
-      console.log('✅ Plan loaded:', plan);
-      console.log(`   Plan ID: ${plan.plan_id}`);
-      console.log(`   Plan Name: ${plan.plan_name}`);
-      console.log(`   Screws array:`, plan.screws);
-      console.log(`   Screws count: ${plan.screws?.length || 0}`);
-      console.log(`   Rods count: ${plan.rods?.length || 0}`);
+      const plan = response.plan;
+      console.log('✅ Session restored from plan:', plan.name);
+      console.log(`   Session ID: ${response.session_id}`);
+      console.log(`   Screws: ${response.screws_count}, Rods: ${response.rods_count}`);
 
-      // Detailed screw logging
-      if (plan.screws && plan.screws.length > 0) {
-        console.log('📋 Screw details:');
-        plan.screws.forEach((screw, idx) => {
-          console.log(`  [${idx}] Screw ID: ${screw.screw_id}, Variant: ${screw.screw_variant_id}, Radius: ${screw.radius}, Length: ${screw.length}`);
-        });
+      // Update UI state with restored session
+      setSessionId(response.session_id);
+      setStudyInstanceUID(plan.study_instance_uid);
+      setSeriesInstanceUID(plan.series_instance_uid);
+      setSurgeon(plan.surgeon || surgeon);
+      if (plan.case_id) {
+        setCaseId(plan.case_id);
+      }
+      setSessionStatus('ready');
+
+      // Load screws from restored session
+      await loadScrews(response.session_id);
+
+      // Restore 3D models for visualization
+      console.log('🎨 Restoring 3D models...');
+      let modelsLoaded = 0;
+      let modelsFailed = 0;
+
+      for (const screw of plan.screws) {
+        try {
+          // Extract dimensions and metadata using helper function
+          const displayInfo = getScrewDisplayInfo(screw);
+
+          console.log(`   Loading model for ${displayInfo.label}: R=${displayInfo.radius}mm, L=${displayInfo.length}mm (${displayInfo.source})`);
+
+          // Parse transform matrix
+          let transform = null;
+          if (screw.transform_matrix && Array.isArray(screw.transform_matrix) && screw.transform_matrix.length === 16) {
+            transform = new Float32Array(screw.transform_matrix);
+            console.log(`   Transform: [${transform[3].toFixed(1)}, ${transform[7].toFixed(1)}, ${transform[11].toFixed(1)}]`);
+          } else {
+            console.warn(`   ⚠️ No valid transform matrix for ${displayInfo.label}`);
+          }
+
+          const screwId = screw.screw_id || screw.id || null;
+          await loadScrewModel(displayInfo.radius, displayInfo.length, transform, displayInfo.label, screwId);
+          modelsLoaded++;
+        } catch (modelError) {
+          modelsFailed++;
+          const screwIdForLog = screw.screw_id || screw.screw_label || 'unknown';
+          console.warn(`   ❌ Failed to load model for ${screwIdForLog}:`, modelError.message);
+        }
       }
 
-      // Update screws in UI
-      console.log('🔄 Setting screws state with:', plan.screws);
-      setScrews(plan.screws || []);
+      console.log(`✅ Plan restored successfully!`);
+      console.log(`   Models loaded: ${modelsLoaded}/${plan.screws.length}`);
+      if (modelsFailed > 0) {
+        console.warn(`   ⚠️ Failed to load ${modelsFailed} model(s)`);
+      }
 
-      console.log('✅ Screws state should now be updated. Current screws.length:', (plan.screws || []).length);
+      alert(`Plan restored!\n${plan.name}\nSession: ${response.session_id.substring(0, 8)}...\nScrews: ${response.screws_count}\nModels loaded: ${modelsLoaded}/${plan.screws.length}`);
 
-      // TODO: Restore 3D models for each screw
-      // This would require iterating through plan.screws and calling loadScrewModel for each
+      // Close the dialog
+      setShowPlanDialog(false);
 
-      alert(`Plan loaded successfully!\n${plan.plan_name}\nScrews: ${plan.screws?.length || 0}\nRods: ${plan.rods?.length || 0}`);
     } catch (error) {
-      console.error('❌ Error loading plan:', error);
-      alert(`Failed to load plan: ${error.message}`);
+      console.error('❌ Error restoring plan:', error);
+      alert(`Failed to restore plan: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -1060,7 +1336,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
           viewportStateService.loadSnapshotsFromFile(file)
             .then((count) => {
               // Reload screws in UI
-              loadScrews();
+              if (sessionId) {
+                loadScrews(sessionId);
+              } else {
+                loadScrewsLocal();
+              }
               console.log(`✅ Successfully imported ${count} screws from: ${file.name}`);
             })
             .catch((error) => {
@@ -1084,61 +1364,22 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const remainingSlots = viewportStateService.getRemainingSlots();
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col h-full bg-gray-900 text-white p-4 space-y-4 items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin text-4xl mb-4">🔄</div>
-          <h2 className="text-xl font-bold text-white mb-2">🔗 Initializing Planning Session</h2>
-          <p className="text-gray-400">Connecting to planning service...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (
-    <div className="p-4 space-y-4 h-full flex flex-col">
+    <ScrewManagementContainer>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-white">
-          🔩 Screw Management
-          {sessionId && <span className="text-sm font-normal text-green-400 ml-2">(API Connected)</span>}
-        </h2>
-        <div className="flex gap-1">
-          <button
-            onClick={testCrosshairDetection}
-            className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-base"
-            title="Test Crosshair Detection"
-          >
-            🧪
-          </button>
-          <button
-            onClick={() => setShowPlanDialog(true)}
-            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-base"
-            title="Load Plan"
-          >
-            📂
-          </button>
-          {screws.length > 0 && (
-            <>
-              <button
-                onClick={savePlan}
-                disabled={isSavingPlan}
-                className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-base disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Save Plan"
-              >
-                {isSavingPlan ? '⏳' : '💾'}
-              </button>
-              <button
-                onClick={clearAllScrews}
-                className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-base"
-                title="Clear All Screws"
-              >
-                🧹
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+      <Header
+        sessionId={sessionId}
+        onTestCrosshair={testCrosshairDetection}
+        onShowSessionState={showSessionState}
+        onLoadPlan={() => setShowPlanDialog(true)}
+        onSavePlan={savePlan}
+        onClearAll={clearAllScrews}
+        isSavingPlan={isSavingPlan}
+        hasScrews={screws.length > 0}
+      />
 
       {/* Plan Selection Dialog */}
       <PlanSelectionDialog
@@ -1149,194 +1390,63 @@ export default function ScrewManagementPanel({ servicesManager }) {
         seriesInstanceUID={seriesInstanceUID}
       />
 
+      {/* Screw Selection Dialog */}
+      <ScrewSelectionDialog
+        isOpen={showScrewDialog}
+        onClose={() => setShowScrewDialog(false)}
+        onSelectScrew={saveScrew}
+      />
+
+      {/* Session State Dialog */}
+      <SessionStateDialog
+        isOpen={showSessionStateDialog}
+        onClose={() => setShowSessionStateDialog(false)}
+        uiState={{
+          screws,
+          sessionId,
+          caseId,
+          studyInstanceUID,
+          seriesInstanceUID,
+          surgeon,
+        }}
+        backendSummary={backendSummary}
+        isLoading={summaryLoading}
+        error={summaryError}
+      />
+
       {/* Session Status Indicator */}
-      {sessionStatus === 'initializing' && (
-        <div className="p-2 bg-yellow-900 bg-opacity-30 border border-yellow-600 rounded text-xs text-yellow-300">
-          🔄 Connecting to planning service...
-        </div>
-      )}
-      {sessionStatus === 'ready' && sessionId && (
-        <div className="p-2 bg-green-900 bg-opacity-30 border border-green-600 rounded text-xs text-green-300">
-          ✅ Planning session ready ({sessionId.substring(0, 8)}...)
-        </div>
-      )}
-      {sessionStatus === 'error' && (
-        <div className="p-2 bg-red-900 bg-opacity-30 border border-red-600 rounded text-xs">
-          <div className="text-red-300 mb-1">⚠️ Planning API unavailable</div>
-          <button
-            onClick={initializeSession}
-            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs"
-          >
-            🔄 Retry Connection
-          </button>
-        </div>
-      )}
+      <SessionStatus
+        status={sessionStatus}
+        sessionId={sessionId}
+        onRetry={initializeSession}
+      />
 
-      {/* Save Section */}
-      <div className="space-y-2 border border-blue-600 rounded p-3 bg-blue-900 bg-opacity-20">
-        <div className="flex items-center justify-between">
-          <h3 className="font-bold text-white text-sm">💾 Save Screw Placement</h3>
-          <span className="text-xs text-gray-400">
-            {remainingSlots} / {maxScrews} slots remaining
-          </span>
-        </div>
-        <input
-          type="text"
-          placeholder="Screw name (optional)"
-          value={screwName}
-          onChange={(e) => setScrewName(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && saveScrew()}
-          className="w-full px-3 py-2 bg-gray-800 text-white border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">
-              Radius (mm) <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="number"
-              placeholder="e.g., 2.0"
-              value={radius}
-              onChange={(e) => setRadius(e.target.value)}
-              step="0.1"
-              min="0.1"
-              className="w-full px-3 py-2 bg-gray-800 text-white border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">
-              Length (mm) <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="number"
-              placeholder="e.g., 40.0"
-              value={length}
-              onChange={(e) => setLength(e.target.value)}
-              step="0.1"
-              min="0.1"
-              className="w-full px-3 py-2 bg-gray-800 text-white border border-gray-600 rounded text-sm focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
-        <button
-          onClick={saveScrew}
-          disabled={remainingSlots === 0}
-          className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-sm transition disabled:bg-gray-600 disabled:cursor-not-allowed"
-        >
-          🔩 Save Screw Placement
-        </button>
-        {remainingSlots === 0 && (
-          <p className="text-xs text-red-400">
-            ⚠️ Maximum screws reached. Delete old screws or oldest will be removed.
-          </p>
-        )}
-        <p className="text-xs text-gray-400">
-          💡 Saves current viewport state, screw dimensions, and model transform
-        </p>
-      </div>
+      {/* Save Screw Placement Button - Above the table */}
+      <SaveScrewButton
+        remainingSlots={remainingSlots}
+        maxScrews={maxScrews}
+        onOpenDialog={() => setShowScrewDialog(true)}
+      />
 
-      {/* Screws List */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <h3 className="font-bold text-white text-sm mb-2">
-          📋 Saved Screws ({screws.length} / {maxScrews})
-        </h3>
+      {/* Screws List - Table Layout */}
+      <ScrewListContainer>
+        <ScrewListHeader screwCount={screws.length} maxScrews={maxScrews} />
 
-        <div className="flex-1 overflow-y-auto space-y-2">
+        <ScrewListScrollArea>
           {screws.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-500 text-sm">No screws saved yet</p>
-              <p className="text-gray-600 text-xs mt-2">
-                Enter radius and length, then click "Save Screw Placement"
-              </p>
-            </div>
+            <EmptyScrewList />
           ) : (
-            screws.map((screw, index) => {
-              // Handle both old localStorage format and new API format
-              const screwName = screw.name || screw.screw_id || `Screw ${index + 1}`;
-              const screwRadius = screw.radius || (screw.screw_variant_id?.split('-')[1] ?
-                parseFloat(screw.screw_variant_id.split('-')[1]) / 10 : 3.25);
-              const screwLength = screw.length || (screw.screw_variant_id?.split('-')[2] ?
-                parseFloat(screw.screw_variant_id.split('-')[2]) : 40);
-              const timestamp = screw.timestamp || screw.placed_at || screw.created_at || Date.now();
-
-              // Check if this is API data (has screw_id) or localStorage data (has name)
-              const isApiData = !!screw.screw_id;
-
-              return (
-                <div
-                  key={screw.screw_id || screw.name || index}
-                  className="border border-gray-700 rounded p-3 hover:border-blue-500 transition bg-gray-800 bg-opacity-50"
-                >
-                  <div className="flex justify-between items-start gap-2">
-                    {/* Screw Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-lg">🔩</span>
-                        <p className="font-medium text-sm text-white truncate" title={screwName}>
-                          {screwName}
-                        </p>
-                        {isApiData && (
-                          <span className="inline-block px-1 py-0.5 bg-green-900 bg-opacity-50 border border-green-700 rounded text-xs text-green-300">
-                            API
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-400 mb-2">
-                        {new Date(timestamp).toLocaleString()}
-                      </p>
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <span className="inline-block px-2 py-1 bg-blue-900 bg-opacity-50 border border-blue-700 rounded text-xs text-blue-300 font-semibold">
-                          ⌀ {(screwRadius * 2).toFixed(1)} mm
-                        </span>
-                        <span className="inline-block px-2 py-1 bg-green-900 bg-opacity-50 border border-green-700 rounded text-xs text-green-300 font-semibold">
-                          ↕ {screwLength.toFixed(1)} mm
-                        </span>
-                        {screw.viewports && (
-                          <span className="inline-block px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-400">
-                            {screw.viewports.length} views
-                          </span>
-                        )}
-                        {screw.transform_matrix && (
-                          <span className="inline-block px-2 py-0.5 bg-purple-900 bg-opacity-50 border border-purple-700 rounded text-xs text-purple-300">
-                            3D transform
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="flex gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => restoreScrew(screw)}
-                        disabled={isRestoring}
-                        className="px-2 py-2 bg-blue-600 hover:bg-blue-700 text-white text-base rounded transition disabled:bg-gray-600 disabled:cursor-not-allowed"
-                        title={`Load "${screwName}"`}
-                      >
-                        {isRestoring ? '⏳' : '🔄'}
-                      </button>
-                      <button
-                        onClick={() => deleteScrew(screw)}
-                        className="px-2 py-2 bg-red-600 hover:bg-red-700 text-white text-base rounded transition"
-                        title={`Delete "${screwName}"`}
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
+            <ScrewTable
+              screws={screws}
+              displayInfoGetter={getScrewDisplayInfo}
+              isRestoring={isRestoring}
+              onView={restoreScrew}
+              onEdit={editScrew}
+              onDelete={deleteScrew}
+            />
           )}
-        </div>
-      </div>
-
-      {/* Info Footer */}
-      <div className="text-xs text-gray-500 border-t border-gray-700 pt-2 space-y-1">
-        <p>💡 <strong>Save:</strong> Captures current viewport state and screw dimensions</p>
-        <p>💡 <strong>Load:</strong> Restores viewport state and loads matching 3D model</p>
-        <p>💡 <strong>Delete:</strong> Removes screw placement AND associated 3D model</p>
-        <p>💡 <strong>Limit:</strong> Maximum {maxScrews} screws (oldest auto-removed when full)</p>
-      </div>
-    </div>
+        </ScrewListScrollArea>
+      </ScrewListContainer>
+    </ScrewManagementContainer>
   );
 }

@@ -5,7 +5,7 @@ import SegmentationService from '../services/SegmentationService';
 import CornerstoneCacheService from '../services/CornerstoneCacheService';
 import CornerstoneViewportService from '../services/ViewportService/CornerstoneViewportService';
 import ColorbarService from '../services/ColorbarService';
-import ModelStateService from '../modelStateService';
+import { ModelStateService } from '@ohif/extension-lifesync';
 
 interface CornerstoneServices extends Types.Services {
   cornerstoneViewportService: CornerstoneViewportService;
