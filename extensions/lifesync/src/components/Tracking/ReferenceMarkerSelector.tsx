@@ -31,9 +31,9 @@ const ReferenceMarkerSelector: React.FC<ReferenceMarkerSelectorProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Get API base URL
+  // Phase 4: Always use relative paths (webpack proxy handles routing)
   const getApiBase = () => {
-    return window.location.port === '8081' ? '' : 'http://localhost:3001';
+    return '';
   };
 
   // Load markers

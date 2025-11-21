@@ -190,6 +190,15 @@ module.exports = (env, argv) => {
           changeOrigin: true,
           secure: false,
         },
+        {
+          // Proxy for SyncForge API (Phase 4)
+          // Tracking, Planning, Registration, Case Management
+          context: ['/api'],
+          target: 'http://localhost:3001',
+          changeOrigin: true,
+          secure: false,
+          ws: true,  // Enable WebSocket proxy for /ws/tracking
+        },
       ],
       static: [
         {

@@ -28,8 +28,8 @@ export default function CaseSelector({ caseId: propCaseId = '', disabled = false
     setError(null);
 
     try {
-      // Try to load case from SyncForge API
-      const response = await fetch(`http://localhost:3001/api/cases/${caseId}`);
+      // Phase 4: Use relative paths (webpack proxy handles routing)
+      const response = await fetch(`/api/cases/${caseId}`);
 
       if (!response.ok) {
         throw new Error(`Case not found: ${caseId}`);

@@ -1,6 +1,6 @@
 /**
  * LifeSync Extension Commands Module
- * 
+ *
  * Provides commands for surgical navigation and tracking functionality
  */
 
@@ -11,9 +11,12 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
     /**
      * Start Navigation Mode
      * Connects to tracking server and starts receiving position updates
+     * @param mode - Navigation mode (e.g., 'circular')
+     * @param trackingMode - Tracking mode ('simulation' or 'hardware')
      */
-    startNavigation: ({ mode = 'circular' }) => {
+    startNavigation: ({ mode = 'circular', trackingMode }) => {
       console.log('🧭 [startNavigation] Starting navigation mode:', mode);
+      console.log('🎯 [startNavigation] Tracking mode:', trackingMode || 'from config');
 
       const { trackingService } = servicesManager.services;
 
@@ -35,16 +38,17 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
             window.__navigationController = new NavigationController(servicesManager);
           }
 
-          // Connect to tracking server and start navigation
-          return trackingService.connect();
+          // Connect to tracking server with specified mode
+          return trackingService.connect(trackingMode);
         })
         .then(() => {
           // Start navigation after connection is established
           window.__navigationController.startNavigation(mode);
 
+          const modeText = trackingMode ? ` (${trackingMode})` : '';
           uiNotificationService?.show({
             title: 'Navigation Started',
-            message: `Navigation mode: ${mode}`,
+            message: `Navigation mode: ${mode}${modeText}`,
             type: 'success',
             duration: 2000,
           });
@@ -73,14 +77,16 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
 
         uiNotificationService?.show({
           title: 'Navigation Stopped',
-          message: 'Navigation mode deactivated',
+          message: 'Navigation mode deactivated. Click "Start Navigation" to reconnect.',
           type: 'info',
-          duration: 2000,
+          duration: 3000,
         });
       }
 
+      // Disconnect WebSocket (Python server keeps running)
       if (trackingService) {
         trackingService.disconnect();
+        console.log('✅ WebSocket disconnected (Python server still running)');
       }
     },
 
@@ -153,4 +159,3 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
 };
 
 export default commandsModule;
-

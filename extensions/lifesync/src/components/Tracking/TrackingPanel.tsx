@@ -1,14 +1,16 @@
 /**
- * PanelTracking - Panel for tracking system configuration and control (Phase 4: Enhanced)
+ * PanelTracking - Panel for tracking system control and monitoring (Phase 4: Enhanced)
  *
  * This panel provides controls for:
  * - Switching between simulation/hardware tracking modes
- * - Enabling/disabling specific tracking tools
  * - Viewing tracking status and quality metrics
  * - Starting/stopping tracking sessions
  * - Patient reference status monitoring (Phase 4)
  * - Real-time tool coordinates display (Phase 4)
  * - Coordinate system toggle (tracker vs PR) (Phase 4)
+ * - Navigation control (start/stop)
+ *
+ * Note: Tool configuration is managed via TrackingConfigDialog
  */
 
 import React from 'react';
@@ -61,6 +63,7 @@ interface TrackingStatus {
 // Phase 4: Patient Reference Status
 interface PatientReferenceStatus {
   id: string;
+  name: string | null;  // Phase 4: Human-readable name from proto
   visible: boolean;
   quality: number;
   moved: boolean;
@@ -112,6 +115,9 @@ function PanelTracking() {
   // Navigation state
   const [isNavigating, setIsNavigating] = React.useState(false);
 
+  // Selected tracking mode for navigation (simulation or hardware)
+  const [selectedMode, setSelectedMode] = React.useState<'simulation' | 'hardware'>('simulation');
+
   // Phase 7: Configuration dialog state
   const [configDialogOpen, setConfigDialogOpen] = React.useState(false);
   const [currentTrackingConfig, setCurrentTrackingConfig] = React.useState<any>(null);
@@ -129,13 +135,17 @@ function PanelTracking() {
       setLoading(true);
       setError(null);
 
-      // Use relative URL if served through Nginx, otherwise localhost:3001
-      const apiBase = window.location.port === '8081' ? '' : 'http://localhost:3001';
-      const response = await fetch(`${apiBase}/api/tracking/config`);
+      // Phase 4: Always use relative API paths (webpack proxy handles routing)
+      const response = await fetch('/api/tracking/config');
       const result = await response.json();
 
       if (result.success) {
         setConfig(result.config);
+
+        // Initialize selectedMode from config
+        if (result.config.tracking_mode?.current) {
+          setSelectedMode(result.config.tracking_mode.current as 'simulation' | 'hardware');
+        }
       } else {
         setError('Failed to load tracking configuration');
       }
@@ -151,8 +161,16 @@ function PanelTracking() {
   const switchMode = React.useCallback(async (mode: string) => {
     try {
       setLoading(true);
-      const apiBase = window.location.port === '8081' ? '' : 'http://localhost:3001';
-      const response = await fetch(`${apiBase}/api/tracking/mode`, {
+
+      // Disconnect first if tracking is active
+      if (trackingService?.isConnected || trackingService?.isTracking) {
+        console.log('🔌 Disconnecting before mode switch...');
+        await trackingService.disconnect();
+        // Wait a bit for cleanup
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      const response = await fetch('/api/tracking/mode', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode })
@@ -179,47 +197,13 @@ function PanelTracking() {
     }
   }, [config]);
 
-  // Toggle tool enable/disable
-  const toggleTool = React.useCallback(async (toolKey: string, enabled: boolean) => {
-    try {
-      setLoading(true);
-      const apiBase = window.location.port === '8081' ? '' : 'http://localhost:3001';
-      const response = await fetch(`${apiBase}/api/tracking/tools/${toolKey}/enable`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled })
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        // Update local config
-        if (config) {
-          setConfig({
-            ...config,
-            active_tools: {
-              ...config.active_tools,
-              [toolKey]: { ...config.active_tools[toolKey], enabled }
-            }
-          });
-        }
-        setError(null);
-      } else {
-        setError(result.error || 'Failed to update tool status');
-      }
-    } catch (err) {
-      setError('Failed to update tool status');
-      console.error('Error updating tool:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [config]);
-
   // Navigation handlers
   const handleStartNavigation = React.useCallback(async () => {
     try {
       console.log('🚀 Starting navigation from TrackingPanel...');
       console.log('  - TrackingService available:', !!trackingService);
       console.log('  - CommandsManager available:', !!commandsManager);
+      console.log('  - Selected Mode:', selectedMode);
 
       if (!trackingService) {
         setError('TrackingService not available');
@@ -231,8 +215,18 @@ function PanelTracking() {
         return;
       }
 
-      // Start navigation (this will connect TrackingService automatically)
-      await commandsManager.runCommand('startNavigation', { mode: 'circular' });
+      // TrackingService.connect() will now automatically:
+      // 1. Check if tracking is already active
+      // 2. Disconnect if needed (especially if mode is different)
+      // 3. Wait for cleanup
+      // 4. Connect with the new mode
+
+      console.log(`🚀 Starting navigation in ${selectedMode} mode...`);
+      await commandsManager.runCommand('startNavigation', {
+        mode: 'circular',
+        trackingMode: selectedMode
+      });
+
       setIsNavigating(true);
       console.log('✅ Navigation started successfully');
 
@@ -240,7 +234,7 @@ function PanelTracking() {
       console.error('❌ Failed to start navigation:', error);
       setError(`Failed to start navigation: ${error.message}`);
     }
-  }, [commandsManager, trackingService]);
+  }, [commandsManager, trackingService, selectedMode]);
 
   const handleStopNavigation = React.useCallback(() => {
     try {
@@ -335,6 +329,7 @@ function PanelTracking() {
           type: 'tracking_data',
           patient_reference: {
             id: data.patient_reference_id || '',
+            name: data.patient_reference_name || null,  // Phase 4: Add patient reference name
             visible: data.patient_reference_visible || false,
             quality: data.patient_reference_quality || 0,
             moved: data.patient_reference_moved || false,
@@ -422,7 +417,7 @@ function PanelTracking() {
         {/* Phase 4: Patient Reference Status */}
         {trackingFrame && trackingFrame.patient_reference && (
           <div className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-3">Patient Reference Status</h3>
+            <h3 className="text-lg font-semibold text-white mb-3">Patient Reference</h3>
             <div className={`p-4 rounded border ${
               !trackingFrame.patient_reference.visible
                 ? 'bg-red-900 border-red-700'
@@ -431,8 +426,15 @@ function PanelTracking() {
                 : 'bg-green-900 border-green-700'
             }`}>
               <div className="flex items-center justify-between mb-3">
-                <div className="text-white font-medium">
-                  {trackingFrame.patient_reference.id?.toUpperCase() || 'PR'}
+                <div>
+                  <div className="text-white font-mono text-lg font-bold">
+                    📍 {trackingFrame.patient_reference.id?.toUpperCase() || 'PR'}
+                  </div>
+                  {trackingFrame.patient_reference.name && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      {trackingFrame.patient_reference.name}
+                    </div>
+                  )}
                 </div>
                 <div className={`text-sm font-medium ${
                   trackingFrame.patient_reference.visible ? 'text-green-300' : 'text-red-300'
@@ -503,15 +505,15 @@ function PanelTracking() {
             </div>
 
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {Object.entries(trackingFrame.tools).map(([toolId, toolData]) => {
+              {Object.entries(trackingFrame.tools)
+                .filter(([toolId, toolData]) => !toolData.is_patient_reference)  // 🆕 过滤掉 Patient Reference
+                .map(([toolId, toolData]) => {
                 const coords = toolData.coordinates[coordinateSystem];
                 return (
                   <div
                     key={toolId}
                     className={`p-3 rounded border ${
-                      toolData.is_patient_reference
-                        ? 'bg-purple-900 border-purple-700'
-                        : toolData.visible
+                      toolData.visible
                         ? 'bg-gray-800 border-gray-600'
                         : 'bg-gray-900 border-gray-700 opacity-50'
                     }`}
@@ -519,7 +521,6 @@ function PanelTracking() {
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-white font-medium">
                         {toolId.toUpperCase()}
-                        {toolData.is_patient_reference && ' 📍'}
                       </div>
                       <div className={`text-xs ${
                         toolData.visible ? 'text-green-400' : 'text-red-400'
@@ -565,7 +566,7 @@ function PanelTracking() {
         )}
 
         {/* Mode Selection */}
-        {config && (
+        {config && config.tracking_mode && config.tracking_mode.options && (
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-white mb-3">Tracking Mode</h3>
             <div className="space-y-2">
@@ -595,57 +596,50 @@ function PanelTracking() {
           </div>
         )}
 
-        {/* Tool Configuration */}
-        {config && (
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-3">Tracking Tools</h3>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {Object.entries(config.active_tools).map(([toolKey, tool]) => (
-                <div
-                  key={toolKey}
-                  className={`p-3 rounded border transition-colors ${
-                    tool.enabled
-                      ? 'bg-green-900 border-green-700'
-                      : 'bg-gray-800 border-gray-600'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="text-white font-medium">
-                        {toolKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {tool.description || tool.asset_id}
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      {tool.required && (
-                        <span className="text-xs bg-yellow-600 px-2 py-1 rounded text-white">
-                          Required
-                        </span>
-                      )}
-                      <button
-                        onClick={() => toggleTool(toolKey, !tool.enabled)}
-                        disabled={loading || tool.required}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          tool.enabled
-                            ? 'bg-red-600 hover:bg-red-700 text-white'
-                            : 'bg-green-600 hover:bg-green-700 text-white'
-                        }`}
-                      >
-                        {tool.enabled ? 'Disable' : 'Enable'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Navigation Controls */}
         <div className="mb-6">
           <h3 className="text-lg font-semibold text-white mb-3">🧭 Navigation Control</h3>
+
+          {/* Tracking Mode Selection (Radio Buttons) */}
+          <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
+            <div className="text-sm text-gray-300 mb-2 font-medium">Tracking Mode</div>
+            <div className="flex space-x-4">
+              <label className={`flex items-center space-x-2 cursor-pointer ${isNavigating ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <input
+                  type="radio"
+                  name="trackingMode"
+                  value="simulation"
+                  checked={selectedMode === 'simulation'}
+                  onChange={(e) => setSelectedMode(e.target.value as 'simulation' | 'hardware')}
+                  disabled={isNavigating}
+                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
+                />
+                <span className="text-sm text-gray-300">
+                  🖥️ Simulation
+                </span>
+              </label>
+
+              <label className={`flex items-center space-x-2 cursor-pointer ${isNavigating ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <input
+                  type="radio"
+                  name="trackingMode"
+                  value="hardware"
+                  checked={selectedMode === 'hardware'}
+                  onChange={(e) => setSelectedMode(e.target.value as 'simulation' | 'hardware')}
+                  disabled={isNavigating}
+                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
+                />
+                <span className="text-sm text-gray-300">
+                  🔧 Hardware
+                </span>
+              </label>
+            </div>
+            <div className="text-xs text-gray-500 mt-2">
+              {isNavigating
+                ? '⚠️ Mode locked during navigation'
+                : '💡 Select mode before starting navigation'}
+            </div>
+          </div>
 
           {/* Status Display */}
           <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
@@ -671,7 +665,7 @@ function PanelTracking() {
                 disabled={!trackingService || !commandsManager}
                 className="w-full p-3 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:opacity-50 text-white rounded font-medium transition-colors"
               >
-                ▶️ Start Navigation
+                ▶️ Start Navigation ({selectedMode === 'simulation' ? 'Simulation' : 'Hardware'})
               </button>
             ) : (
               <button
@@ -730,9 +724,8 @@ function PanelTracking() {
 
           <button
             onClick={async () => {
-              try {
-                const apiBase = window.location.port === '8081' ? '' : 'http://localhost:3001';
-                const response = await fetch(`${apiBase}/api/tracking/reload-config`, {
+              try{
+                const response = await fetch('/api/tracking/reload-config', {
                   method: 'POST'
                 });
                 const result = await response.json();

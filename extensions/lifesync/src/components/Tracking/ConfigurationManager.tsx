@@ -38,9 +38,9 @@ const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  // Get API base URL
+  // Phase 4: Always use relative paths (webpack proxy handles routing)
   const getApiBase = () => {
-    return window.location.port === '8081' ? '' : 'http://localhost:3001';
+    return '';
   };
 
   // Load configurations

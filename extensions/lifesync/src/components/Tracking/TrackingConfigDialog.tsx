@@ -63,7 +63,7 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
   const [selectedReferenceMarkerId, setSelectedReferenceMarkerId] = useState<string | undefined>();
   const [selectedInstrumentIds, setSelectedInstrumentIds] = useState<string[]>([]);
   const [alternativeRomSelections, setAlternativeRomSelections] = useState<{ [key: string]: string }>({});
-  const [trackingMode, setTrackingMode] = useState<'simulation' | 'hardware'>('simulation');
+  const [trackingMode, setTrackingMode] = useState<'simulation' | 'hardware'>('hardware');
   const [ndiConfig, setNdiConfig] = useState({
     ip_address: '172.16.0.4',
     port: 8765,
@@ -90,9 +90,9 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
     tracker_info?: any;
   } | null>(null);
 
-  // Get API base URL
+  // Phase 4: Always use relative paths (webpack proxy handles routing)
   const getApiBase = () => {
-    return window.location.port === '8081' ? '' : 'http://localhost:3001';
+    return '';  // Empty string = relative paths
   };
 
   // Reset form
@@ -102,7 +102,7 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
     setSelectedReferenceMarkerId(undefined);
     setSelectedInstrumentIds([]);
     setAlternativeRomSelections({});
-    setTrackingMode('simulation');
+    setTrackingMode('hardware');
     setNdiConfig({
       ip_address: '172.16.0.4',
       port: 8765,
@@ -154,7 +154,7 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
 
       // Filter out null/undefined instrument IDs
       const validInstrumentIds = selectedInstrumentIds.filter(id => id && id !== 'null' && id !== 'undefined');
-      
+
       // Filter out null/undefined keys from ROM selections
       const validRomSelections: { [key: string]: string } = {};
       Object.entries(alternativeRomSelections).forEach(([key, value]) => {
@@ -164,10 +164,10 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
       });
 
       // Validate reference marker ID
-      const validReferenceMarkerId = selectedReferenceMarkerId && 
-                                     selectedReferenceMarkerId !== 'null' && 
-                                     selectedReferenceMarkerId !== 'undefined' 
-                                     ? selectedReferenceMarkerId 
+      const validReferenceMarkerId = selectedReferenceMarkerId &&
+                                     selectedReferenceMarkerId !== 'null' &&
+                                     selectedReferenceMarkerId !== 'undefined'
+                                     ? selectedReferenceMarkerId
                                      : undefined;
 
       console.log('Saving configuration:', {
@@ -194,7 +194,7 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
         alternative_rom_selections: validRomSelections,
       };
 
-      // Save via API
+      // Step 1: Save to database
       const apiBase = getApiBase();
       const response = await fetch(`${apiBase}/api/tracking/configurations`, {
         method: 'POST',
@@ -206,13 +206,64 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
 
       const result = await response.json();
 
-      if (result.success) {
-        setSuccess(`Configuration "${configName}" saved successfully`);
-        if (onConfigurationSaved) {
-          onConfigurationSaved(result.configuration);
-        }
-      } else {
+      if (!result.success) {
         setError(result.error || 'Failed to save configuration');
+        return;
+      }
+
+      // Step 2: 🆕 Phase 4 - Sync configuration to backend tracking_config.json
+      try {
+        await syncConfigToBackend(configuration);
+        console.log('✅ Configuration synced to backend');
+      } catch (syncError) {
+        console.warn('⚠️ Failed to sync to backend:', syncError);
+        setSuccess(`Configuration "${configName}" saved (backend sync failed: ${syncError.message})`);
+        return; // Early return if sync fails
+      }
+
+      // Step 3: 🆕 Phase 4 - Switch tracking mode
+      try {
+        // Disconnect first if tracking is active
+        try {
+          const statusResponse = await fetch(`${apiBase}/api/tracking/status`);
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            if (statusData.success && statusData.status?.active) {
+              console.log('🔌 Disconnecting before mode switch...');
+              await fetch(`${apiBase}/api/tracking/disconnect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              });
+              // Wait a bit for cleanup
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
+        } catch (statusError) {
+          console.warn('⚠️ Could not check tracking status');
+        }
+
+        console.log(`🔄 Switching tracking mode to: ${trackingMode}`);
+        const modeResponse = await fetch(`${apiBase}/api/tracking/mode`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: trackingMode })
+        });
+
+        const modeResult = await modeResponse.json();
+        if (modeResult.success) {
+          console.log(`✅ Tracking mode switched to: ${trackingMode}`);
+          setSuccess(`Configuration "${configName}" saved - Mode: ${trackingMode}`);
+        } else {
+          console.warn('⚠️ Failed to switch mode:', modeResult.error);
+          setSuccess(`Configuration "${configName}" saved (mode switch failed)`);
+        }
+      } catch (modeError) {
+        console.warn('⚠️ Error switching mode:', modeError);
+        setSuccess(`Configuration "${configName}" saved (mode switch failed)`);
+      }
+
+      if (onConfigurationSaved) {
+        onConfigurationSaved(result.configuration);
       }
     } catch (err) {
       setError(`Failed to save configuration: ${err.message}`);
@@ -222,31 +273,123 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
     }
   };
 
-  // Apply configuration (without saving)
-  const applyConfiguration = () => {
-    const configuration: TrackingConfiguration = {
-      name: configName || 'Temporary Configuration',
-      description: configDescription,
-      default_reference_marker_id: selectedReferenceMarkerId,
-      default_instrument_ids: selectedInstrumentIds,
-      settings: {
-        tracking_frequency: trackingFrequency,
-        coordinate_system: coordinateSystem,
-        quality_threshold: qualityThreshold,
-        auto_reference_detection: autoReferenceDetection,
-        tracking_mode: trackingMode,
-        ...(trackingMode === 'hardware' && { ndi_config: ndiConfig }),
-      },
-      alternative_rom_selections: alternativeRomSelections,
-    };
+  // 🆕 Phase 4: Sync configuration to backend tracking_config.json
+  const syncConfigToBackend = async (configuration: TrackingConfiguration) => {
+    const apiBase = getApiBase();
 
-    if (onConfigurationApplied) {
-      onConfigurationApplied(configuration);
+    console.log('🔄 Syncing configuration to backend...', {
+      reference: configuration.default_reference_marker_id,
+      instruments: configuration.default_instrument_ids?.length || 0,
+      mode: configuration.settings.tracking_mode
+    });
+
+    const response = await fetch(`${apiBase}/api/tracking/config/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ configuration }),
+    });
+
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to sync configuration to backend');
     }
-    setSuccess('Configuration applied');
-    setTimeout(() => {
-      onClose();
-    }, 1000);
+
+    console.log('✅ Backend configuration synced successfully');
+    return result.config;
+  };
+
+  // Apply configuration (without saving to database, but sync to backend)
+  const applyConfiguration = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+
+      const configuration: TrackingConfiguration = {
+        name: configName || 'Temporary Configuration',
+        description: configDescription,
+        default_reference_marker_id: selectedReferenceMarkerId,
+        default_instrument_ids: selectedInstrumentIds,
+        settings: {
+          tracking_frequency: trackingFrequency,
+          coordinate_system: coordinateSystem,
+          quality_threshold: qualityThreshold,
+          auto_reference_detection: autoReferenceDetection,
+          tracking_mode: trackingMode,
+          ...(trackingMode === 'hardware' && { ndi_config: ndiConfig }),
+        },
+        alternative_rom_selections: alternativeRomSelections,
+      };
+
+      const apiBase = getApiBase();
+
+      // 🆕 Phase 4: Sync to backend when applying (even without saving to database)
+      try {
+        await syncConfigToBackend(configuration);
+        console.log('✅ Configuration synced to backend');
+      } catch (syncError) {
+        console.warn('⚠️ Failed to sync to backend:', syncError);
+        throw new Error(`Backend sync failed: ${syncError.message}`);
+      }
+
+      // 🆕 Phase 4: Switch tracking mode if needed
+      try {
+        // Disconnect first if tracking is active
+        try {
+          const statusResponse = await fetch(`${apiBase}/api/tracking/status`);
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            if (statusData.success && statusData.status?.active) {
+              console.log('🔌 Disconnecting before mode switch...');
+              await fetch(`${apiBase}/api/tracking/disconnect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              });
+              // Wait a bit for cleanup
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
+        } catch (statusError) {
+          console.warn('⚠️ Could not check tracking status');
+        }
+
+        console.log(`🔄 Switching tracking mode to: ${trackingMode}`);
+        const modeResponse = await fetch(`${apiBase}/api/tracking/mode`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: trackingMode })
+        });
+
+        const modeResult = await modeResponse.json();
+        if (!modeResult.success) {
+          console.warn('⚠️ Failed to switch tracking mode:', modeResult.error);
+          // Don't fail the whole operation, just warn
+        } else {
+          console.log(`✅ Tracking mode switched to: ${trackingMode}`);
+        }
+      } catch (modeError) {
+        console.warn('⚠️ Error switching tracking mode:', modeError);
+        // Don't fail the whole operation, just warn
+      }
+
+      setSuccess(`Configuration applied - Mode: ${trackingMode}`);
+
+      if (onConfigurationApplied) {
+        onConfigurationApplied(configuration);
+      }
+
+      setTimeout(() => {
+        onClose();
+      }, 1000);
+    } catch (err) {
+      setError(`Failed to apply configuration: ${err.message}`);
+      console.error('Error applying configuration:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Test connection

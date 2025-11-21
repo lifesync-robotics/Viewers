@@ -35,7 +35,7 @@ import {
   WorkflowStepsService,
   StudyPrefetcherService,
   MultiMonitorService,
-  TrackingService,
+  // TrackingService - now registered by extensions/lifesync
 } from './services';
 
 import { DisplaySetMessage, DisplaySetMessageList } from './services/DisplaySetService';
@@ -92,7 +92,7 @@ const OHIF = {
   useActiveViewportDisplaySets,
   WorkflowStepsService,
   StudyPrefetcherService,
-  TrackingService,
+  // TrackingService - now registered by extensions/lifesync
 };
 
 export {
@@ -140,7 +140,7 @@ export {
   PanelService,
   WorkflowStepsService,
   StudyPrefetcherService,
-  TrackingService,
+  // TrackingService - now registered by extensions/lifesync
   useSystem,
   useActiveViewportDisplaySets,
 };
