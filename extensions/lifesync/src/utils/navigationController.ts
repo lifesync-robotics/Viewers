@@ -1,13 +1,20 @@
 /**
  * Navigation Controller
- * Updates crosshair position and MPR orientation from tracking data
- * Includes coordinate transformation from register (r) to DICOM (d) coordinates
+ * Manages navigation modes and coordinates tracking data updates
+ * Uses inheritance pattern with mode-specific implementations
  */
 
 import { vec3 } from 'gl-matrix';
 import { Types as cs3DTypes, utilities as cs3DUtilities, getRenderingEngine } from '@cornerstonejs/core';
 import { annotation, utilities } from '@cornerstonejs/tools';
 import CoordinateTransformer from './CoordinateTransformer';
+import NavigationMode from './navigationModes/NavigationMode';
+import { CameraFollowingMode } from './navigationModes/CameraFollowingMode';
+import { InstrumentProjectionMode } from './navigationModes/InstrumentProjectionMode';
+
+// Navigation mode type
+export type NavigationModeName = 'camera-follow' | 'instrument-projection';
+export type ModeChangeListener = (mode: NavigationModeName, previousMode: NavigationModeName | null) => void;
 
 class NavigationController {
   private servicesManager: any;
@@ -20,35 +27,158 @@ class NavigationController {
   private minFrameTime: number = 1000 / this.targetFPS; // Min time between UI updates (ms)
   private coordinateTransformer: CoordinateTransformer;
 
-  // Orientation tracking configuration
-  private useOrientationTracking: boolean = true; // Default: 6-DOF (position + orientation)
-  private lastPosition: number[] | null = null;
+  // Mode management
+  private currentMode: NavigationMode | null = null;
+  private modeInstances: Map<string, NavigationMode> = new Map();
+  private modeChangeListeners: Set<ModeChangeListener> = new Set();
 
   constructor(servicesManager: any) {
     this.servicesManager = servicesManager;
     this.coordinateTransformer = new CoordinateTransformer();
+
+    // Initialize mode instances
+    this._initializeModes();
+
+    // Set default mode
+    const savedMode = localStorage.getItem('lifesync_navigation_mode') as NavigationModeName;
+    const defaultMode: NavigationModeName = savedMode || 'camera-follow';
+    this.setNavigationMode(defaultMode, true); // Silent init
+
     console.log('🧭 NavigationController initialized', {
       targetFPS: this.targetFPS,
-      orientationTracking: this.useOrientationTracking
+      defaultMode: defaultMode
     });
   }
 
   /**
-   * Enable or disable orientation tracking
-   * When enabled, MPR views will rotate to align with tracked tool orientation
-   * When disabled, only position is tracked (current behavior)
+   * Initialize all navigation mode instances
    */
-  public enableOrientationTracking(enable: boolean): void {
-    this.useOrientationTracking = enable;
-    console.log(`🔄 Orientation tracking: ${enable ? 'ENABLED ✅' : 'DISABLED ❌'}`);
-    console.log(`   Mode: ${enable ? '6-DOF (position + orientation)' : '3-DOF (position only)'}`);
+  private _initializeModes(): void {
+    // Create mode instances
+    this.modeInstances.set('camera-follow', new CameraFollowingMode(
+      this.servicesManager,
+      this.coordinateTransformer
+    ));
+
+    this.modeInstances.set('instrument-projection', new InstrumentProjectionMode(
+      this.servicesManager,
+      this.coordinateTransformer
+    ));
   }
 
   /**
-   * Get current orientation tracking status
+   * Get current navigation mode name
+   */
+  public getNavigationMode(): NavigationModeName | null {
+    if (!this.currentMode) return null;
+
+    for (const [name, mode] of this.modeInstances.entries()) {
+      if (mode === this.currentMode) {
+        return name as NavigationModeName;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Set navigation mode
+   */
+  public setNavigationMode(
+    modeName: NavigationModeName,
+    silent: boolean = false,
+    force: boolean = false
+  ): void {
+    const previousModeName = this.getNavigationMode();
+
+    // Only skip if mode is the same AND not forcing
+    // force=true allows re-entering the same mode (useful for re-initialization)
+    if (modeName === previousModeName && !force) {
+      console.log(`ℹ️ Navigation mode already set to: ${modeName}`);
+      if (!silent) {
+        console.log(`   Use force=true to re-enter the same mode`);
+      }
+      return; // No change
+    }
+
+    // Get mode instance
+    const modeInstance = this.modeInstances.get(modeName);
+    if (!modeInstance) {
+      console.error(`❌ Navigation mode not found: ${modeName}`);
+      console.error(`   Available modes: ${Array.from(this.modeInstances.keys()).join(', ')}`);
+      return;
+    }
+
+    console.log(`🔄 Switching navigation mode: ${previousModeName || 'none'} → ${modeName}`);
+
+    // Exit previous mode
+    if (this.currentMode) {
+      console.log(`   Exiting previous mode: ${previousModeName}`);
+      this.currentMode.onModeExit();
+      this.currentMode.cleanup();
+    }
+
+    // Enter new mode
+    this.currentMode = modeInstance;
+    console.log(`   Entering new mode: ${modeName}`);
+    this.currentMode.onModeEnter();
+
+    // Save preference
+    localStorage.setItem('lifesync_navigation_mode', modeName);
+
+    // Notify listeners
+    if (!silent) {
+      this._notifyModeChange(modeName, previousModeName);
+    }
+
+    console.log(`✅ Navigation mode changed successfully: ${previousModeName || 'none'} → ${modeName}`);
+    console.log(`   Current mode: ${this.getNavigationMode()}`);
+  }
+
+  /**
+   * Subscribe to mode changes
+   */
+  public onModeChange(listener: ModeChangeListener): () => void {
+    this.modeChangeListeners.add(listener);
+    return () => {
+      this.modeChangeListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Notify all listeners of mode change
+   */
+  private _notifyModeChange(
+    mode: NavigationModeName,
+    previousMode: NavigationModeName | null
+  ): void {
+    this.modeChangeListeners.forEach(listener => {
+      try {
+        listener(mode, previousMode);
+      } catch (error) {
+        console.error('Error in mode change listener:', error);
+      }
+    });
+  }
+
+  /**
+   * Enable or disable orientation tracking (legacy method for CameraFollow mode)
+   * Delegates to CameraFollowingMode if it's the current mode
+   */
+  public enableOrientationTracking(enable: boolean): void {
+    const cameraFollowMode = this.modeInstances.get('camera-follow') as CameraFollowingMode;
+    if (cameraFollowMode) {
+      cameraFollowMode.enableOrientationTracking(enable);
+    } else {
+      console.warn('⚠️ enableOrientationTracking only works in camera-follow mode');
+    }
+  }
+
+  /**
+   * Get orientation tracking status (legacy method)
    */
   public isOrientationTrackingEnabled(): boolean {
-    return this.useOrientationTracking;
+    const cameraFollowMode = this.modeInstances.get('camera-follow') as CameraFollowingMode;
+    return cameraFollowMode ? cameraFollowMode.isOrientationTrackingEnabled() : false;
   }
 
   /**
@@ -69,6 +199,7 @@ class NavigationController {
     }
 
     console.log(`▶️ Starting navigation (mode: ${mode})`);
+    console.log(`   Active navigation mode: ${this.getNavigationMode()}`);
 
     // Auto-detect and set volume center before starting
     const volumeCenter = this._autoDetectVolumeCenter();
@@ -158,6 +289,11 @@ class NavigationController {
       }
     }
 
+    // Cleanup current mode
+    if (this.currentMode) {
+      this.currentMode.cleanup();
+    }
+
     // Log stats only if we had updates
     if (this.updateCount > 0 && this.lastUpdateTime > 0) {
       const totalTime = (performance.now() - this.lastUpdateTime) / 1000;
@@ -172,13 +308,12 @@ class NavigationController {
   }
 
   /**
-   * Handle tracking update - update crosshair position and orientation
+   * Handle tracking update - routes to current navigation mode
    * Data received at 100Hz, but UI updates throttled to 20Hz
    * Applies coordinate transformation from register to DICOM
    */
   private _handleTrackingUpdate(event: any): void {
     const { position, orientation, frame_id, matrix } = event;
-    const { cornerstoneViewportService } = this.servicesManager.services;
 
     this.updateCount++;
 
@@ -219,360 +354,28 @@ class NavigationController {
       }
     }
 
-    try {
-      // Update crosshair for each viewport using DICOM coordinates
-      // Pass matrix for orientation tracking (if enabled)
-      this._updateCrosshairPosition(dicomPosition, orientation, matrix);
-      this.lastRenderTime = now;
-    } catch (error) {
-      console.error('❌ Error updating crosshair:', error);
-    }
-  }
-
-  /**
-   * Update crosshair position and orientation across all viewports
-   * Uses viewport state restoration approach (like snapshot restore)
-   */
-  private _updateCrosshairPosition(position: number[], orientation: number[], matrix?: number[]): void {
-    const { cornerstoneViewportService } = this.servicesManager.services;
-
-    if (!cornerstoneViewportService) {
-      return;
-    }
-
-    // Use the proper viewport state update method
-    // Pass orientation and matrix for 6-DOF tracking
-    this._updateViewportStates(position, orientation, matrix);
-  }
-
-  /**
-   * Update viewport states using proper Cornerstone3D methods
-   * Supports both position-only (3-DOF) and position+orientation (6-DOF) tracking
-   * This follows the same pattern as ViewportStateService.restoreSnapshot()
-   */
-  private _updateViewportStates(position: number[], orientation?: number[], matrix?: number[]): void {
-    const { cornerstoneViewportService } = this.servicesManager.services;
-
-    if (!cornerstoneViewportService) {
-      console.warn('⚠️ No cornerstoneViewportService');
-      return;
-    }
-
-    // Get rendering engine to check bounds
-    const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
-    if (!renderingEngine) {
-      return;
-    }
-
-    // Clamp position to volume bounds to avoid "No imageId found" errors
-    let clampedPosition = this._clampToVolumeBounds(position, renderingEngine);
-    if (!clampedPosition) {
-      // Couldn't get bounds, use original position
-      clampedPosition = position;
-    }
-
-    // Store the target position
-    if (!this.lastPosition) {
-      this.lastPosition = clampedPosition;
-      console.log(`📍 Initial position stored: [${clampedPosition.map(v => v.toFixed(1)).join(', ')}]`);
-      if (this.useOrientationTracking && matrix) {
-        console.log(`🔄 Orientation tracking enabled - will update viewUp from matrix`);
-      }
-      return;
-    }
-
-    // Only update if there's significant movement
-    const delta = [
-      clampedPosition[0] - this.lastPosition[0],
-      clampedPosition[1] - this.lastPosition[1],
-      clampedPosition[2] - this.lastPosition[2],
-    ];
-    const movement = Math.sqrt(delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]);
-    if (movement < 0.5) {
-      // Too small movement, skip (log occasionally)
-      if (this.updateCount % 100 === 0) {
-        console.log(`⏭️ Skipping small movement: ${movement.toFixed(2)}mm`);
-      }
-      return;
-    }
-
-    // Get viewports from rendering engine (already have renderingEngine from above)
-    const viewports = renderingEngine.getViewports();
-
-    if (this.updateCount === 2) {
-      console.log(`📊 Found ${viewports.length} viewports:`, viewports.map(v => v.id));
-      console.log(`   Orientation tracking: ${this.useOrientationTracking ? 'ENABLED ✅' : 'DISABLED ❌'}`);
-    }
-
-    let updatedCount = 0;
-
-    viewports.forEach(vp => {
+    // Delegate to current navigation mode
+    if (this.currentMode) {
       try {
-        if (!vp) {
-          if (this.updateCount === 2) {
-            console.warn(`⚠️ Viewport is null`);
-          }
-          return;
+        const modeName = this.currentMode.getModeName();
+
+        // Log mode confirmation periodically
+        if (this.updateCount % 100 === 0) {
+          console.log(`🧭 [NavigationController] Current mode: ${modeName}`);
         }
 
-        if (vp.type === 'stack') {
-          if (this.updateCount === 2) {
-            console.log(`⏭️ Skipping stack viewport: ${vp.id}`);
-          }
-          return;
-        }
-
-        const camera = vp.getCamera();
-
-        if (this.updateCount === 2) {
-          console.log(`📷 ${vp.id} camera:`, {
-            focalPoint: camera.focalPoint,
-            position: camera.position,
-            viewUp: camera.viewUp,
-          });
-        }
-
-        // Decide whether to update orientation based on configuration
-        const hasValidMatrix = matrix && (
-          (Array.isArray(matrix) && matrix.length === 4 && Array.isArray(matrix[0])) ||  // 2D array
-          (Array.isArray(matrix) && matrix.length >= 16 && typeof matrix[0] === 'number')  // Flat array
-        );
-
-        if (this.updateCount <= 10) {
-          console.log(`📊 [NavigationController] Viewport ${vp.id} update decision:`, {
-            useOrientationTracking: this.useOrientationTracking,
-            hasMatrix: !!matrix,
-            hasValidMatrix: hasValidMatrix,
-            matrixInfo: matrix ? {
-              isArray: Array.isArray(matrix),
-              length: Array.isArray(matrix) ? matrix.length : 'N/A',
-              firstElementType: Array.isArray(matrix) && matrix.length > 0 ? (Array.isArray(matrix[0]) ? 'Array' : typeof matrix[0]) : 'N/A',
-              firstValue: Array.isArray(matrix) && matrix.length > 0 ? (Array.isArray(matrix[0]) ? matrix[0][0] : matrix[0]) : 'N/A'
-            } : 'null',
-            willUse6DOF: this.useOrientationTracking && hasValidMatrix
-          });
-        }
-
-        if (this.useOrientationTracking && hasValidMatrix) {
-          // 6-DOF Mode: Update both position and orientation
-          if (this.updateCount <= 10) {
-            console.log(`   → Using 6-DOF mode (position + orientation)`);
-          }
-          this._updateCameraWithOrientation(vp, clampedPosition, matrix);
-        } else {
-          // 3-DOF Mode: Update position only (current behavior)
-          if (this.updateCount <= 10) {
-            console.log(`   → Using 3-DOF mode (position only)`);
-          }
-          this._updateCameraPositionOnly(vp, clampedPosition, camera);
-
-          if (this.useOrientationTracking && !hasValidMatrix && this.updateCount <= 10) {
-            console.warn('⚠️ Orientation tracking enabled but no valid matrix available');
-          }
-        }
-
-        // Render the viewport
-        vp.render();
-        updatedCount++;
-
-        if (this.updateCount === 2) {
-          console.log(`✅ Updated ${vp.id} to focal point [${clampedPosition.map(v => v.toFixed(1)).join(', ')}]`);
-        }
+        this.currentMode.handleTrackingUpdate(dicomPosition, orientation, matrix);
+        this.lastRenderTime = now;
       } catch (error) {
-        if (this.updateCount <= 5) {
-          console.error(`❌ Error updating ${vp.id}:`, error);
-        }
+        console.error('❌ Error in navigation mode handler:', error);
       }
-    });
-
-    if (this.updateCount === 2) {
-      console.log(`✅ Updated ${updatedCount}/${viewports.length} viewports`);
-    }
-
-    this.lastPosition = clampedPosition;
-  }
-
-  /**
-   * Update camera position only (3-DOF mode)
-   * Maintains existing view direction and orientation
-   */
-  private _updateCameraPositionOnly(vp: any, position: number[], camera: any): void {
-    // Calculate new camera position maintaining view direction
-    const viewPlaneNormal = vec3.create();
-    vec3.subtract(viewPlaneNormal, camera.position, camera.focalPoint);
-    const distance = vec3.length(viewPlaneNormal);
-    vec3.normalize(viewPlaneNormal, viewPlaneNormal);
-
-    const newFocalPoint: cs3DTypes.Point3 = [
-      position[0],
-      position[1],
-      position[2]
-    ];
-    const newPosition: cs3DTypes.Point3 = [
-      newFocalPoint[0] + viewPlaneNormal[0] * distance,
-      newFocalPoint[1] + viewPlaneNormal[1] * distance,
-      newFocalPoint[2] + viewPlaneNormal[2] * distance,
-    ];
-
-    // Update camera - keep existing viewUp
-    vp.setCamera({
-      focalPoint: newFocalPoint,
-      position: newPosition,
-      viewUp: camera.viewUp,
-    });
-  }
-
-  /**
-   * Update camera with orientation (6-DOF mode)
-   * Transforms each viewport's view based on tool rotation while maintaining MPR orthogonality
-   */
-  private _updateCameraWithOrientation(vp: any, position: number[], matrix: number[] | number[][]): void {
-    const camera = vp.getCamera();
-
-    if (this.updateCount <= 10) {
-      console.log(`🔄 [NavigationController] _updateCameraWithOrientation called for ${vp.id}`, {
-        hasMatrix: !!matrix,
-        matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null',
-        position: position
-      });
-    }
-
-    // Extract rotation matrix from 4x4 transformation matrix
-    const rotationMatrix = this._extractRotationMatrix(matrix);
-
-    if (this.updateCount <= 10) {
-      console.log(`   Extracted rotation matrix:`, rotationMatrix);
-    }
-
-    // Get current viewport's view direction and viewUp
-    const currentViewPlaneNormal = vec3.create();
-    vec3.subtract(currentViewPlaneNormal, camera.position, camera.focalPoint);
-    vec3.normalize(currentViewPlaneNormal, currentViewPlaneNormal);
-
-    const currentViewUp = vec3.fromValues(camera.viewUp[0], camera.viewUp[1], camera.viewUp[2]);
-
-    // Transform the viewport's current view vectors by the tool's rotation matrix
-    // This rotates each viewport according to tool orientation while preserving their relative angles
-    const transformedViewPlaneNormal = this._transformVector(currentViewPlaneNormal, rotationMatrix);
-    const transformedViewUp = this._transformVector(currentViewUp, rotationMatrix);
-
-    // Normalize transformed vectors
-    vec3.normalize(transformedViewPlaneNormal, transformedViewPlaneNormal);
-    vec3.normalize(transformedViewUp, transformedViewUp);
-
-    // Ensure viewUp is orthogonal to viewPlaneNormal (Gram-Schmidt orthogonalization)
-    const dot = vec3.dot(transformedViewUp, transformedViewPlaneNormal);
-    const projection = vec3.scale(vec3.create(), transformedViewPlaneNormal, dot);
-    const orthogonalViewUp = vec3.subtract(vec3.create(), transformedViewUp, projection);
-    vec3.normalize(orthogonalViewUp, orthogonalViewUp);
-
-    // Calculate camera position (behind the focal point)
-    const distance = vec3.length(vec3.subtract(vec3.create(), camera.position, camera.focalPoint));
-
-    const newFocalPoint: cs3DTypes.Point3 = [
-      position[0],
-      position[1],
-      position[2]
-    ];
-
-    const newPosition: cs3DTypes.Point3 = [
-      newFocalPoint[0] + transformedViewPlaneNormal[0] * distance,
-      newFocalPoint[1] + transformedViewPlaneNormal[1] * distance,
-      newFocalPoint[2] + transformedViewPlaneNormal[2] * distance,
-    ];
-
-    // Log orientation update BEFORE setting camera (for debugging)
-    if (this.updateCount <= 10) {
-      console.log(`🔄 ${vp.id} orientation update:`);
-      console.log(`   Original viewPlaneNormal: [${Array.from(currentViewPlaneNormal).map(v => v.toFixed(3)).join(', ')}]`);
-      console.log(`   Transformed viewPlaneNormal: [${Array.from(transformedViewPlaneNormal).map(v => v.toFixed(3)).join(', ')}]`);
-      console.log(`   Transformed viewUp: [${Array.from(orthogonalViewUp).map(v => v.toFixed(3)).join(', ')}]`);
-      console.log(`   focalPoint: [${newFocalPoint.map(v => v.toFixed(1)).join(', ')}]`);
-      console.log(`   position: [${newPosition.map(v => v.toFixed(1)).join(', ')}]`);
-    }
-
-    // Update camera with transformed orientation
-    try {
-      vp.setCamera({
-        focalPoint: newFocalPoint,
-        position: newPosition,
-        viewUp: [orthogonalViewUp[0], orthogonalViewUp[1], orthogonalViewUp[2]],
-      });
-
-      if (this.updateCount <= 10) {
-        console.log(`   ✅ Camera updated successfully`);
-      }
-    } catch (error) {
-      console.error(`   ❌ Error setting camera:`, error);
-      throw error;
+    } else {
+      console.warn('⚠️ No navigation mode active');
     }
   }
 
-  /**
-   * Transform a 3D vector by a 3x3 rotation matrix
-   */
-  private _transformVector(vector: vec3, rotationMatrix: number[][]): vec3 {
-    const result = vec3.create();
-    result[0] = rotationMatrix[0][0] * vector[0] + rotationMatrix[0][1] * vector[1] + rotationMatrix[0][2] * vector[2];
-    result[1] = rotationMatrix[1][0] * vector[0] + rotationMatrix[1][1] * vector[1] + rotationMatrix[1][2] * vector[2];
-    result[2] = rotationMatrix[2][0] * vector[0] + rotationMatrix[2][1] * vector[1] + rotationMatrix[2][2] * vector[2];
-    return result;
-  }
-
-  /**
-   * Extract 3x3 rotation matrix from 4x4 transformation matrix
-   * Handles both flat array and 2D array formats
-   */
-  private _extractRotationMatrix(matrix: number[] | number[][]): number[][] {
-    if (!matrix) {
-      console.warn('⚠️ Matrix is null, using identity');
-      return [
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-      ];
-    }
-
-    // Check if matrix is 2D array (4x4)
-    if (Array.isArray(matrix) && matrix.length === 4 && Array.isArray(matrix[0])) {
-      // 2D array format: [[m00, m01, m02, m03], [m10, m11, m12, m13], ...]
-      if (this.updateCount <= 10) {
-        console.log('🔍 [NavigationController] Matrix is 2D array (4x4)');
-        console.log('   First row:', matrix[0]);
-      }
-      return [
-        [matrix[0][0], matrix[0][1], matrix[0][2]],  // X-axis (right)
-        [matrix[1][0], matrix[1][1], matrix[1][2]],  // Y-axis (up)
-        [matrix[2][0], matrix[2][1], matrix[2][2]],  // Z-axis (forward)
-      ];
-    }
-
-    // Check if matrix is flat array (16 elements)
-    if (Array.isArray(matrix) && matrix.length >= 16 && typeof matrix[0] === 'number') {
-      // Flat array format: [m00, m01, m02, m03, m10, m11, m12, m13, ...]
-      if (this.updateCount <= 10) {
-        console.log('🔍 [NavigationController] Matrix is flat array (16 elements)');
-        console.log('   First 4 elements:', matrix.slice(0, 4));
-      }
-      return [
-        [matrix[0], matrix[1], matrix[2]],   // X-axis (right)
-        [matrix[4], matrix[5], matrix[6]],   // Y-axis (up)
-        [matrix[8], matrix[9], matrix[10]],  // Z-axis (forward)
-      ];
-    }
-
-    console.warn('⚠️ Invalid matrix format, using identity. Matrix:', {
-      isArray: Array.isArray(matrix),
-      length: Array.isArray(matrix) ? matrix.length : 'N/A',
-      firstElement: Array.isArray(matrix) && matrix.length > 0 ? matrix[0] : 'N/A'
-    });
-
-    return [
-      [1, 0, 0],
-      [0, 1, 0],
-      [0, 0, 1],
-    ];
-  }
+  // NOTE: Camera update methods have been moved to CameraFollowingMode class
+  // These methods are no longer needed in NavigationController
 
   /**
    * Set center point for tracking simulation
@@ -701,58 +504,7 @@ class NavigationController {
     return null;
   }
 
-  /**
-   * Clamp position to volume bounds to prevent "No imageId found" errors
-   */
-  private _clampToVolumeBounds(position: number[], renderingEngine: any): number[] | null {
-    try {
-      const viewports = renderingEngine.getViewports();
-      if (viewports.length === 0) {
-        return null;
-      }
-
-      // Get bounds from the first volume viewport
-      for (const viewport of viewports) {
-        if (viewport.type === 'orthographic' || viewport.type === 'volume3d') {
-          const defaultActor = viewport.getDefaultActor?.();
-          if (defaultActor && defaultActor.actor) {
-            const bounds = defaultActor.actor.getBounds();
-            if (bounds && bounds.length === 6) {
-              // bounds = [xMin, xMax, yMin, yMax, zMin, zMax]
-              const [xMin, xMax, yMin, yMax, zMin, zMax] = bounds;
-
-              // Add a small margin to avoid edge cases
-              const margin = 1.0; // mm
-
-              const clampedPosition = [
-                Math.max(xMin + margin, Math.min(xMax - margin, position[0])),
-                Math.max(yMin + margin, Math.min(yMax - margin, position[1])),
-                Math.max(zMin + margin, Math.min(zMax - margin, position[2])),
-              ];
-
-              // Log if clamping occurred
-              if (this.updateCount % 100 === 0 && (
-                clampedPosition[0] !== position[0] ||
-                clampedPosition[1] !== position[1] ||
-                clampedPosition[2] !== position[2]
-              )) {
-                console.warn(`⚠️ Position clamped to volume bounds:`);
-                console.warn(`   Original: [${position.map(v => v.toFixed(1)).join(', ')}]`);
-                console.warn(`   Clamped:  [${clampedPosition.map(v => v.toFixed(1)).join(', ')}]`);
-                console.warn(`   Bounds: X[${xMin.toFixed(1)}, ${xMax.toFixed(1)}] Y[${yMin.toFixed(1)}, ${yMax.toFixed(1)}] Z[${zMin.toFixed(1)}, ${zMax.toFixed(1)}]`);
-              }
-
-              return clampedPosition;
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('❌ Error getting volume bounds:', error);
-    }
-
-    return null;
-  }
+  // NOTE: _clampToVolumeBounds has been moved to NavigationMode base class
 
   /**
    * Load coordinate transformation from case data
