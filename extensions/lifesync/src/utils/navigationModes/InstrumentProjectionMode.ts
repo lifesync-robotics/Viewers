@@ -1,10 +1,15 @@
 /**
  * Instrument Projection Mode
  *
- * Tool is projected on fixed viewport with axis and extension line.
- * Viewport camera remains fixed while tool representation is overlaid.
+ * Displays tool projection (Z-axis and extension line) as SVG overlay on viewports.
+ * Camera is FREE - user can pan/zoom/rotate viewports as needed.
+ * Projection dynamically updates based on tool position and current viewport state.
  *
- * Phase 2: Full projection rendering with SVG overlay
+ * Key features:
+ * - Real-time SVG projection overlay (Z-axis, origin marker, arrowhead)
+ * - Dynamic 3D to 2D projection using viewport.worldToCanvas()
+ * - Camera manipulation allowed - projection adapts automatically
+ * - Configurable extension line length (default: 100mm)
  */
 
 import NavigationMode from './NavigationMode';
@@ -14,7 +19,6 @@ export class InstrumentProjectionMode extends NavigationMode {
   private toolProjectionRenderer: ToolProjectionRenderer | null = null;
   private lastPosition: number[] | null = null;
   private extensionLength: number = 100; // 100mm = 10cm default
-  private savedCameraStates: Map<string, any> = new Map(); // Save camera states to restore later
 
   constructor(servicesManager: any, coordinateTransformer: any) {
     super(servicesManager, coordinateTransformer);
@@ -27,96 +31,27 @@ export class InstrumentProjectionMode extends NavigationMode {
   onModeEnter(): void {
     console.log('🎯🎯🎯 Instrument Projection mode activated');
     console.log(`   Extension length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
-    console.log('   Viewport cameras will remain fixed - only projection will update');
+    console.log('   📹 Camera is FREE - user can pan/zoom/rotate viewports');
+    console.log('   📐 Projection will dynamically update based on viewport state');
     this.lastPosition = null;
     this.updateCount = 0; // Reset update count for fresh logs
 
-    // Initialize projection renderer first
+    // Initialize projection renderer
     this.toolProjectionRenderer = new ToolProjectionRenderer(
       this.servicesManager,
       this.extensionLength
     );
 
-    // Try to save camera states immediately
-    // If viewports aren't ready yet, we'll save them on first tracking update
     const viewports = this.getViewports();
     console.log(`   🔍 Found ${viewports.length} viewports on mode enter`);
-
-    if (viewports.length > 0) {
-      this._saveCameraStates();
-      const savedCount = this.savedCameraStates.size;
-      if (savedCount > 0) {
-        console.log(`   ✅ Saved camera states for ${savedCount} viewports`);
-        // Log each saved viewport for debugging
-        this.savedCameraStates.forEach((state, vpId) => {
-          console.log(`      - ${vpId}: focal=[${state.focalPoint.map(v => v.toFixed(1)).join(', ')}]`);
-        });
-      } else {
-        console.warn(`   ⚠️ No camera states were saved (${viewports.length} viewports found but none usable)`);
-        console.log(`   📝 Will save camera states on first tracking update instead`);
-      }
-    } else {
-      console.log('   ⚠️ No viewports found yet - will save camera states on first tracking update');
-    }
-
     console.log('   🎯 Instrument Projection mode is now active and ready');
   }
 
-  /**
-   * Save current camera states for all viewports
-   * This ensures cameras remain fixed during projection mode
-   */
-  private _saveCameraStates(): void {
-    const viewports = this.getViewports();
-
-    if (viewports.length === 0) {
-      console.warn('⚠️ [Instrument Projection] No viewports found when trying to save camera states');
-      return;
-    }
-
-    // Don't clear existing states - merge with new ones
-    // This allows saving states progressively as viewports become available
-    let savedCount = 0;
-
-    viewports.forEach(vp => {
-      if (!vp || vp.type === 'stack') {
-        return;
-      }
-
-      try {
-        const camera = vp.getCamera();
-
-        if (!camera || !camera.focalPoint || !camera.position || !camera.viewUp) {
-          console.warn(`⚠️ [Instrument Projection] Invalid camera for ${vp.id}`);
-          return;
-        }
-
-        this.savedCameraStates.set(vp.id, {
-          focalPoint: [...camera.focalPoint],
-          position: [...camera.position],
-          viewUp: [...camera.viewUp],
-        });
-        savedCount++;
-
-        if (this.updateCount <= 2) {
-          console.log(`📸 Saved camera state for ${vp.id}:`, {
-            focalPoint: camera.focalPoint,
-            position: camera.position
-          });
-        }
-      } catch (error) {
-        console.error(`❌ Failed to save camera state for ${vp.id}:`, error);
-      }
-    });
-
-    if (savedCount === 0) {
-      console.warn('⚠️ [Instrument Projection] No camera states were saved!');
-    }
-  }
+  // NOTE: Camera state saving/restoring removed - camera is now free to move
+  // Projection rendering handles dynamic viewport changes automatically
 
   onModeExit(): void {
     console.log('🎯 Instrument Projection mode deactivated');
-    console.log('   Restoring camera states (if any)');
     this.lastPosition = null;
 
     // Cleanup projection renderer
@@ -124,9 +59,6 @@ export class InstrumentProjectionMode extends NavigationMode {
       this.toolProjectionRenderer.cleanup();
       this.toolProjectionRenderer = null;
     }
-
-    // Clear saved camera states
-    this.savedCameraStates.clear();
   }
 
   cleanup(): void {
@@ -140,7 +72,8 @@ export class InstrumentProjectionMode extends NavigationMode {
 
   /**
    * Handle tracking update - project tool on viewport
-   * IMPORTANT: This mode does NOT move the camera - only updates projection overlay
+   * IMPORTANT: This mode updates projection overlay dynamically based on viewport state
+   * Camera is FREE - user can pan/zoom/rotate, projection updates accordingly
    */
   handleTrackingUpdate(
     position: number[],
@@ -153,37 +86,21 @@ export class InstrumentProjectionMode extends NavigationMode {
     if (this.updateCount === 1) {
       console.log('🎯🎯🎯 [Instrument Projection Mode] HANDLE TRACKING UPDATE CALLED');
       console.log('   This confirms Instrument Projection mode is active!');
-      console.log('   Cameras will remain FIXED - only projection updates');
+      console.log('   📹 Camera is FREE - projection updates dynamically with viewport changes');
     }
-
-    // CRITICAL: If camera states haven't been saved yet (e.g., viewports weren't ready on mode enter),
-    // save them NOW before doing anything else
-    if (this.savedCameraStates.size === 0) {
-      console.log('📸 [Instrument Projection] Saving camera states on first tracking update...');
-      this._saveCameraStates();
-      console.log(`   ✅ Saved camera states for ${this.savedCameraStates.size} viewports`);
-
-      if (this.savedCameraStates.size === 0) {
-        console.error('   ❌ ERROR: Still no camera states saved! Viewports may not be available.');
-      }
-    }
-
-    // Ensure cameras remain fixed - restore saved states on EVERY update
-    // This aggressively prevents any camera movement
-    this._restoreCameraStates();
 
     // Store initial position
     if (!this.lastPosition) {
       this.lastPosition = position;
       console.log(`📍 [Instrument Projection] Initial position: [${position.map(v => v.toFixed(1)).join(', ')}]`);
-      console.log('   ✅ Cameras are fixed - only projection will update');
-      console.log(`   Saved camera states for ${this.savedCameraStates.size} viewports`);
+      console.log('   📐 Projection will update based on tool position and viewport state');
     }
 
     // Extract tool representation from matrix
     const toolRepresentation = this._extractToolRepresentation(position, matrix);
 
-    // Update projection rendering ONLY - do NOT touch camera
+    // Update projection rendering - ToolProjectionRenderer will handle
+    // viewport.worldToCanvas() conversion dynamically based on current camera state
     if (this.toolProjectionRenderer) {
       this.toolProjectionRenderer.updateProjection(toolRepresentation);
     }
@@ -194,82 +111,14 @@ export class InstrumentProjectionMode extends NavigationMode {
       console.log(`   Tool position: [${position.map(v => v.toFixed(1)).join(', ')}]`);
       console.log(`   Z-axis: [${toolRepresentation.zAxis.map(v => v.toFixed(3)).join(', ')}]`);
       console.log(`   Update count: ${this.updateCount}`);
-      console.log('   ✅ Camera fixed - projection only');
+      console.log('   📐 Dynamic projection based on viewport state');
     }
 
     this.lastPosition = position;
   }
 
-  /**
-   * Restore saved camera states to keep cameras fixed
-   * This is called on every update to aggressively prevent camera movement
-   */
-  private _restoreCameraStates(): void {
-    if (this.savedCameraStates.size === 0) {
-      if (this.updateCount <= 5) {
-        console.warn('⚠️ [Instrument Projection] No saved camera states yet');
-      }
-      return; // No saved states
-    }
-
-    const viewports = this.getViewports();
-
-    viewports.forEach(vp => {
-      if (!vp || vp.type === 'stack') {
-        return;
-      }
-
-      const savedState = this.savedCameraStates.get(vp.id);
-      if (!savedState) {
-        // First time seeing this viewport - save its state now
-        try {
-          const camera = vp.getCamera();
-          this.savedCameraStates.set(vp.id, {
-            focalPoint: [...camera.focalPoint],
-            position: [...camera.position],
-            viewUp: [...camera.viewUp],
-          });
-          if (this.updateCount <= 5) {
-            console.log(`📸 [Instrument Projection] Saved camera state for ${vp.id} (late)`);
-          }
-        } catch (error) {
-          // Ignore
-        }
-        return;
-      }
-
-      try {
-        const camera = vp.getCamera();
-
-        // Check if camera has moved from saved state
-        const focalPointDiff = Math.sqrt(
-          Math.pow(camera.focalPoint[0] - savedState.focalPoint[0], 2) +
-          Math.pow(camera.focalPoint[1] - savedState.focalPoint[1], 2) +
-          Math.pow(camera.focalPoint[2] - savedState.focalPoint[2], 2)
-        );
-
-        // Only restore if camera has moved (to avoid unnecessary updates)
-        if (focalPointDiff > 0.01) {
-          // CRITICAL: Restore camera to saved state to keep it fixed
-          vp.setCamera({
-            focalPoint: savedState.focalPoint,
-            position: savedState.position,
-            viewUp: savedState.viewUp,
-          });
-
-          // DO NOT call vp.render() here - it will be called by the viewport automatically
-
-          if (this.updateCount <= 10 || this.updateCount % 100 === 0) {
-            console.warn(`⚠️ [Instrument Projection] Camera moved by ${focalPointDiff.toFixed(2)}mm on ${vp.id}, restored to fixed position`);
-          }
-        }
-      } catch (error) {
-        if (this.updateCount <= 5) {
-          console.warn(`⚠️ [Instrument Projection] Error restoring camera for ${vp.id}:`, error);
-        }
-      }
-    });
-  }
+  // NOTE: Camera restoration removed - camera is now free to move
+  // ToolProjectionRenderer handles dynamic projection based on current viewport state
 
   /**
    * Extract tool representation from matrix

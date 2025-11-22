@@ -861,7 +861,7 @@ function PanelTracking() {
                 <div className="flex-1">
                   <span className="text-sm text-gray-300">🎯 Instrument Projection</span>
                   <div className="text-xs text-gray-500 mt-1">
-                    Tool projected on fixed viewport - camera stays fixed
+                    Tool projected on viewport - camera free to move
                   </div>
                 </div>
               </label>
