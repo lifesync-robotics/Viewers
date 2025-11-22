@@ -243,64 +243,6 @@ export class ToolProjectionRenderer {
       this._renderSimpleProjectionFallback(viewport, origin, tipPoint);
     }
   }
-      const t = numerator / denominator;
-      const toolLength = vec3.distance(originVec, tipVec);
-
-      if (debugCount < 3) {
-        console.log(`   t: ${t.toFixed(2)}, toolLength: ${toolLength.toFixed(2)}`);
-      }
-
-      // Check if intersection is within tool length
-      if (t < 0 || t > toolLength) {
-        // Intersection is outside tool range
-        // Check if tool is close enough to show projection anyway
-        const originDistance = Math.abs(vec3.dot(planeNormal,
-          vec3.subtract(vec3.create(), originVec, planePoint)));
-        const tipDistance = Math.abs(vec3.dot(planeNormal,
-          vec3.subtract(vec3.create(), tipVec, planePoint)));
-
-        if (debugCount < 3) {
-          console.log(`   → Intersection outside range`);
-          console.log(`   Origin distance: ${originDistance.toFixed(2)}mm, Tip distance: ${tipDistance.toFixed(2)}mm`);
-        }
-
-        const MIN_DISTANCE = 5.0; // 5mm threshold
-        if (originDistance < MIN_DISTANCE || tipDistance < MIN_DISTANCE) {
-          // Close enough - show projected line
-          if (debugCount < 3) {
-            console.log(`   → Close enough, showing projected line (dashed)`);
-          }
-          this._renderProjectedLine(viewport, originVec, tipVec);
-        } else {
-          // Too far - don't show
-          if (debugCount < 3) {
-            console.log(`   → Too far, not showing`);
-          }
-          this._clearViewportProjection(viewport.id);
-        }
-        return;
-      }
-
-      // Calculate intersection point
-      const intersectionPoint = vec3.scaleAndAdd(
-        vec3.create(),
-        originVec,
-        toolDirection,
-        t
-      );
-
-      if (debugCount < 3) {
-        console.log(`   → Intersection found, showing solid line`);
-      }
-
-      // Render line from origin to intersection point
-      this._renderIntersectionLine(viewport, originVec, intersectionPoint);
-
-    } catch (error) {
-      console.error(`❌ Error rendering projection on ${viewport.id}:`, error);
-      this._clearViewportProjection(viewport.id);
-    }
-  }
 
   /**
    * Render projected line (tool is parallel to plane or close to plane)
