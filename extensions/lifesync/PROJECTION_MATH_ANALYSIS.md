@@ -117,7 +117,7 @@ const planePoint = camera.focalPoint;       // P0
 // 2. 计算工具线段与平面的交点
 // 线段: P = origin + t * zAxis, t ∈ [0, extensionLength]
 // 平面: n · (P - P0) = 0
-// 
+//
 // n · (origin + t * zAxis - P0) = 0
 // n · (origin - P0) + t * (n · zAxis) = 0
 // t = -[n · (origin - P0)] / (n · zAxis)
@@ -139,7 +139,7 @@ if (Math.abs(denominator) < 0.001) {
   }
 } else {
   const t = numerator / denominator;
-  
+
   if (t < 0 || t > extensionLength) {
     // 交点在工具延长线之外
     // 可以选择：
@@ -147,7 +147,7 @@ if (Math.abs(denominator) < 0.001) {
     // B) 显示原点或端点（如果在平面附近）
     return;
   }
-  
+
   // 计算交点
   const intersectionPoint = vec3.scaleAndAdd(
     vec3.create(),
@@ -155,10 +155,10 @@ if (Math.abs(denominator) < 0.001) {
     zAxis,
     t
   );
-  
+
   // 投影到 2D
   const intersectionCanvas = viewport.worldToCanvas(intersectionPoint);
-  
+
   // 绘制：原点到交点的投影
   const originCanvas = viewport.worldToCanvas(origin);
   drawLine(originCanvas, intersectionCanvas);
@@ -268,4 +268,3 @@ worldToCanvas() 显示：工具看起来在平面上
 - 工具在 Axial 平面下方 10cm
 - **预期 Axial:** 不显示或显示为浅灰色投影
 - **预期:** 添加深度标签 "-100mm"
-

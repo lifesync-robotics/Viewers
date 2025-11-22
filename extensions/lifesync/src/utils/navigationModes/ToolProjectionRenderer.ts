@@ -48,7 +48,7 @@ export class ToolProjectionRenderer {
       if (viewport.type === 'stack') {
         return; // Skip stack viewports
       }
-      
+
       // Check if this is a 3D viewport by checking viewport class
       const viewportClassName = viewport.constructor.name;
       if (viewportClassName === 'VolumeViewport3D') {
@@ -81,7 +81,7 @@ export class ToolProjectionRenderer {
 
   /**
    * Render projection on a single viewport with correct plane intersection math
-   * 
+   *
    * For MPR viewports, we need to:
    * 1. Calculate if/where the tool intersects the MPR slice plane
    * 2. Draw the intersection correctly, not just project 3D points
@@ -121,6 +121,15 @@ export class ToolProjectionRenderer {
       const numerator = vec3.dot(planeNormal, originToPlane);
       const denominator = vec3.dot(planeNormal, toolDirection);
 
+      // Debug logging (first few times)
+      const debugCount = (window as any).__projectionDebugCount || 0;
+      if (debugCount < 3) {
+        console.log(`🔍 [Projection Debug ${viewport.id}]`);
+        console.log(`   Denominator: ${denominator.toFixed(4)} (threshold: 0.001)`);
+        console.log(`   Numerator: ${numerator.toFixed(2)}`);
+        (window as any).__projectionDebugCount = debugCount + 1;
+      }
+
       // Check if line is parallel to plane
       const PARALLEL_THRESHOLD = 0.001;
       if (Math.abs(denominator) < PARALLEL_THRESHOLD) {
@@ -128,11 +137,21 @@ export class ToolProjectionRenderer {
         // Check if origin is close to plane (within 1mm)
         const distanceToPlane = Math.abs(vec3.dot(planeNormal, originToPlane));
         
+        if (debugCount < 3) {
+          console.log(`   → Parallel to plane, distance: ${distanceToPlane.toFixed(2)}mm`);
+        }
+
         if (distanceToPlane < 1.0) {
           // Tool is on or very close to plane - project entire line
+          if (debugCount < 3) {
+            console.log(`   → Showing projected line (dashed)`);
+          }
           this._renderProjectedLine(viewport, originVec, tipVec);
         } else {
           // Tool is parallel but far from plane - don't show
+          if (debugCount < 3) {
+            console.log(`   → Too far, not showing`);
+          }
           this._clearViewportProjection(viewport.id);
         }
         return;
@@ -142,6 +161,10 @@ export class ToolProjectionRenderer {
       const t = numerator / denominator;
       const toolLength = vec3.distance(originVec, tipVec);
       
+      if (debugCount < 3) {
+        console.log(`   t: ${t.toFixed(2)}, toolLength: ${toolLength.toFixed(2)}`);
+      }
+
       // Check if intersection is within tool length
       if (t < 0 || t > toolLength) {
         // Intersection is outside tool range
@@ -151,12 +174,23 @@ export class ToolProjectionRenderer {
         const tipDistance = Math.abs(vec3.dot(planeNormal, 
           vec3.subtract(vec3.create(), tipVec, planePoint)));
         
+        if (debugCount < 3) {
+          console.log(`   → Intersection outside range`);
+          console.log(`   Origin distance: ${originDistance.toFixed(2)}mm, Tip distance: ${tipDistance.toFixed(2)}mm`);
+        }
+
         const MIN_DISTANCE = 5.0; // 5mm threshold
         if (originDistance < MIN_DISTANCE || tipDistance < MIN_DISTANCE) {
           // Close enough - show projected line
+          if (debugCount < 3) {
+            console.log(`   → Close enough, showing projected line (dashed)`);
+          }
           this._renderProjectedLine(viewport, originVec, tipVec);
         } else {
           // Too far - don't show
+          if (debugCount < 3) {
+            console.log(`   → Too far, not showing`);
+          }
           this._clearViewportProjection(viewport.id);
         }
         return;
@@ -170,11 +204,15 @@ export class ToolProjectionRenderer {
         t
       );
 
+      if (debugCount < 3) {
+        console.log(`   → Intersection found, showing solid line`);
+      }
+
       // Render line from origin to intersection point
       this._renderIntersectionLine(viewport, originVec, intersectionPoint);
 
     } catch (error) {
-      console.warn(`⚠️ Error rendering projection on ${viewport.id}:`, error);
+      console.error(`❌ Error rendering projection on ${viewport.id}:`, error);
       this._clearViewportProjection(viewport.id);
     }
   }
@@ -192,7 +230,7 @@ export class ToolProjectionRenderer {
     }
 
     const svgElement = this._getOrCreateSVGOverlay(viewport);
-    
+
     // Draw as dashed line to indicate it's a projection, not intersection
     this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true);
     this._drawOriginCircle(svgElement, viewport.id, originCanvas);
@@ -211,7 +249,7 @@ export class ToolProjectionRenderer {
     }
 
     const svgElement = this._getOrCreateSVGOverlay(viewport);
-    
+
     // Draw as solid line to indicate actual intersection
     this._drawProjectionLine(svgElement, viewport.id, originCanvas, intersectionCanvas, false);
     this._drawOriginCircle(svgElement, viewport.id, originCanvas);
@@ -349,7 +387,7 @@ export class ToolProjectionRenderer {
     line.setAttribute('y1', origin[1].toString());
     line.setAttribute('x2', tip[0].toString());
     line.setAttribute('y2', tip[1].toString());
-    
+
     // Style based on line type
     if (isDashed) {
       // Dashed line = projection (tool parallel to plane or near plane)
@@ -357,14 +395,14 @@ export class ToolProjectionRenderer {
       line.setAttribute('stroke-width', '2');
       line.setAttribute('stroke-dasharray', '8,4'); // Dashed line
       line.setAttribute('opacity', '0.7');
+      line.setAttribute('marker-end', `url(#arrowhead-dashed-${viewportId})`);
     } else {
       // Solid line = intersection (tool crosses plane)
       line.setAttribute('stroke', '#00ff00'); // Green color for intersection
       line.setAttribute('stroke-width', '3');
       line.setAttribute('opacity', '0.9');
+      line.setAttribute('marker-end', `url(#arrowhead-solid-${viewportId})`);
     }
-    
-    line.setAttribute('marker-end', `url(#arrowhead-${viewportId})`);
 
     // Create arrowhead marker
     this._createArrowheadMarker(svg, viewportId, isDashed);
@@ -423,7 +461,7 @@ export class ToolProjectionRenderer {
    */
   private _createArrowheadMarker(svg: SVGElement, viewportId: string, isDashed: boolean = false): void {
     const markerId = isDashed ? `arrowhead-dashed-${viewportId}` : `arrowhead-solid-${viewportId}`;
-    
+
     // Check if marker already exists
     const existingMarker = svg.querySelector(`#${markerId}`);
     if (existingMarker) {
