@@ -1,7 +1,9 @@
 // https://babeljs.io/docs/en/options#babelrcroots
 module.exports = {
   babelrcRoots: ['./platform/*', './extensions/*', './modes/*'],
-  presets: ['@babel/preset-env', '@babel/preset-react', '@babel/preset-typescript'],
+  // presets: ['@babel/preset-env', '@babel/preset-react' , {runtime: 'automatic'}, '@babel/preset-typescript'],
+  presets: ['@babel/preset-env', '@babel/preset-react' , '@babel/preset-typescript'],
+  
   plugins: [
     ['@babel/plugin-transform-class-properties', { loose: true }],
     '@babel/plugin-transform-typescript',

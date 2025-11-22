@@ -109,7 +109,7 @@ const translation = crosshairData.center;  // [x, y, z]
 
 ### Function: `constructScrewTransform()`
 
-**Location**: `extensions/cornerstone/src/ScrewManagementPanel.tsx`
+**Location**: `extensions/lifesync/src/components/ScrewManagement/ScrewManagementPanel.tsx`
 
 **Purpose**: Constructs the screw transform matrix from viewport cameras and crosshair position
 

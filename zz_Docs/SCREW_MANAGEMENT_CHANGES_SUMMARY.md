@@ -218,7 +218,7 @@ const clearAllScrews = () => {
 
 ### Created Files
 
-1. **`extensions/cornerstone/src/ScrewManagementPanel.tsx`** (NEW)
+1. **`extensions/lifesync/src/components/ScrewManagement/ScrewManagementPanel.tsx`** (NEW)
    - Complete screw management UI
    - Integrates viewport and model services
    - Implements synchronized deletion
@@ -256,7 +256,7 @@ const clearAllScrews = () => {
    **AFTER:**
    ```javascript
    import ViewportStatePanel from './viewportStatePanel';
-   import ScrewManagementPanel from './ScrewManagementPanel';  // ← Added
+   import ScrewManagementPanel from '../components/ScrewManagement/ScrewManagementPanel';  // ← Added
 
    // ... in return array:
    {

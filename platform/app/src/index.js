@@ -5,6 +5,7 @@ import 'regenerator-runtime/runtime';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import React from 'react';
+import LifeSyncRobotics from '../../../extensions/lifesync/src/components/Icons/LifeSyncRobotics';
 
 /**
  * EXTENSIONS AND MODES
@@ -19,6 +20,10 @@ import { modes as defaultModes, extensions as defaultExtensions } from './plugin
 import loadDynamicConfig from './loadDynamicConfig';
 export { history } from './utils/history';
 export { preserveQueryParameters, preserveQueryStrings } from './utils/preserveQueryParameters';
+
+if (typeof window !== 'undefined') {
+  window['LifeSyncRobotics'] = LifeSyncRobotics;
+}
 
 loadDynamicConfig(window.config).then(config_json => {
   // Reset Dynamic config if defined

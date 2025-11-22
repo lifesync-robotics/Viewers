@@ -20,7 +20,7 @@ A new function `constructScrewTransform()` that builds proper screw transformati
 ## 📋 Implementation Details
 
 ### File Modified
-`extensions/cornerstone/src/ScrewManagementPanel.tsx`
+`extensions/lifesync/src/components/ScrewManagement/ScrewManagementPanel.tsx`
 
 ### Changes Made
 

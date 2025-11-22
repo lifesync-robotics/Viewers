@@ -15,7 +15,7 @@
 ### 1. Core Component
 
 #### `ScrewManagementPanel.tsx`
-**Location:** `extensions/cornerstone/src/ScrewManagementPanel.tsx`
+**Location:** `extensions/lifesync/src/components/ScrewManagement/ScrewManagementPanel.tsx`
 
 **Features Implemented:**
 - ✅ Save screw placements with radius and length (validated, required)

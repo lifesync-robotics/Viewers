@@ -6,7 +6,7 @@
  */
 
 import { useSystem } from '@ohif/core';
-import type ModelStateService from '../modelStateService';
+import type { ModelStateService } from '@ohif/extension-lifesync';
 import type CornerstoneServices from '../types/CornerstoneServices';
 
 /**

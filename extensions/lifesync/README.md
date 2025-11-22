@@ -68,7 +68,9 @@ When making changes to LifeSync functionality:
 
 This extension was created during the OHIF refactoring to separate LifeSync functionality from core OHIF extensions. Components were moved from:
 
-- `extensions/cornerstone/src/` (ScrewManagementPanel, NavigationComponent)
-- `extensions/default/src/Panels/` (RegistrationPanel, TrackingPanel)
+- `extensions/cornerstone/src/` (Old location - moved to lifesync)
+- `extensions/default/src/Panels/` (Old location - moved to lifesync)
+
+Current location: `extensions/lifesync/src/components/ScrewManagement/ScrewManagementPanel.tsx`
 
 All imports have been updated to reference the new extension location.
