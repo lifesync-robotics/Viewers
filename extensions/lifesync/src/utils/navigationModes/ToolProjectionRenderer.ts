@@ -136,7 +136,7 @@ export class ToolProjectionRenderer {
         // Tool is parallel to plane
         // Check if origin is close to plane (within 1mm)
         const distanceToPlane = Math.abs(vec3.dot(planeNormal, originToPlane));
-        
+
         if (debugCount < 3) {
           console.log(`   → Parallel to plane, distance: ${distanceToPlane.toFixed(2)}mm`);
         }
@@ -160,7 +160,7 @@ export class ToolProjectionRenderer {
       // Calculate intersection parameter t
       const t = numerator / denominator;
       const toolLength = vec3.distance(originVec, tipVec);
-      
+
       if (debugCount < 3) {
         console.log(`   t: ${t.toFixed(2)}, toolLength: ${toolLength.toFixed(2)}`);
       }
@@ -169,11 +169,11 @@ export class ToolProjectionRenderer {
       if (t < 0 || t > toolLength) {
         // Intersection is outside tool range
         // Check if tool is close enough to show projection anyway
-        const originDistance = Math.abs(vec3.dot(planeNormal, 
+        const originDistance = Math.abs(vec3.dot(planeNormal,
           vec3.subtract(vec3.create(), originVec, planePoint)));
-        const tipDistance = Math.abs(vec3.dot(planeNormal, 
+        const tipDistance = Math.abs(vec3.dot(planeNormal,
           vec3.subtract(vec3.create(), tipVec, planePoint)));
-        
+
         if (debugCount < 3) {
           console.log(`   → Intersection outside range`);
           console.log(`   Origin distance: ${originDistance.toFixed(2)}mm, Tip distance: ${tipDistance.toFixed(2)}mm`);
@@ -221,39 +221,55 @@ export class ToolProjectionRenderer {
    * Render projected line (tool is parallel to plane or close to plane)
    */
   private _renderProjectedLine(viewport: any, origin: vec3, tip: vec3): void {
-    const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
-    const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
+    try {
+      const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
+      const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
 
-    if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(tipCanvas)) {
-      this._clearViewportProjection(viewport.id);
-      return;
+      if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(tipCanvas)) {
+        this._clearViewportProjection(viewport.id);
+        return;
+      }
+
+      const svgElement = this._getOrCreateSVGOverlay(viewport);
+      if (!svgElement) {
+        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        return;
+      }
+
+      // Draw as dashed line to indicate it's a projection, not intersection
+      this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true);
+      this._drawOriginCircle(svgElement, viewport.id, originCanvas);
+    } catch (error) {
+      console.error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
     }
-
-    const svgElement = this._getOrCreateSVGOverlay(viewport);
-
-    // Draw as dashed line to indicate it's a projection, not intersection
-    this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true);
-    this._drawOriginCircle(svgElement, viewport.id, originCanvas);
   }
 
   /**
    * Render intersection line (tool crosses the plane)
    */
   private _renderIntersectionLine(viewport: any, origin: vec3, intersection: vec3): void {
-    const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
-    const intersectionCanvas = viewport.worldToCanvas([intersection[0], intersection[1], intersection[2]]);
+    try {
+      const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
+      const intersectionCanvas = viewport.worldToCanvas([intersection[0], intersection[1], intersection[2]]);
 
-    if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(intersectionCanvas)) {
-      this._clearViewportProjection(viewport.id);
-      return;
+      if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(intersectionCanvas)) {
+        this._clearViewportProjection(viewport.id);
+        return;
+      }
+
+      const svgElement = this._getOrCreateSVGOverlay(viewport);
+      if (!svgElement) {
+        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        return;
+      }
+
+      // Draw as solid line to indicate actual intersection
+      this._drawProjectionLine(svgElement, viewport.id, originCanvas, intersectionCanvas, false);
+      this._drawOriginCircle(svgElement, viewport.id, originCanvas);
+      this._drawIntersectionMarker(svgElement, viewport.id, intersectionCanvas);
+    } catch (error) {
+      console.error(`❌ Error in _renderIntersectionLine for ${viewport.id}:`, error);
     }
-
-    const svgElement = this._getOrCreateSVGOverlay(viewport);
-
-    // Draw as solid line to indicate actual intersection
-    this._drawProjectionLine(svgElement, viewport.id, originCanvas, intersectionCanvas, false);
-    this._drawOriginCircle(svgElement, viewport.id, originCanvas);
-    this._drawIntersectionMarker(svgElement, viewport.id, intersectionCanvas);
   }
 
   /**
