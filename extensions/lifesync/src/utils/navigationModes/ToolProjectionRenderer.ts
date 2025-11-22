@@ -425,21 +425,6 @@ export class ToolProjectionRenderer {
 
     // Add line to SVG
     svg.appendChild(line);
-    originCircle.setAttribute('data-id', `projection-origin-${viewportId}`);
-    originCircle.setAttribute('cx', origin[0].toString());
-    originCircle.setAttribute('cy', origin[1].toString());
-    originCircle.setAttribute('r', '5');
-    originCircle.setAttribute('fill', '#00ff00');
-    originCircle.setAttribute('stroke', '#ffffff');
-    originCircle.setAttribute('stroke-width', '2');
-
-    // Remove existing origin circle if any
-    const existingOrigin = svg.querySelector(`[data-id="projection-origin-${viewportId}"]`);
-    if (existingOrigin) {
-      existingOrigin.remove();
-    }
-
-    svg.appendChild(originCircle);
   }
 
   /**
