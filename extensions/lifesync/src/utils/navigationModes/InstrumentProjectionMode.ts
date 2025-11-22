@@ -18,7 +18,7 @@ import { ToolProjectionRenderer, ToolRepresentation } from './ToolProjectionRend
 export class InstrumentProjectionMode extends NavigationMode {
   private toolProjectionRenderer: ToolProjectionRenderer | null = null;
   private lastPosition: number[] | null = null;
-  private extensionLength: number = 100; // 100mm = 10cm default
+  private extensionLength: number = 200; // 200mm = 20cm default (increased for better visibility)
 
   constructor(servicesManager: any, coordinateTransformer: any) {
     super(servicesManager, coordinateTransformer);

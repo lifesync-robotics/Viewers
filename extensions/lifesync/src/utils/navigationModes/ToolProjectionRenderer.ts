@@ -18,9 +18,10 @@ export interface ToolRepresentation {
 export class ToolProjectionRenderer {
   private servicesManager: any;
   private projectionSVGElements: Map<string, SVGElement> = new Map(); // viewportId -> SVG element
-  private extensionLength: number = 100; // 100mm = 10cm default
+  private extensionLength: number = 200; // 200mm = 20cm default (increased for better visibility)
+  private debugCount: Map<string, number> = new Map(); // Per-viewport debug counter
 
-  constructor(servicesManager: any, extensionLength: number = 100) {
+  constructor(servicesManager: any, extensionLength: number = 200) {
     this.servicesManager = servicesManager;
     this.extensionLength = extensionLength;
   }
@@ -92,7 +93,23 @@ export class ToolProjectionRenderer {
     tipPoint: number[],
     zAxis: number[]
   ): void {
+    // Increment debug counter for this viewport
+    const currentCount = this.debugCount.get(viewport.id) || 0;
+    this.debugCount.set(viewport.id, currentCount + 1);
+    const shouldLog = currentCount < 5; // Log first 5 times per viewport
+
     try {
+      // Get viewport name for debugging
+      const viewportName = viewport.id || 'unknown';
+      
+      if (shouldLog) {
+        console.log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
+        console.log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
+        console.log(`📍 Tool Tip: [${tipPoint.map(v => v.toFixed(1)).join(', ')}]`);
+        console.log(`📍 Tool Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
+        console.log(`📏 Extension Length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
+      }
+
       // Get viewport camera info
       const camera = viewport.getCamera();
       const planeNormal = vec3.fromValues(
@@ -106,11 +123,31 @@ export class ToolProjectionRenderer {
         camera.focalPoint[2]
       );
 
+      if (shouldLog) {
+        console.log(`\n📐 Viewport Plane Info:`);
+        console.log(`   Plane Normal: [${planeNormal[0].toFixed(3)}, ${planeNormal[1].toFixed(3)}, ${planeNormal[2].toFixed(3)}]`);
+        console.log(`   Plane Point (focal): [${planePoint[0].toFixed(1)}, ${planePoint[1].toFixed(1)}, ${planePoint[2].toFixed(1)}]`);
+        
+        // Identify plane type based on normal
+        let planeType = 'Unknown';
+        if (Math.abs(planeNormal[2]) > 0.9) planeType = 'Axial (Z-normal)';
+        else if (Math.abs(planeNormal[0]) > 0.9) planeType = 'Sagittal (X-normal)';
+        else if (Math.abs(planeNormal[1]) > 0.9) planeType = 'Coronal (Y-normal)';
+        console.log(`   Plane Type: ${planeType}`);
+      }
+
       // Calculate tool line intersection with MPR plane
       const originVec = vec3.fromValues(origin[0], origin[1], origin[2]);
       const tipVec = vec3.fromValues(tipPoint[0], tipPoint[1], tipPoint[2]);
       const toolDirection = vec3.subtract(vec3.create(), tipVec, originVec);
+      const toolLength = vec3.length(toolDirection);
       vec3.normalize(toolDirection, toolDirection);
+
+      if (shouldLog) {
+        console.log(`\n🔧 Tool Line Info:`);
+        console.log(`   Direction (normalized): [${toolDirection[0].toFixed(3)}, ${toolDirection[1].toFixed(3)}, ${toolDirection[2].toFixed(3)}]`);
+        console.log(`   Length: ${toolLength.toFixed(2)}mm`);
+      }
 
       // Line-plane intersection math:
       // Plane equation: n · (P - P0) = 0, where n = planeNormal, P0 = planePoint
@@ -121,13 +158,10 @@ export class ToolProjectionRenderer {
       const numerator = vec3.dot(planeNormal, originToPlane);
       const denominator = vec3.dot(planeNormal, toolDirection);
 
-      // Debug logging (first few times)
-      const debugCount = (window as any).__projectionDebugCount || 0;
-      if (debugCount < 3) {
-        console.log(`🔍 [Projection Debug ${viewport.id}]`);
-        console.log(`   Denominator: ${denominator.toFixed(4)} (threshold: 0.001)`);
-        console.log(`   Numerator: ${numerator.toFixed(2)}`);
-        (window as any).__projectionDebugCount = debugCount + 1;
+      if (shouldLog) {
+        console.log(`\n🧮 Intersection Math:`);
+        console.log(`   Numerator (n · (P0 - origin)): ${numerator.toFixed(4)}`);
+        console.log(`   Denominator (n · direction): ${denominator.toFixed(4)}`);
       }
 
       // Check if line is parallel to plane
@@ -137,20 +171,21 @@ export class ToolProjectionRenderer {
         // Check if origin is close to plane (within 1mm)
         const distanceToPlane = Math.abs(vec3.dot(planeNormal, originToPlane));
 
-        if (debugCount < 3) {
-          console.log(`   → Parallel to plane, distance: ${distanceToPlane.toFixed(2)}mm`);
+        if (shouldLog) {
+          console.log(`   ⚠️ Tool is PARALLEL to plane`);
+          console.log(`   Distance to plane: ${distanceToPlane.toFixed(2)}mm`);
         }
 
         if (distanceToPlane < 1.0) {
           // Tool is on or very close to plane - project entire line
-          if (debugCount < 3) {
-            console.log(`   → Showing projected line (dashed)`);
+          if (shouldLog) {
+            console.log(`   ✅ Tool is ON the plane - showing projected line (dashed)`);
           }
           this._renderProjectedLine(viewport, originVec, tipVec);
         } else {
           // Tool is parallel but far from plane - don't show
-          if (debugCount < 3) {
-            console.log(`   → Too far, not showing`);
+          if (shouldLog) {
+            console.log(`   ❌ Tool is too far from plane - not showing`);
           }
           this._clearViewportProjection(viewport.id);
         }
@@ -158,6 +193,56 @@ export class ToolProjectionRenderer {
       }
 
       // Calculate intersection parameter t
+      const t = numerator / denominator;
+
+      if (shouldLog) {
+        console.log(`   t parameter: ${t.toFixed(4)}`);
+        console.log(`   t range: [0, ${toolLength.toFixed(2)}]`);
+      }
+
+      // Check if intersection is within tool segment
+      if (t < 0 || t > toolLength) {
+        const originDistance = Math.abs(vec3.dot(planeNormal, vec3.subtract(vec3.create(), originVec, planePoint)));
+        const tipDistance = Math.abs(vec3.dot(planeNormal, vec3.subtract(vec3.create(), tipVec, planePoint)));
+
+        if (shouldLog) {
+          console.log(`   ⚠️ Intersection OUTSIDE tool segment`);
+          console.log(`   Origin distance from plane: ${originDistance.toFixed(2)}mm`);
+          console.log(`   Tip distance from plane: ${tipDistance.toFixed(2)}mm`);
+        }
+
+        const MIN_DISTANCE = 5.0; // 5mm threshold
+        if (originDistance < MIN_DISTANCE || tipDistance < MIN_DISTANCE) {
+          if (shouldLog) {
+            console.log(`   ✅ Close enough - showing projected line (dashed)`);
+          }
+          this._renderProjectedLine(viewport, originVec, tipVec);
+        } else {
+          if (shouldLog) {
+            console.log(`   ❌ Too far - not showing`);
+          }
+          this._clearViewportProjection(viewport.id);
+        }
+        return;
+      }
+
+      // Calculate intersection point
+      const intersectionPoint = vec3.scaleAndAdd(vec3.create(), originVec, toolDirection, t);
+      
+      if (shouldLog) {
+        console.log(`   ✅ INTERSECTION FOUND!`);
+        console.log(`   Intersection point: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
+        console.log(`   → Drawing SOLID GREEN line from origin to intersection`);
+      }
+
+      this._renderIntersectionLine(viewport, originVec, intersectionPoint);
+
+    } catch (error) {
+      console.error(`❌ Error rendering projection on ${viewport.id}:`, error);
+      // Fallback to simple worldToCanvas projection if complex math fails
+      this._renderSimpleProjectionFallback(viewport, origin, tipPoint);
+    }
+  }
       const t = numerator / denominator;
       const toolLength = vec3.distance(originVec, tipVec);
 
