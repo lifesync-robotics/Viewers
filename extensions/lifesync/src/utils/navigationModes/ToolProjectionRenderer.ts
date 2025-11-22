@@ -27,6 +27,7 @@ export class ToolProjectionRenderer {
 
   /**
    * Update projection for all viewports
+   * Only renders on ORTHOGRAPHIC (MPR) viewports, not on 3D or stack viewports
    */
   public updateProjection(toolRep: ToolRepresentation): void {
     const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
@@ -40,8 +41,18 @@ export class ToolProjectionRenderer {
     const viewports = renderingEngine.getViewports();
 
     viewports.forEach(viewport => {
+      // Skip non-MPR viewports
+      // - stack viewports: 2D image stacks
+      // - volume3d viewports: 3D rendering
+      // Only render on orthographic (MPR) viewports: Axial, Sagittal, Coronal
       if (viewport.type === 'stack') {
         return; // Skip stack viewports
+      }
+      
+      // Check if this is a 3D viewport by checking viewport class
+      const viewportClassName = viewport.constructor.name;
+      if (viewportClassName === 'VolumeViewport3D') {
+        return; // Skip 3D viewports
       }
 
       this._renderProjectionOnViewport(viewport, toolRep.origin, tipPoint, toolRep.zAxis);
@@ -69,7 +80,11 @@ export class ToolProjectionRenderer {
   }
 
   /**
-   * Render projection on a single viewport
+   * Render projection on a single viewport with correct plane intersection math
+   * 
+   * For MPR viewports, we need to:
+   * 1. Calculate if/where the tool intersects the MPR slice plane
+   * 2. Draw the intersection correctly, not just project 3D points
    */
   private _renderProjectionOnViewport(
     viewport: any,
@@ -78,26 +93,129 @@ export class ToolProjectionRenderer {
     zAxis: number[]
   ): void {
     try {
-      // Project 3D points to 2D canvas coordinates
-      const originCanvas = viewport.worldToCanvas(origin as [number, number, number]);
-      const tipCanvas = viewport.worldToCanvas(tipPoint as [number, number, number]);
+      // Get viewport camera info
+      const camera = viewport.getCamera();
+      const planeNormal = vec3.fromValues(
+        camera.viewPlaneNormal[0],
+        camera.viewPlaneNormal[1],
+        camera.viewPlaneNormal[2]
+      );
+      const planePoint = vec3.fromValues(
+        camera.focalPoint[0],
+        camera.focalPoint[1],
+        camera.focalPoint[2]
+      );
 
-      // Check if points are valid and within viewport bounds
-      if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(tipCanvas)) {
-        // Point is outside viewport or invalid - clear projection
-        this._clearViewportProjection(viewport.id);
+      // Calculate tool line intersection with MPR plane
+      const originVec = vec3.fromValues(origin[0], origin[1], origin[2]);
+      const tipVec = vec3.fromValues(tipPoint[0], tipPoint[1], tipPoint[2]);
+      const toolDirection = vec3.subtract(vec3.create(), tipVec, originVec);
+      vec3.normalize(toolDirection, toolDirection);
+
+      // Line-plane intersection math:
+      // Plane equation: n · (P - P0) = 0, where n = planeNormal, P0 = planePoint
+      // Line equation: P = origin + t * toolDirection
+      // Solve for t: t = n · (P0 - origin) / (n · toolDirection)
+
+      const originToPlane = vec3.subtract(vec3.create(), planePoint, originVec);
+      const numerator = vec3.dot(planeNormal, originToPlane);
+      const denominator = vec3.dot(planeNormal, toolDirection);
+
+      // Check if line is parallel to plane
+      const PARALLEL_THRESHOLD = 0.001;
+      if (Math.abs(denominator) < PARALLEL_THRESHOLD) {
+        // Tool is parallel to plane
+        // Check if origin is close to plane (within 1mm)
+        const distanceToPlane = Math.abs(vec3.dot(planeNormal, originToPlane));
+        
+        if (distanceToPlane < 1.0) {
+          // Tool is on or very close to plane - project entire line
+          this._renderProjectedLine(viewport, originVec, tipVec);
+        } else {
+          // Tool is parallel but far from plane - don't show
+          this._clearViewportProjection(viewport.id);
+        }
         return;
       }
 
-      // Get or create SVG overlay element for this viewport
-      const svgElement = this._getOrCreateSVGOverlay(viewport);
+      // Calculate intersection parameter t
+      const t = numerator / denominator;
+      const toolLength = vec3.distance(originVec, tipVec);
+      
+      // Check if intersection is within tool length
+      if (t < 0 || t > toolLength) {
+        // Intersection is outside tool range
+        // Check if tool is close enough to show projection anyway
+        const originDistance = Math.abs(vec3.dot(planeNormal, 
+          vec3.subtract(vec3.create(), originVec, planePoint)));
+        const tipDistance = Math.abs(vec3.dot(planeNormal, 
+          vec3.subtract(vec3.create(), tipVec, planePoint)));
+        
+        const MIN_DISTANCE = 5.0; // 5mm threshold
+        if (originDistance < MIN_DISTANCE || tipDistance < MIN_DISTANCE) {
+          // Close enough - show projected line
+          this._renderProjectedLine(viewport, originVec, tipVec);
+        } else {
+          // Too far - don't show
+          this._clearViewportProjection(viewport.id);
+        }
+        return;
+      }
 
-      // Render projection line
-      this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas);
+      // Calculate intersection point
+      const intersectionPoint = vec3.scaleAndAdd(
+        vec3.create(),
+        originVec,
+        toolDirection,
+        t
+      );
+
+      // Render line from origin to intersection point
+      this._renderIntersectionLine(viewport, originVec, intersectionPoint);
 
     } catch (error) {
       console.warn(`⚠️ Error rendering projection on ${viewport.id}:`, error);
+      this._clearViewportProjection(viewport.id);
     }
+  }
+
+  /**
+   * Render projected line (tool is parallel to plane or close to plane)
+   */
+  private _renderProjectedLine(viewport: any, origin: vec3, tip: vec3): void {
+    const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
+    const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
+
+    if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(tipCanvas)) {
+      this._clearViewportProjection(viewport.id);
+      return;
+    }
+
+    const svgElement = this._getOrCreateSVGOverlay(viewport);
+    
+    // Draw as dashed line to indicate it's a projection, not intersection
+    this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true);
+    this._drawOriginCircle(svgElement, viewport.id, originCanvas);
+  }
+
+  /**
+   * Render intersection line (tool crosses the plane)
+   */
+  private _renderIntersectionLine(viewport: any, origin: vec3, intersection: vec3): void {
+    const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
+    const intersectionCanvas = viewport.worldToCanvas([intersection[0], intersection[1], intersection[2]]);
+
+    if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(intersectionCanvas)) {
+      this._clearViewportProjection(viewport.id);
+      return;
+    }
+
+    const svgElement = this._getOrCreateSVGOverlay(viewport);
+    
+    // Draw as solid line to indicate actual intersection
+    this._drawProjectionLine(svgElement, viewport.id, originCanvas, intersectionCanvas, false);
+    this._drawOriginCircle(svgElement, viewport.id, originCanvas);
+    this._drawIntersectionMarker(svgElement, viewport.id, intersectionCanvas);
   }
 
   /**
@@ -196,7 +314,8 @@ export class ToolProjectionRenderer {
     svg: SVGElement,
     viewportId: string,
     originCanvas: number[],
-    tipCanvas: number[]
+    tipCanvas: number[],
+    isDashed: boolean = false
   ): void {
     // Get canvas bounds for clipping (use SVG dimensions)
     const canvasWidth = parseFloat(svg.getAttribute('width') || '0');
@@ -230,19 +349,28 @@ export class ToolProjectionRenderer {
     line.setAttribute('y1', origin[1].toString());
     line.setAttribute('x2', tip[0].toString());
     line.setAttribute('y2', tip[1].toString());
-    line.setAttribute('stroke', '#00ff00'); // Green color
-    line.setAttribute('stroke-width', '3');
-    line.setAttribute('stroke-dasharray', '5,5'); // Dashed line
+    
+    // Style based on line type
+    if (isDashed) {
+      // Dashed line = projection (tool parallel to plane or near plane)
+      line.setAttribute('stroke', '#ffaa00'); // Orange color for projection
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke-dasharray', '8,4'); // Dashed line
+      line.setAttribute('opacity', '0.7');
+    } else {
+      // Solid line = intersection (tool crosses plane)
+      line.setAttribute('stroke', '#00ff00'); // Green color for intersection
+      line.setAttribute('stroke-width', '3');
+      line.setAttribute('opacity', '0.9');
+    }
+    
     line.setAttribute('marker-end', `url(#arrowhead-${viewportId})`);
 
     // Create arrowhead marker
-    this._createArrowheadMarker(svg, viewportId);
+    this._createArrowheadMarker(svg, viewportId, isDashed);
 
     // Add line to SVG
     svg.appendChild(line);
-
-    // Draw origin point (circle)
-    const originCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     originCircle.setAttribute('data-id', `projection-origin-${viewportId}`);
     originCircle.setAttribute('cx', origin[0].toString());
     originCircle.setAttribute('cy', origin[1].toString());
@@ -293,9 +421,11 @@ export class ToolProjectionRenderer {
   /**
    * Create arrowhead marker for line end
    */
-  private _createArrowheadMarker(svg: SVGElement, viewportId: string): void {
+  private _createArrowheadMarker(svg: SVGElement, viewportId: string, isDashed: boolean = false): void {
+    const markerId = isDashed ? `arrowhead-dashed-${viewportId}` : `arrowhead-solid-${viewportId}`;
+    
     // Check if marker already exists
-    const existingMarker = svg.querySelector(`#arrowhead-${viewportId}`);
+    const existingMarker = svg.querySelector(`#${markerId}`);
     if (existingMarker) {
       return;
     }
@@ -309,20 +439,89 @@ export class ToolProjectionRenderer {
 
     // Create marker
     const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-    marker.setAttribute('id', `arrowhead-${viewportId}`);
+    marker.setAttribute('id', markerId);
     marker.setAttribute('markerWidth', '10');
     marker.setAttribute('markerHeight', '10');
     marker.setAttribute('refX', '9');
     marker.setAttribute('refY', '3');
     marker.setAttribute('orient', 'auto');
 
-    // Create arrowhead path
+    // Create arrowhead path with color matching line type
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', 'M 0 0 L 0 6 L 9 3 z');
-    path.setAttribute('fill', '#00ff00');
+    path.setAttribute('fill', isDashed ? '#ffaa00' : '#00ff00'); // Orange for dashed, green for solid
 
     marker.appendChild(path);
     defs.appendChild(marker);
+  }
+
+  /**
+   * Draw origin circle
+   */
+  private _drawOriginCircle(svg: SVGElement, viewportId: string, originCanvas: number[]): void {
+    // Remove existing circle if any
+    const existingCircle = svg.querySelector(`[data-id="origin-circle-${viewportId}"]`);
+    if (existingCircle) {
+      existingCircle.remove();
+    }
+
+    // Create circle element
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('data-id', `origin-circle-${viewportId}`);
+    circle.setAttribute('cx', originCanvas[0].toString());
+    circle.setAttribute('cy', originCanvas[1].toString());
+    circle.setAttribute('r', '5');
+    circle.setAttribute('fill', '#0088ff'); // Blue color for origin
+    circle.setAttribute('stroke', '#ffffff');
+    circle.setAttribute('stroke-width', '2');
+    circle.setAttribute('opacity', '0.9');
+
+    svg.appendChild(circle);
+  }
+
+  /**
+   * Draw intersection marker (where tool crosses the plane)
+   */
+  private _drawIntersectionMarker(svg: SVGElement, viewportId: string, intersectionCanvas: number[]): void {
+    // Remove existing marker if any
+    const existingMarker = svg.querySelector(`[data-id="intersection-marker-${viewportId}"]`);
+    if (existingMarker) {
+      existingMarker.remove();
+    }
+
+    // Create crosshair marker
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.setAttribute('data-id', `intersection-marker-${viewportId}`);
+
+    // Horizontal line
+    const hLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    hLine.setAttribute('x1', (intersectionCanvas[0] - 8).toString());
+    hLine.setAttribute('y1', intersectionCanvas[1].toString());
+    hLine.setAttribute('x2', (intersectionCanvas[0] + 8).toString());
+    hLine.setAttribute('y2', intersectionCanvas[1].toString());
+    hLine.setAttribute('stroke', '#ff0000'); // Red for intersection point
+    hLine.setAttribute('stroke-width', '2');
+
+    // Vertical line
+    const vLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    vLine.setAttribute('x1', intersectionCanvas[0].toString());
+    vLine.setAttribute('y1', (intersectionCanvas[1] - 8).toString());
+    vLine.setAttribute('x2', intersectionCanvas[0].toString());
+    vLine.setAttribute('y2', (intersectionCanvas[1] + 8).toString());
+    vLine.setAttribute('stroke', '#ff0000');
+    vLine.setAttribute('stroke-width', '2');
+
+    // Center circle
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', intersectionCanvas[0].toString());
+    circle.setAttribute('cy', intersectionCanvas[1].toString());
+    circle.setAttribute('r', '3');
+    circle.setAttribute('fill', '#ff0000');
+
+    group.appendChild(hLine);
+    group.appendChild(vLine);
+    group.appendChild(circle);
+    svg.appendChild(group);
   }
 
   /**

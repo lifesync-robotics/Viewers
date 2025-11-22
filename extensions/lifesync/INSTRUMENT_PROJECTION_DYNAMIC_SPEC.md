@@ -54,7 +54,7 @@ handleTrackingUpdate(position, orientation, matrix) {
     zAxis: [dx, dy, dz],         // Z 轴方向（归一化）
     extensionLength: 100         // 延长线长度 (mm)
   };
-  
+
   // 更新投影 - ToolProjectionRenderer 会：
   // 1. 获取当前所有视口
   // 2. 对每个视口使用**当前相机状态**进行投影
@@ -118,7 +118,7 @@ handleTrackingUpdate(position, orientation, matrix) {
 updateProjection(toolRep: ToolRepresentation): void {
   const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
   const viewports = renderingEngine.getViewports();
-  
+
   viewports.forEach(viewport => {
     // 计算 3D 终点
     const tipPointWorld = vec3.create();
@@ -128,11 +128,11 @@ updateProjection(toolRep: ToolRepresentation): void {
       vec3.fromValues(...toolRep.zAxis),
       toolRep.extensionLength
     );
-    
+
     // 🔑 关键：使用当前相机状态进行投影
     const originCanvas = viewport.worldToCanvas(toolRep.origin);
     const tipCanvas = viewport.worldToCanvas(tipPointWorld);
-    
+
     // 渲染 SVG
     this._drawProjectionLine(svg, originCanvas, tipCanvas);
     this._drawOriginCircle(svg, originCanvas);
@@ -235,4 +235,3 @@ updateProjection(toolRep: ToolRepresentation): void {
 - 术前规划：自由查看不同角度
 - 术中导航：在固定视图中观察工具投影
 - 多工具跟踪：同时显示多个投影（未来扩展）
-
