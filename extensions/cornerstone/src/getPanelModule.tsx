@@ -6,8 +6,8 @@ import ActiveViewportWindowLevel from './components/ActiveViewportWindowLevel';
 import PanelMeasurement from './panels/PanelMeasurement';
 import { SegmentationRepresentations } from '@cornerstonejs/tools/enums';
 import i18n from '@ohif/i18n';
+import { ViewportStatePanel } from '@ohif/extension-lifesync';
 // NOTE: PanelTracking moved to @ohif/extension-lifesync
-import ViewportStatePanel from './viewportStatePanel';
 // NOTE: ScrewManagementPanel moved to @ohif/extension-lifesync
 
 const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: withAppTypes) => {
@@ -135,20 +135,6 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
       ),
     },
     // NOTE: Tracking control panel moved to @ohif/extension-lifesync
-    // Viewport state panel (legacy)
-    {
-      name: 'viewport-state',
-      label: 'Viewport States',
-      iconName: 'icon-panel-seg',
-      component: (props) => (
-        <ViewportStatePanel
-          servicesManager={servicesManager}
-          commandsManager={commandsManager}
-          extensionManager={extensionManager}
-          {...props}
-        />
-      ),
-    },
   ];
 };
 

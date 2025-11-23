@@ -30,7 +30,10 @@ const StudyListTableRow = props => {
               }
             )}
           >
-            <table className={classnames('w-full p-4')}>
+            <table
+              className={classnames('w-full p-4')}
+              style={{ tableLayout: 'fixed' }}
+            >
               <tbody>
                 <tr
                   className={classnames(
@@ -53,9 +56,6 @@ const StudyListTableRow = props => {
                           { 'border-secondary-light border-b': !isExpanded },
                           getGridWidthClass(gridCol) || ''
                         )}
-                        style={{
-                          maxWidth: 0,
-                        }}
                         title={title}
                       >
                         <div className="flex">

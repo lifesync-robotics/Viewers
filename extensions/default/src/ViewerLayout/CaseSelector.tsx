@@ -6,13 +6,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Button, Icons, useModal } from '@ohif/ui-next';
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from '@ohif/ui-next';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@ohif/ui-next';
 import type { CaseSummary } from '../services/CaseService';
 
 interface CaseSelectorProps {
@@ -58,7 +52,9 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
   }, [caseService]);
 
   const loadCases = async () => {
-    if (!caseService) return;
+    if (!caseService) {
+      return;
+    }
 
     setIsLoading(true);
     try {
@@ -72,7 +68,9 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
   };
 
   const handleCaseChange = async (caseId: string) => {
-    if (!caseService) return;
+    if (!caseService) {
+      return;
+    }
 
     if (caseId === 'none') {
       await caseService.setActiveCaseId(null);
@@ -90,7 +88,13 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
       contentProps: {
         caseService,
         onClose: hide,
-        onCreated: (newCase) => {
+        onCreated: newCase => {
+          setCases(prev => {
+            const exists = prev.some(c => c.caseId === newCase.caseId);
+            return exists
+              ? prev.map(c => (c.caseId === newCase.caseId ? newCase : c))
+              : [...prev, newCase];
+          });
           loadCases();
           caseService.setActiveCaseId(newCase.caseId);
           hide();
@@ -111,7 +115,7 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
         onValueChange={handleCaseChange}
         disabled={isLoading}
       >
-        <SelectTrigger className="bg-primary-dark hover:bg-primary text-primary-active min-w-[200px] border-primary-light">
+        <SelectTrigger className="bg-primary-dark hover:bg-primary text-primary-active border-primary-light min-w-[200px]">
           <SelectValue>
             {isLoading ? (
               'Loading...'
@@ -119,7 +123,7 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
               <div className="flex items-center gap-2">
                 <span className="font-mono text-xs">{activeCase.caseId}</span>
                 <span className="text-primary-light">•</span>
-                <span className="truncate max-w-[120px]">
+                <span className="max-w-[120px] truncate">
                   {activeCase.patientInfo.name || activeCase.patientInfo.mrn}
                 </span>
               </div>
@@ -129,7 +133,10 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
           </SelectValue>
         </SelectTrigger>
         <SelectContent className="bg-primary-dark border-primary-light">
-          <SelectItem value="none" className="hover:bg-primary">
+          <SelectItem
+            value="none"
+            className="hover:bg-primary"
+          >
             <span className="text-primary-light italic">No Case Selected (View All)</span>
           </SelectItem>
           <div className="border-primary-light my-1 border-t" />
@@ -141,9 +148,7 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex flex-col">
-                  <span className="font-mono text-xs text-primary-active">
-                    {caseItem.caseId}
-                  </span>
+                  <span className="text-primary-active font-mono text-xs">{caseItem.caseId}</span>
                   <span className="text-primary-light text-xs">
                     {caseItem.patientInfo.name || caseItem.patientInfo.mrn}
                   </span>
@@ -155,7 +160,10 @@ function CaseSelector({ servicesManager }: CaseSelectorProps) {
             </SelectItem>
           ))}
           <div className="border-primary-light my-1 border-t" />
-          <SelectItem value="create" className="hover:bg-primary">
+          <SelectItem
+            value="create"
+            className="hover:bg-primary"
+          >
             <div className="flex items-center gap-2 text-blue-400">
               <Icons.Plus className="h-4 w-4" />
               <span>Create New Case</span>
@@ -216,7 +224,7 @@ function CreateCaseDialog({ caseService, onClose, onCreated }) {
   return (
     <div className="flex flex-col gap-4 p-4">
       {error && (
-        <div className="bg-red-900/20 border-red-500 text-red-300 rounded border p-3 text-sm">
+        <div className="rounded border border-red-500 bg-red-900/20 p-3 text-sm text-red-300">
           {error}
         </div>
       )}
@@ -249,9 +257,7 @@ function CreateCaseDialog({ caseService, onClose, onCreated }) {
       </div>
 
       <div className="flex flex-col gap-2">
-        <label className="text-primary-light text-sm font-medium">
-          Date of Birth (Optional)
-        </label>
+        <label className="text-primary-light text-sm font-medium">Date of Birth (Optional)</label>
         <input
           type="date"
           value={dateOfBirth}

@@ -21,7 +21,7 @@ import SegmentationService from './services/SegmentationService';
 import CornerstoneCacheService from './services/CornerstoneCacheService';
 import CornerstoneViewportService from './services/ViewportService/CornerstoneViewportService';
 import ColorbarService from './services/ColorbarService';
-import ModelStateService from './modelStateService';
+import { ModelStateService, ViewportStateService, ViewportStatePanel } from '@ohif/extension-lifesync';
 import PlaneCutterService from './services/PlaneCutterService';
 import * as CornerstoneExtensionTypes from './types';
 
@@ -62,9 +62,6 @@ import { useMeasurementTracking } from './hooks/useMeasurementTracking';
 import { setUpSegmentationEventHandlers } from './utils/setUpSegmentationEventHandlers';
 import { setUpAnnotationEventHandlers } from './utils/setUpAnnotationEventHandlers';
 export * from './components';
-
-import ViewportStateService from './viewportStateService';
-import ViewportStatePanel from './viewportStatePanel';
 
 
 const { imageRetrieveMetadataProvider } = cornerstone.utilities;

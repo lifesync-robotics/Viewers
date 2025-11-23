@@ -52,11 +52,12 @@ const InputGroup = ({
     };
 
     const handleDateRangeFieldChange = ({ startDate, endDate }) => {
+      // 将空字符串转换为 null，保持与默认值一致
       onValuesChange({
         ...values,
         [name]: {
-          startDate: startDate,
-          endDate: endDate,
+          startDate: startDate && startDate.trim() !== '' ? startDate : null,
+          endDate: endDate && endDate.trim() !== '' ? endDate : null,
         },
       });
     };
@@ -119,11 +120,16 @@ const InputGroup = ({
   return (
     <div className="container relative m-auto flex flex-col">
       <div className="flex w-full flex-row">
-        {inputMeta.map(inputMeta => {
+        {inputMeta.map((inputMeta, index) => {
+          const isDescription = inputMeta.name === 'description';
           return (
             <div
               key={inputMeta.name}
-              className={classnames('pl-4 first:pl-12', getGridWidthClass(inputMeta.gridCol))}
+              className={classnames(
+                'pl-4 first:pl-12',
+                isDescription && 'ml-6',
+                getGridWidthClass(inputMeta.gridCol)
+              )}
             >
               {renderFieldInputComponent(inputMeta)}
             </div>

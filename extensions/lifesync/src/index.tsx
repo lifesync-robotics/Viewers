@@ -1,10 +1,15 @@
 import getPanelModule from './panels/getPanelModule';
 import getToolbarModule from './tools/getToolbarModule';
 import getCommandsModule from './commandsModule';
+import getBaseCustomizationModule from './getCustomizationModule';
 import TrackingService from './services/TrackingService';
 import RegistrationService from './services/RegistrationService';
 import LifeSyncWorklist from './components/Worklist/LifeSyncWorklist';
 import { id } from './id.js';
+
+// Export services for use by other extensions
+export { ModelStateService } from './components/CustomizedModels';
+export { ViewportStateService, ViewportStatePanel } from './components/CustomizedViewport';
 
 const lifesyncExtension = {
   /**
@@ -15,12 +20,13 @@ const lifesyncExtension = {
   getPanelModule,
   getToolbarModule,
   getCommandsModule,
-
   /**
    * Customization module to override default routes and components
    */
   getCustomizationModule() {
+    const baseCustomizations = getBaseCustomizationModule();
     return [
+      ...baseCustomizations,
       {
         name: 'routes.customRoutes',
         value: {

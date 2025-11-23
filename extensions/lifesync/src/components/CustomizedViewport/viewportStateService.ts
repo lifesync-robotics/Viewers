@@ -1,5 +1,5 @@
 import { getRenderingEngine } from '@cornerstonejs/core';
-import { crosshairsHandler } from './utils/crosshairsHandler';
+import { crosshairsHandler } from '../../utils/crosshairsHandler';
 
 interface ViewportState {
   frameOfReferenceUID: string;
@@ -34,7 +34,7 @@ class ViewportStateService {
   };
 
   private snapshots: Map<string, Snapshot>;
-  private readonly MAX_SNAPSHOTS = 40;
+  private readonly MAX_SNAPSHOTS = 10; // Match Python backend MAX_SCREWS limit
   private readonly STORAGE_KEY = 'ohif_viewport_snapshots';
   private cameraLoggingEnabled: boolean = false;
   private cameraEventListeners: Map<string, any> = new Map();

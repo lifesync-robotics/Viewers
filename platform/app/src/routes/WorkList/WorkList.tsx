@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import classnames from 'classnames';
 import PropTypes from 'prop-types';
 import { Link, useNavigate } from 'react-router-dom';
@@ -37,17 +37,35 @@ import {
   Button as ButtonNext,
 } from '@ohif/ui-next';
 
-import { EditCaseDialog, CreateCaseDialog } from '@ohif/extension-lifesync/src/components/CaseManagement';
+import {
+  EditCaseDialog,
+  CreateCaseDialog,
+} from '@ohif/extension-lifesync/src/components/CaseManagement';
+
+import { CLINICAL_PHASE_LABELS } from '@ohif/extension-default/src/services/CaseService';
+
+import { Types } from '@ohif/ui';
+
+import { preserveQueryParameters, preserveQueryStrings } from '../../utils/preserveQueryParameters';
 
 // Simplified Case Selector for WorkList
-const WorkListCaseSelector = ({ servicesManager, viewMode, setViewMode, cases, loadingCases }) => {
+const WorkListCaseSelector = ({
+  servicesManager,
+  viewMode,
+  setViewMode,
+  cases,
+  loadingCases,
+  onCaseCreated,
+}) => {
   const [localCases, setLocalCases] = React.useState([]);
   const [activeCaseId, setActiveCaseId] = React.useState(null);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false);
+  // const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false);
   const caseService = servicesManager?.services?.caseService;
 
   const loadCases = async () => {
-    if (!caseService) return;
+    if (!caseService) {
+      return;
+    }
     try {
       const fetchedCases = await caseService.getCases();
       setLocalCases(fetchedCases);
@@ -57,7 +75,9 @@ const WorkListCaseSelector = ({ servicesManager, viewMode, setViewMode, cases, l
   };
 
   React.useEffect(() => {
-    if (!caseService) return;
+    if (!caseService) {
+      return;
+    }
 
     loadCases();
     const initialCaseId = caseService.getActiveCaseId();
@@ -71,18 +91,31 @@ const WorkListCaseSelector = ({ servicesManager, viewMode, setViewMode, cases, l
     return () => unsubscribe?.unsubscribe();
   }, [caseService]);
 
-  const handleCreateCase = async (patientInfo) => {
-    if (!caseService) return null;
+  // const handleCreateCase = async patientInfo => {
+  //   if (!caseService) {
+  //     return null;
+  //   }
 
-    // Call caseService.createCase with just patientInfo
-    // API will auto-generate case ID
-    const newCase = await caseService.createCase(patientInfo);
+  //   // Call caseService.createCase with just patientInfo
+  //   // API will auto-generate case ID
+  //   const newCase = await caseService.createCase(patientInfo);
 
-    await loadCases(); // Reload cases
-    caseService.setActiveCaseId(newCase.caseId); // Auto-select new case
+  //   // Optimistically update local state
+  //   setLocalCases(prev => {
+  //     const exists = prev.some(c => c.caseId === newCase.caseId);
+  //     return exists
+  //       ? prev.map(c => (c.caseId === newCase.caseId ? newCase : c))
+  //       : [...prev, newCase];
+  //   });
 
-    return newCase; // Return the created case for success message
-  };
+  //   // Notify parent so it can keep its list in sync
+  //   onCaseCreated?.(newCase);
+
+  //   caseService.setActiveCaseId(newCase.caseId);
+  //   await loadCases(); // Reload cases to ensure canonical ordering/counts
+
+  //   return newCase; // Return the created case for success message
+  // };
 
   if (!caseService) {
     return null;
@@ -97,7 +130,7 @@ const WorkListCaseSelector = ({ servicesManager, viewMode, setViewMode, cases, l
         {/* View Mode Toggle */}
         <div className="flex items-center gap-2">
           <span className="text-primary-light text-sm font-medium">View:</span>
-          <div className="flex rounded border border-primary-light">
+          <div className="border-primary-light flex rounded border">
             <button
               onClick={() => setViewMode('cases')}
               className={classnames(
@@ -129,46 +162,52 @@ const WorkListCaseSelector = ({ servicesManager, viewMode, setViewMode, cases, l
             <span className="text-primary-light text-sm font-medium">Surgical Case:</span>
             <select
               value={activeCaseId || ''}
-              onChange={(e) => caseService.setActiveCaseId(e.target.value || null)}
+              onChange={e => caseService.setActiveCaseId(e.target.value || null)}
               className="bg-primary-dark hover:bg-primary text-primary-active border-primary-light min-w-[200px] rounded border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">No Case Selected (View All Studies)</option>
               {displayCases.map(caseItem => (
-                <option key={caseItem.caseId} value={caseItem.caseId}>
-                  {caseItem.caseName || caseItem.caseId} - {caseItem.patientName || caseItem.mrn}
+                <option
+                  key={caseItem.caseId}
+                  value={caseItem.caseId}
+                >
+                  {caseItem.caseName || caseItem.caseId} -{' '}
+                  {caseItem.patientName ||
+                    caseItem?.patientInfo?.name ||
+                    caseItem.patientMRN ||
+                    caseItem.mrn ||
+                    'Unknown'}
                 </option>
               ))}
             </select>
             {activeCase && (
               <span className="text-primary-light text-xs">
-                ({activeCase.studyCount || 0} studies)
+                ({activeCase?.studyCount || 0} studies)
               </span>
             )}
           </>
         )}
 
         {/* Create Case Button */}
-        <ButtonNext
+        {/* <ButtonNext
           size="sm"
           onClick={() => setIsCreateDialogOpen(true)}
           className="bg-blue-600 hover:bg-blue-700"
         >
           <Icons.Add className="mr-1 h-4 w-4" />
           Create Case
-        </ButtonNext>
+        </ButtonNext> */}
 
         {/* Loading indicator for cases */}
-        {loadingCases && (
-          <span className="text-primary-light text-xs">Loading cases...</span>
-        )}
+        {loadingCases && <span className="text-primary-light text-xs">Loading cases...</span>}
       </div>
 
-      <CreateCaseDialog
+      {/* <CreateCaseDialog
         isOpen={isCreateDialogOpen}
         onClose={() => setIsCreateDialogOpen(false)}
         onCreateCase={handleCreateCase}
         servicesManager={servicesManager}
-      />
+      /> */}
     </>
   );
 };
@@ -178,7 +217,10 @@ const ApiConfigPanel = ({ servicesManager }) => {
   const [isExpanded, setIsExpanded] = React.useState(false);
   const [apiUrl, setApiUrl] = React.useState('');
   const [tempUrl, setTempUrl] = React.useState('');
-  const [connectionStatus, setConnectionStatus] = React.useState({ case: false, registration: false });
+  const [connectionStatus, setConnectionStatus] = React.useState({
+    case: false,
+    registration: false,
+  });
 
   const caseService = servicesManager?.services?.caseService;
   const registrationService = servicesManager?.services?.registrationService;
@@ -249,23 +291,32 @@ const ApiConfigPanel = ({ servicesManager }) => {
       >
         <div className="flex items-center gap-2">
           <Icons.Settings className="h-4 w-4" />
-          <span className="text-primary-light text-sm font-medium">SyncForge API Configuration</span>
-          <div className="flex items-center gap-2 ml-3">
-            <div className={`h-2 w-2 rounded-full ${connectionStatus.case ? 'bg-green-500' : 'bg-red-500'}`} title="Case Management API" />
+          <span className="text-primary-light text-sm font-medium">
+            SyncForge API Configuration
+          </span>
+          <div className="ml-3 flex items-center gap-2">
+            <div
+              className={`h-2 w-2 rounded-full ${connectionStatus.case ? 'bg-green-500' : 'bg-red-500'}`}
+              title="Case Management API"
+            />
             <span className="text-xs text-gray-400">{apiUrl}</span>
           </div>
         </div>
-        <Icons.ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+        <Icons.ChevronDown
+          className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {isExpanded && (
-        <div className="border-t border-secondary-light px-4 py-3 space-y-3">
+        <div className="border-secondary-light space-y-3 border-t px-4 py-3">
           <div className="space-y-2">
-            <label className="text-primary-light text-xs font-medium">API URL (for ngrok or remote access)</label>
+            <label className="text-primary-light text-xs font-medium">
+              API URL (for ngrok or remote access)
+            </label>
             <input
               type="text"
               value={tempUrl}
-              onChange={(e) => setTempUrl(e.target.value)}
+              onChange={e => setTempUrl(e.target.value)}
               placeholder="https://your-ngrok-url.ngrok-free.app"
               className="bg-primary-dark text-primary-light border-primary-light w-full rounded border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -288,16 +339,26 @@ const ApiConfigPanel = ({ servicesManager }) => {
             </ButtonNext>
           </div>
 
-          <div className="text-xs text-gray-400 space-y-1">
-            <p><strong>Local Development:</strong></p>
+          <div className="space-y-1 text-xs text-gray-400">
+            <p>
+              <strong>Local Development:</strong>
+            </p>
             <p className="pl-4">• Default: http://localhost:3001 (direct API access)</p>
             <p className="pl-4">• With nginx: http://localhost:8080/api (proxied, more secure)</p>
-            <p><strong>Remote Access (Recommended - nginx):</strong></p>
-            <p className="pl-4">1. Run: <code className="bg-gray-800 px-1 rounded">ngrok http 8080</code></p>
+            <p>
+              <strong>Remote Access (Recommended - nginx):</strong>
+            </p>
+            <p className="pl-4">
+              1. Run: <code className="rounded bg-gray-800 px-1">ngrok http 8080</code>
+            </p>
             <p className="pl-4">2. Leave this field at default (API auto-routed via nginx)</p>
             <p className="pl-4">3. Access OHIF via ngrok URL - API included automatically</p>
-            <p><strong>Remote Access (Legacy - direct):</strong></p>
-            <p className="pl-4">1. Run: <code className="bg-gray-800 px-1 rounded">ngrok http 3001</code></p>
+            <p>
+              <strong>Remote Access (Legacy - direct):</strong>
+            </p>
+            <p className="pl-4">
+              1. Run: <code className="rounded bg-gray-800 px-1">ngrok http 3001</code>
+            </p>
             <p className="pl-4">2. Copy the HTTPS URL and paste above</p>
           </div>
         </div>
@@ -306,15 +367,149 @@ const ApiConfigPanel = ({ servicesManager }) => {
   );
 };
 
-import { Types } from '@ohif/ui';
-
-import { preserveQueryParameters, preserveQueryStrings } from '../../utils/preserveQueryParameters';
-
 const PatientInfoVisibility = Types.PatientInfoVisibility;
 
 const { sortBySeriesDate } = utils;
 
 const seriesInStudiesMap = new Map();
+
+// 把前端 filterValues 映射成 /api/cases/search 接受的 query 参数
+const buildCaseSearchParams = filters => {
+  if (!filters) {
+    console.warn('⚠️ buildCaseSearchParams: filters is null/undefined, using defaults');
+    return { page: 1, limit: 100 };
+  }
+
+  // 将日期格式转换为 ISO 8601 格式 (YYYY-MM-DDTHH:mm:ssZ)
+  // 支持 YYYYMMDD (8位数字) 和 YYYY-MM-DD (带连字符) 格式
+  const convertDateToISO = dateStr => {
+    if (!dateStr) {
+      return undefined;
+    }
+
+    // 转换为字符串并去除空格
+    const trimmed = String(dateStr).trim();
+
+    // 如果为空字符串，返回 undefined
+    if (trimmed.length === 0) {
+      return undefined;
+    }
+
+    let year, month, day;
+
+    // 处理 YYYY-MM-DD 格式（带连字符）
+    if (trimmed.includes('-')) {
+      const parts = trimmed.split('-');
+      if (parts.length !== 3) {
+        console.warn('⚠️ Invalid date format with dashes, expected YYYY-MM-DD, got:', dateStr);
+        return undefined;
+      }
+      year = parts[0].trim();
+      month = parts[1].trim();
+      day = parts[2].trim();
+
+      // 检查每个部分是否完整
+      if (year.length !== 4 || month.length !== 2 || day.length !== 2) {
+        console.warn('⚠️ Incomplete date parts:', { year, month, day, original: dateStr });
+        return undefined;
+      }
+    }
+    // 处理 YYYYMMDD 格式（8位数字）
+    else if (trimmed.length === 8 && /^\d{8}$/.test(trimmed)) {
+      year = trimmed.substring(0, 4);
+      month = trimmed.substring(4, 6);
+      day = trimmed.substring(6, 8);
+    }
+    // 其他格式都不支持
+    else {
+      console.warn('⚠️ Invalid date format, expected YYYYMMDD or YYYY-MM-DD, got:', dateStr);
+      return undefined;
+    }
+
+    // 验证年份（必须是4位数字，且年份合理）
+    if (!/^\d{4}$/.test(year)) {
+      console.warn('⚠️ Invalid year format:', year);
+      return undefined;
+    }
+    const yearNum = parseInt(year, 10);
+    if (yearNum < 1900 || yearNum > 2100) {
+      console.warn('⚠️ Year out of reasonable range:', yearNum);
+      return undefined;
+    }
+
+    // 验证月份和日期范围
+    if (!/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) {
+      console.warn('⚠️ Invalid month or day format:', { month, day });
+      return undefined;
+    }
+
+    const monthNum = parseInt(month, 10);
+    const dayNum = parseInt(day, 10);
+    if (monthNum < 1 || monthNum > 12 || dayNum < 1 || dayNum > 31) {
+      console.warn('⚠️ Invalid date range:', { year, month, day });
+      return undefined;
+    }
+
+    return `${year}-${month}-${day}T00:00:00Z`;
+  };
+
+  const params = {
+    // 患者姓名：对应 ?patientName=，过滤空字符串
+    patientName:
+      filters.patientName && filters.patientName.trim() ? filters.patientName.trim() : undefined,
+
+    // 病例号 / MRN：你在 filtersMeta 里用的是 'mrn'，过滤空字符串
+    patientMRN: filters.mrn && filters.mrn.trim() ? filters.mrn.trim() : undefined,
+
+    // 状态（如果你后面加 status 字段）
+    status: filters.status && filters.status.trim() ? filters.status.trim() : undefined,
+
+    // 检查日期范围：DateRange 组件返回的是 { startDate, endDate } 格式 (YYYYMMDD)
+    // 需要转换为 ISO 8601 格式给后端 API
+    // 确保日期值有效且不为空字符串
+    createdAfter:
+      filters.studyDate?.startDate &&
+      filters.studyDate.startDate !== null &&
+      filters.studyDate.startDate !== '' &&
+      String(filters.studyDate.startDate).trim().length > 0
+        ? convertDateToISO(String(filters.studyDate.startDate))
+        : undefined,
+    createdBefore:
+      filters.studyDate?.endDate &&
+      filters.studyDate.endDate !== null &&
+      filters.studyDate.endDate !== '' &&
+      String(filters.studyDate.endDate).trim().length > 0
+        ? convertDateToISO(String(filters.studyDate.endDate))
+        : undefined,
+
+    // 分页：确保始终传递有效的分页参数，如果没有则使用默认值
+    // 这样即使没有查询条件，也能正确返回分页结果
+    page: filters.pageNumber && filters.pageNumber > 0 ? filters.pageNumber : 1,
+    limit: filters.resultsPerPage && filters.resultsPerPage > 0 ? filters.resultsPerPage : 100, // 默认返回更多结果，如果没有查询条件
+
+    // 是否包含 studies（如果 UI 将来加一个开关）
+    includeStudies: filters.includeStudies || undefined,
+  };
+
+  // 移除所有 undefined、null 和空字符串值（但保留分页参数）
+  Object.keys(params).forEach(key => {
+    const value = params[key];
+    if (value === undefined || value === null || value === '') {
+      // 保留分页参数，即使它们可能是默认值
+      if (key !== 'page' && key !== 'limit') {
+        delete params[key];
+      }
+    }
+  });
+
+  console.log('🔧 buildCaseSearchParams:', {
+    inputFilters: filters,
+    outputParams: params,
+    hasSearchFilters: Object.keys(params).some(k => k !== 'page' && k !== 'limit'),
+  });
+
+  return params;
+};
 
 /**
  * TODO:
@@ -346,6 +541,9 @@ function WorkList({
   const [caseStudies, setCaseStudies] = useState(new Map()); // caseId -> studies
   const [loadingCases, setLoadingCases] = useState(false);
 
+  // ~ Create Case Dialog State
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+
   // ~ Edit Case Dialog State
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedCase, setSelectedCase] = useState(null);
@@ -355,20 +553,212 @@ function WorkList({
   const navigate = useNavigate();
   const STUDIES_LIMIT = 101;
   const queryFilterValues = _getQueryFilterValues(searchParams);
+
+  // 检查是否有有效的查询参数（排除空值）
+  const hasValidQueryParams = Object.keys(queryFilterValues).some(key => {
+    const value = queryFilterValues[key];
+    if (value === null || value === undefined || value === '') {
+      return false;
+    }
+    // 检查日期对象：startDate 和 endDate 都必须有效
+    if (typeof value === 'object' && value.startDate === null && value.endDate === null) {
+      return false;
+    }
+    // 检查日期对象：如果 startDate 或 endDate 是空字符串，也不算有效
+    if (typeof value === 'object' && value.startDate !== undefined && value.endDate !== undefined) {
+      const hasValidStartDate =
+        value.startDate !== null &&
+        value.startDate !== '' &&
+        String(value.startDate).trim().length >= 8;
+      const hasValidEndDate =
+        value.endDate !== null && value.endDate !== '' && String(value.endDate).trim().length >= 8;
+      if (!hasValidStartDate && !hasValidEndDate) {
+        return false;
+      }
+    }
+    if (Array.isArray(value) && value.length === 0) {
+      return false;
+    }
+    return true;
+  });
+
+  // 清理无效的查询值（特别是日期字段）
+  const cleanQueryFilterValues = values => {
+    if (!values || typeof values !== 'object') {
+      return defaultFilterValues;
+    }
+
+    const cleaned = { ...values };
+
+    // 清理日期字段：确保 startDate 和 endDate 要么是有效的日期字符串，要么是 null
+    if (cleaned.studyDate && typeof cleaned.studyDate === 'object') {
+      const isValidDateString = dateStr => {
+        if (!dateStr || dateStr === null || dateStr === '') {
+          return false;
+        }
+        const str = String(dateStr).trim();
+        if (str.length < 8) {
+          return false;
+        }
+        // 检查是否是 YYYYMMDD 格式（8位数字）
+        if (/^\d{8}$/.test(str)) {
+          return true;
+        }
+        // 检查是否是 YYYY-MM-DD 格式（带连字符）
+        if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+          return true;
+        }
+        return false;
+      };
+
+      cleaned.studyDate = {
+        startDate: isValidDateString(cleaned.studyDate.startDate)
+          ? cleaned.studyDate.startDate
+          : null,
+        endDate: isValidDateString(cleaned.studyDate.endDate) ? cleaned.studyDate.endDate : null,
+      };
+
+      // 如果两个日期都无效，设置为 null
+      if (!cleaned.studyDate.startDate && !cleaned.studyDate.endDate) {
+        cleaned.studyDate = { startDate: null, endDate: null };
+      }
+    }
+
+    // 清理其他空字符串字段
+    Object.keys(cleaned).forEach(key => {
+      if (key !== 'studyDate' && (cleaned[key] === '' || cleaned[key] === null)) {
+        cleaned[key] = defaultFilterValues[key] || null;
+      }
+    });
+
+    return cleaned;
+  };
+
   const [sessionQueryFilterValues, updateSessionQueryFilterValues] = useSessionStorage({
     key: 'queryFilterValues',
-    defaultValue: queryFilterValues,
+    // 只有在 URL 中有有效查询参数时才使用，否则使用默认值
+    defaultValue: hasValidQueryParams
+      ? cleanQueryFilterValues(queryFilterValues)
+      : defaultFilterValues,
     // ToDo: useSessionStorage currently uses an unload listener to clear the filters from session storage
     // so on systems that do not support unload events a user will NOT be able to alter any existing filter
     // in the URL, load the page and have it apply.
     clearOnUnload: true,
   });
-  const [filterValues, _setFilterValues] = useState({
-    ...defaultFilterValues,
-    ...sessionQueryFilterValues,
+
+  // 合并默认值和 sessionStorage 的值，但优先使用 URL 参数（如果有）
+  // 同时清理 sessionStorage 中的无效值
+  const cleanedSessionValues = cleanQueryFilterValues(sessionQueryFilterValues);
+
+  // 检查清理后的 sessionStorage 值是否与默认值相同
+  const isSessionValuesSameAsDefault = Object.keys(defaultFilterValues).every(key => {
+    if (key === 'studyDate') {
+      return (
+        cleanedSessionValues.studyDate?.startDate === defaultFilterValues.studyDate.startDate &&
+        cleanedSessionValues.studyDate?.endDate === defaultFilterValues.studyDate.endDate
+      );
+    }
+    return cleanedSessionValues[key] === defaultFilterValues[key];
   });
 
+  // 如果没有有效的查询参数，且 sessionStorage 的值与默认值相同（或无效），使用默认值
+  // 这样可以确保刷新页面时，如果没有查询参数，所有字段都是空的
+  const initialFilterValues = hasValidQueryParams
+    ? { ...defaultFilterValues, ...cleanQueryFilterValues(queryFilterValues) }
+    : isSessionValuesSameAsDefault
+      ? defaultFilterValues
+      : { ...defaultFilterValues, ...cleanedSessionValues };
+
+  // 最终检查：如果初始值与默认值相同，确保使用默认值
+  const isSameAsDefault = Object.keys(defaultFilterValues).every(key => {
+    if (key === 'studyDate') {
+      return (
+        initialFilterValues.studyDate?.startDate === defaultFilterValues.studyDate.startDate &&
+        initialFilterValues.studyDate?.endDate === defaultFilterValues.studyDate.endDate
+      );
+    }
+    return initialFilterValues[key] === defaultFilterValues[key];
+  });
+
+  const finalInitialFilterValues = isSameAsDefault ? defaultFilterValues : initialFilterValues;
+
+  console.log('🔍 Initial filter values setup:', {
+    hasValidQueryParams,
+    isSessionValuesSameAsDefault,
+    isSameAsDefault,
+    queryFilterValues,
+    cleanedSessionValues,
+    finalInitialFilterValues,
+  });
+
+  const [filterValues, _setFilterValues] = useState(finalInitialFilterValues);
+
+  // 如果 sessionStorage 中有无效值，清理它们（只在首次加载时检查）
+  useEffect(() => {
+    // 检查是否有无效的日期值需要清理
+    const hasInvalidDates =
+      filterValues.studyDate?.startDate &&
+      String(filterValues.studyDate.startDate).trim().length > 0 &&
+      String(filterValues.studyDate.startDate).trim().length < 8;
+
+    const hasInvalidEndDate =
+      filterValues.studyDate?.endDate &&
+      String(filterValues.studyDate.endDate).trim().length > 0 &&
+      String(filterValues.studyDate.endDate).trim().length < 8;
+
+    if (!hasValidQueryParams && (hasInvalidDates || hasInvalidEndDate)) {
+      console.log('🧹 Cleaning invalid date values from filterValues:', {
+        startDate: filterValues.studyDate?.startDate,
+        endDate: filterValues.studyDate?.endDate,
+      });
+      const cleaned = { ...defaultFilterValues };
+      _setFilterValues(cleaned);
+      updateSessionQueryFilterValues(cleaned);
+    }
+  }, []); // 只在组件挂载时执行一次
+
   const debouncedFilterValues = useDebounce(filterValues, 200);
+
+  // Load cases for hierarchical view
+  const loadCases = useCallback(async () => {
+    if (!caseService) {
+      console.warn('⚠️ CaseService not available');
+      return;
+    }
+
+    setLoadingCases(true);
+    try {
+      // use current filter condition to search cases
+      const currentFilters = debouncedFilterValues || filterValues;
+      const searchParams = buildCaseSearchParams(currentFilters);
+
+      console.log('📋 Loading cases with params:', {
+        currentFilters,
+        searchParams,
+        hasCaseService: !!caseService,
+      });
+
+      const { cases: caseData, pagination } = await caseService.searchCases(searchParams);
+
+      console.log('✅ Cases loaded:', {
+        count: caseData?.length || 0,
+        cases: caseData,
+        pagination,
+      });
+
+      setCases(caseData || []);
+    } catch (error) {
+      console.error('❌ Failed to load cases:', error);
+      setCases([]);
+    } finally {
+      setLoadingCases(false);
+    }
+  }, [caseService, debouncedFilterValues, filterValues]);
+
+  useEffect(() => {
+    // 过滤条件变化后重新加载 Case 列表
+    loadCases();
+  }, [loadCases]);
   const { resultsPerPage, pageNumber, sortBy, sortDirection } = filterValues;
 
   /*
@@ -413,13 +803,32 @@ function WorkList({
     });
   }, [canSort, studies, shouldUseDefaultSort, sortBy, sortModifier]);
 
+  const handleCreateCase = async patientInfo => {
+    if (!caseService) {
+      return null;
+    }
+
+    const newCase = await caseService.createCase(patientInfo);
+
+    setCases(prev => {
+      const exists = prev.some(c => c.caseId === newCase.caseId);
+      return exists
+        ? prev.map(c => (c.caseId === newCase.caseId ? newCase : c))
+        : [...prev, newCase];
+    });
+
+    caseService.setActiveCaseId(newCase.caseId);
+
+    return newCase;
+  };
+
   // Filter studies by active case
   const filteredStudies = useMemo(() => {
     if (!activeCaseId || !activeCase) {
       return sortedStudies;
     }
 
-    const caseStudyUIDs = activeCase.studies.map(s => s.studyInstanceUID);
+    const caseStudyUIDs = (activeCase.studies || []).map(s => s.studyInstanceUID);
     return sortedStudies.filter(study => caseStudyUIDs.includes(study.studyInstanceUid));
   }, [sortedStudies, activeCaseId, activeCase]);
 
@@ -428,15 +837,241 @@ function WorkList({
   const [studiesWithSeriesData, setStudiesWithSeriesData] = useState([]);
   const [seriesDataForCases, setSeriesDataForCases] = useState(new Map()); // Map<studyUID, seriesData>
   const numOfStudies = studiesTotal;
+  const caseCount = cases?.length || 0;
+  const displayedCount =
+    viewMode === 'cases' ? caseCount : pageNumber * resultsPerPage > 100 ? 101 : numOfStudies;
 
   // ~ Add Study Modal
   const [showAddStudyModal, setShowAddStudyModal] = useState(false);
   const [addStudyToCaseId, setAddStudyToCaseId] = useState(null);
   const [orthancStudies, setOrthancStudies] = useState([]);
   const [loadingOrthancStudies, setLoadingOrthancStudies] = useState(false);
+  // add study modal state
+  const [activeTab, setActiveTab] = useState('upload'); // 'upload' or 'select'
+  // upload method state
+  const [uploadMethod, setUploadMethod] = useState('standard'); // 'standard' or 'custom'
+  // const [autoEnroll, setAutoEnroll] = useState(false);
+  // const [clinicalPhase, setClinicalPhase] = useState('PreOperativePlanning');
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [uploadProgress, setUploadProgress] = useState({});
+  const [isUploading, setIsUploading] = useState(false);
+  // TODO: 搜索功能暂时注释，后续实现
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFilter, setSearchFilter] = useState('studyUID'); // 'studyUID' | 'patientName' | 'mrn' | 'studyDate'
+  // Filter studies based on search query (placeholder - will implement later)
+  const filteredOrthancStudies = useMemo(() => {
+    // TODO: 实现搜索过滤逻辑
+    return orthancStudies;
+  }, [orthancStudies, searchQuery, searchFilter]);
+
+  // Select Study dialog state
+  const [selectedStudy, setSelectedStudy] = useState(null);
+  const [showEnrollDialog, setShowEnrollDialog] = useState(false);
+  const [selectedClinicalPhase, setSelectedClinicalPhase] = useState('PreOperativePlanning');
+  const [isEnrolling, setIsEnrolling] = useState(false);
+  const [enrollError, setEnrollError] = useState(null);
+
+  // 暂时直接使用 orthancStudies，不进行过滤
+  // const filteredOrthancStudies = orthancStudies;
+
   const querying = useMemo(() => {
     return isLoadingData || expandedRows.length > 0;
   }, [isLoadingData, expandedRows]);
+
+  // Custom upload function using /api/dicom/studies/upload
+  const handleCustomUpload = useCallback(async () => {
+    if (selectedFiles.length === 0) {
+      alert('请选择至少一个文件');
+      return;
+    }
+
+    if (!caseService) {
+      alert('Case Service 未初始化');
+      return;
+    }
+
+    // Confirm before upload if auto-enroll is enabled
+    // if (autoEnroll && addStudyToCaseId) {
+    //   const confirmMessage =
+    //     `确认上传并注册到 Case？\n\n` +
+    //     `Case ID: ${addStudyToCaseId}\n` +
+    //     `临床阶段: ${clinicalPhase}\n` +
+    //     `文件数量: ${selectedFiles.length} 个\n\n` +
+    //     `上传完成后，study 将自动注册到该 Case。`;
+
+    //   if (!window.confirm(confirmMessage)) {
+    //     return; // User cancelled
+    //   }
+    // }
+
+    // Get API URL from localStorage or use default
+    const hostname = window.location.hostname;
+    const defaultApiUrl =
+      hostname === 'localhost' || hostname === '127.0.0.1'
+        ? 'http://localhost:3001'
+        : `http://${hostname}:3001`;
+    const apiUrl = localStorage.getItem('syncforge_api_url') || defaultApiUrl;
+    setIsUploading(true);
+    setUploadProgress({});
+
+    try {
+      const formData = new FormData();
+
+      // Add files
+      selectedFiles.forEach(file => {
+        formData.append('files', file);
+      });
+
+      // Add optional parameters if auto-enroll is enabled
+      // if (autoEnroll && addStudyToCaseId) {
+      //   formData.append('caseId', addStudyToCaseId.toString());
+      //   formData.append('clinicalPhase', clinicalPhase);
+      //   formData.append('autoEnroll', 'true');
+      // }
+
+      // Upload using fetch
+      const response = await fetch(`${apiUrl}/api/dicom/studies/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(errorData.error || `Upload failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Show success message
+        const message = `✅ 上传成功！${result.studiesUploaded} 个 study 已上传到 Orthanc`;
+        // const message =
+        //   autoEnroll && result.enrollmentResults
+        //     ? `✅ 上传并注册成功！${result.studiesUploaded} 个 study 已上传并注册到 Case`
+        //     : `✅ 上传成功！${result.studiesUploaded} 个 study 已上传到 Orthanc`;
+
+        alert(message);
+
+        // Refresh studies list
+        setLoadingOrthancStudies(true);
+        try {
+          const studies = await caseService.getAllOrthancStudies();
+          setOrthancStudies(studies);
+        } catch (err) {
+          console.error('Failed to reload Orthanc studies:', err);
+        } finally {
+          setLoadingOrthancStudies(false);
+        }
+
+        // Refresh page data
+        onRefresh();
+
+        // Clear selected files
+        setSelectedFiles([]);
+        setUploadProgress({});
+
+        // If auto-enrolled, close modal; otherwise, optionally switch to select tab
+        // if (autoEnroll && result.enrollmentResults) {
+        //   setShowAddStudyModal(false);
+        // } else {
+        //   // Optional: switch to select tab to see uploaded studies
+        //   // setActiveTab('select');
+        // }
+      } else {
+        throw new Error(result.error || 'Upload failed');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert(`上传失败: ${error.message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [selectedFiles, addStudyToCaseId, caseService, onRefresh]);
+  // }, [selectedFiles, autoEnroll, clinicalPhase, addStudyToCaseId, caseService, onRefresh]);
+
+  // Load studies for a specific case (defined early for use in handleEnrollStudy)
+  const loadStudiesForCase = useCallback(
+    async caseId => {
+      if (!caseService) {
+        return;
+      }
+
+      try {
+        const caseStudiesData = await caseService.getStudiesForCase(caseId);
+        setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData.studies)));
+      } catch (error) {
+        console.warn(`Failed to load studies for case ${caseId}:`, error);
+      }
+    },
+    [caseService]
+  );
+
+  // Handle study selection - open enroll dialog
+  const handleStudyClick = useCallback(study => {
+    setSelectedStudy(study);
+    setSelectedClinicalPhase('PreOperativePlanning');
+    setEnrollError(null);
+    setShowEnrollDialog(true);
+  }, []);
+
+  // Handle enroll study confirmation
+  const handleEnrollStudy = useCallback(async () => {
+    if (!selectedStudy || !caseService || !addStudyToCaseId) {
+      return;
+    }
+
+    setIsEnrolling(true);
+    setEnrollError(null);
+
+    try {
+      await caseService.enrollStudy(
+        addStudyToCaseId,
+        selectedStudy.studyInstanceUID,
+        selectedClinicalPhase
+      );
+
+      // Success - refresh both case list and study list
+      setShowEnrollDialog(false);
+      setShowAddStudyModal(false);
+      setSelectedStudy(null);
+
+      // Reload cases to update studyCount
+      await loadCases();
+
+      // Reload studies for this case if it's already expanded
+      if (caseStudies.has(addStudyToCaseId)) {
+        await loadStudiesForCase(addStudyToCaseId);
+      }
+
+      // Also refresh study list if needed
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to add study:', err);
+      setEnrollError(err.message || 'Failed to add study to case');
+    } finally {
+      setIsEnrolling(false);
+    }
+  }, [
+    selectedStudy,
+    addStudyToCaseId,
+    selectedClinicalPhase,
+    caseService,
+    loadCases,
+    loadStudiesForCase,
+    caseStudies,
+    onRefresh,
+  ]);
+
+  // Handle file selection
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    setSelectedFiles(prev => [...prev, ...files]);
+  }, []);
+
+  // Handle file removal
+  const handleFileRemove = useCallback((index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  }, []);
 
   const setFilterValues = val => {
     if (filterValues.pageNumber === val.pageNumber) {
@@ -477,25 +1112,11 @@ function WorkList({
     };
   }, []);
 
-  // Load cases for hierarchical view
-  const loadCases = async () => {
-    if (!caseService) return;
-
-    setLoadingCases(true);
-    try {
-      const caseData = await caseService.getUniqueCaseIds();
-      setCases(caseData);
-    } catch (error) {
-      console.warn('Failed to load cases:', error);
-      setCases([]);
-    } finally {
-      setLoadingCases(false);
-    }
-  };
-
   // Update case handler for Edit dialog
-  const handleUpdateCase = async (updates) => {
-    if (!caseService || !selectedCase) return;
+  const handleUpdateCase = async updates => {
+    if (!caseService || !selectedCase) {
+      return;
+    }
 
     try {
       await caseService.updateCase(selectedCase.caseId, updates);
@@ -541,29 +1162,35 @@ function WorkList({
       return;
     }
 
-    // Load initial active case
+    // Load initial active case state
     const initialCaseId = caseService.getActiveCaseId();
     const initialCase = caseService.getActiveCase();
     setActiveCaseId(initialCaseId);
     setActiveCase(initialCase);
 
-    // Load cases for hierarchical view
+    // Initial fetch of cases for the hierarchical view
     loadCases();
 
-    // Subscribe to case changes
-    const unsubscribe = caseService.subscribe(
-      caseService.constructor.EVENTS.ACTIVE_CASE_CHANGED,
-      ({ caseId, case: caseData }) => {
-        setActiveCaseId(caseId);
-        setActiveCase(caseData);
-        console.log('📁 WorkList: Active case changed:', caseId);
-      }
-    );
+    const subscriptions = [
+      caseService.subscribe(
+        caseService.constructor.EVENTS.ACTIVE_CASE_CHANGED,
+        ({ caseId, case: caseData }) => {
+          setActiveCaseId(caseId);
+          setActiveCase(caseData);
+          console.log('📁 WorkList: Active case changed:', caseId);
+        }
+      ),
+      caseService.subscribe(caseService.constructor.EVENTS.CASE_CREATED, newCase => {
+        setCases(prev => {
+          const exists = prev.some(c => c.caseId === newCase.caseId);
+          return exists ? prev : [...prev, newCase];
+        });
+        loadCases(); // sync with canonical order/counts
+      }),
+    ];
 
     return () => {
-      if (unsubscribe) {
-        unsubscribe.unsubscribe();
-      }
+      subscriptions.forEach(sub => sub?.unsubscribe?.());
     };
   }, [caseService]);
 
@@ -575,6 +1202,11 @@ function WorkList({
 
     const queryString = {};
     Object.keys(defaultFilterValues).forEach(key => {
+      // 暂时排除 sortBy 和 sortDirection，避免触发 404 错误（服务器没有对应的 API）
+      if (key === 'sortBy' || key === 'sortDirection') {
+        return;
+      }
+
       const defaultValue = defaultFilterValues[key];
       const currValue = debouncedFilterValues[key];
 
@@ -607,7 +1239,7 @@ function WorkList({
   }, [debouncedFilterValues]);
 
   // Helper function to load series data for a study
-  const loadSeriesForStudy = async (studyUID) => {
+  const loadSeriesForStudy = async studyUID => {
     if (!activeCaseId || !caseService) {
       return;
     }
@@ -640,7 +1272,7 @@ function WorkList({
   };
 
   // Helper function to remove study from case
-  const removeStudyFromCase = async (studyUID) => {
+  const removeStudyFromCase = async studyUID => {
     if (!activeCaseId || !caseService) {
       return;
     }
@@ -648,7 +1280,7 @@ function WorkList({
     // Confirm with user
     const confirmed = window.confirm(
       'Are you sure you want to remove this study from the case?\n\n' +
-      'The study will remain in Orthanc but will no longer be associated with this case.'
+        'The study will remain in Orthanc but will no longer be associated with this case.'
     );
 
     if (!confirmed) {
@@ -716,7 +1348,7 @@ function WorkList({
 
     if (viewMode === 'cases' && cases.length > 0) {
       // Case-centric view: Show cases first
-      cases.forEach((caseItem) => {
+      cases.forEach(caseItem => {
         const caseRowKey = rowIndex++;
         const isCaseExpanded = expandedCases.includes(caseItem.caseId);
 
@@ -728,9 +1360,9 @@ function WorkList({
             {
               key: 'caseId',
               content: (
-                <div className="flex items-center gap-2 bg-blue-900/20 px-2 py-1 rounded">
+                <div className="flex items-center gap-2 rounded bg-blue-900/20 px-2 py-1">
                   <Icons.Database className="h-5 w-5 text-blue-400" />
-                  <span className="font-bold text-blue-200 text-base">📁 {caseItem.caseId}</span>
+                  <span className="text-base font-bold text-blue-200">📁 {caseItem.caseId}</span>
                 </div>
               ),
               gridCol: 4,
@@ -742,11 +1374,15 @@ function WorkList({
                   {caseItem.patientName || 'Unknown Patient'}
                 </span>
               ),
-              gridCol: 4,
+              gridCol: 5,
             },
             {
               key: 'mrn',
-              content: caseItem.mrn,
+              content: (
+                <span className="text-gray-300">
+                  {caseItem.patientMRN || caseItem.patientInfo?.mrn || caseItem.mrn || 'N/A'}
+                </span>
+              ),
               gridCol: 3,
             },
             {
@@ -769,10 +1405,19 @@ function WorkList({
               content: (
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={async (e) => {
+                    onClick={async e => {
                       e.stopPropagation();
                       setAddStudyToCaseId(caseItem.caseId);
                       setShowAddStudyModal(true);
+                      setActiveTab('upload'); // Reset to upload tab
+                      // Reset upload-related state
+                      setUploadMethod('standard');
+                      // setAutoEnroll(false);
+                      // setClinicalPhase('PreOperativePlanning');
+                      setSelectedFiles([]);
+                      setUploadProgress({});
+                      setIsUploading(false);
+                      // setSearchQuery(''); // Reset search - TODO: 搜索功能暂时注释
                       setLoadingOrthancStudies(true);
 
                       try {
@@ -787,39 +1432,44 @@ function WorkList({
                         setLoadingOrthancStudies(false);
                       }
                     }}
-                    className="hover:bg-green-900/50 flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-2 py-1 transition-colors"
+                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-2 py-1 transition-colors hover:bg-green-900/50"
                     title="Add Study to Case"
                   >
                     <Icons.Add className="h-4 w-4 text-green-400" />
                     <span className="text-xs text-green-300">Add Study</span>
                   </button>
                   <button
-                    onClick={(e) => {
+                    onClick={e => {
                       e.stopPropagation();
                       // Transform case data to match EditCaseDialog's expected structure
                       const caseDataForDialog = {
                         caseId: caseItem.caseId,
                         patientInfo: {
-                          mrn: caseItem.mrn || '',
+                          mrn:
+                            caseItem.patientMRN || caseItem.patientInfo?.mrn || caseItem.mrn || '',
                           name: caseItem.patientName || '',
-                          dateOfBirth: caseItem.dateOfBirth || ''
+                          dateOfBirth: caseItem.dateOfBirth || '',
                         },
-                        status: caseItem.status || 'created'
+                        status: caseItem.status || 'created',
                       };
                       setSelectedCase(caseDataForDialog);
                       setIsEditDialogOpen(true);
                     }}
-                    className="hover:bg-blue-900/50 flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors"
+                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors hover:bg-blue-900/50"
                     title="Edit Case"
                   >
                     <Icons.Settings className="h-4 w-4 text-blue-400" />
                     <span className="text-xs text-blue-300">Edit</span>
                   </button>
                   <button
-                    onClick={async (e) => {
+                    onClick={async e => {
                       e.stopPropagation();
 
-                      if (!confirm(`Delete case "${caseItem.caseId}"?\n\nThis will also delete ${caseItem.studyCount} enrolled study/studies.\n\nThis action cannot be undone.`)) {
+                      if (
+                        !confirm(
+                          `Delete case "${caseItem.caseId}"?\n\nThis will also delete ${caseItem.studyCount} enrolled study/studies.\n\nThis action cannot be undone.`
+                        )
+                      ) {
                         return;
                       }
 
@@ -834,7 +1484,7 @@ function WorkList({
                         alert(`Failed to delete case: ${err.message}`);
                       }
                     }}
-                    className="hover:bg-red-900/50 flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-2 py-1 transition-colors"
+                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-2 py-1 transition-colors hover:bg-red-900/50"
                     title="Delete Case"
                   >
                     <Icons.Cancel className="h-4 w-4 text-red-400" />
@@ -867,12 +1517,14 @@ function WorkList({
         if (isCaseExpanded && caseStudies.has(caseItem.caseId)) {
           const studies = caseStudies.get(caseItem.caseId) || [];
 
-          studies.forEach((study) => {
+          studies.forEach(study => {
             const studyRowKey = rowIndex++;
             const isStudyExpanded = expandedRows.some(k => k === studyRowKey);
 
             // Find the full study data from filteredStudies
-            const fullStudy = filteredStudies.find(s => s.studyInstanceUid === study.studyInstanceUID);
+            const fullStudy = filteredStudies.find(
+              s => s.studyInstanceUid === study.studyInstanceUID
+            );
 
             if (!fullStudy) {
               // Study not loaded yet - show placeholder with remove button
@@ -889,9 +1541,13 @@ function WorkList({
                     key: 'studyInfo',
                     content: (
                       <div className="text-gray-400">
-                        <span className="text-sm">{study.description || 'Study not in Orthanc'}</span>
+                        <span className="text-sm">
+                          {study.description || 'Study not in Orthanc'}
+                        </span>
                         <br />
-                        <span className="text-xs text-gray-500">StudyUID: {study.studyInstanceUID.substring(0, 30)}...</span>
+                        <span className="text-xs text-gray-500">
+                          StudyUID: {study.studyInstanceUID.substring(0, 30)}...
+                        </span>
                       </div>
                     ),
                     gridCol: 10,
@@ -910,11 +1566,16 @@ function WorkList({
                     key: 'removeButton',
                     content: (
                       <button
-                        onClick={(e) => {
+                        onClick={e => {
                           e.stopPropagation();
-                          if (window.confirm('Remove this study from the case?\n\nThis study is not in Orthanc worklist.')) {
+                          if (
+                            window.confirm(
+                              'Remove this study from the case?\n\nThis study is not in Orthanc worklist.'
+                            )
+                          ) {
                             if (caseService) {
-                              caseService.removeStudy(caseItem.caseId, study.studyInstanceUID)
+                              caseService
+                                .removeStudy(caseItem.caseId, study.studyInstanceUID)
                                 .then(() => {
                                   console.log(`✅ Study removed from case`);
                                   window.location.reload();
@@ -926,7 +1587,7 @@ function WorkList({
                             }
                           }
                         }}
-                        className="hover:bg-red-900/50 rounded p-1 transition-colors"
+                        className="rounded p-1 transition-colors hover:bg-red-900/50"
                         title="Remove from Case"
                       >
                         <Icons.Close className="h-4 w-4 text-red-400 hover:text-red-300" />
@@ -960,7 +1621,9 @@ function WorkList({
               const studyDate =
                 date &&
                 moment(date, ['YYYYMMDD', 'YYYY.MM.DD'], true).isValid() &&
-                moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(t('Common:localDateFormat', 'MMM-DD-YYYY'));
+                moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(
+                  t('Common:localDateFormat', 'MMM-DD-YYYY')
+                );
               const studyTime =
                 time &&
                 moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).isValid() &&
@@ -999,7 +1662,7 @@ function WorkList({
                   {
                     key: 'patientName',
                     content: patientName ? makeCopyTooltipCell(patientName) : null,
-                    gridCol: 3,
+                    gridCol: 5,
                   },
                   {
                     key: 'mrn',
@@ -1009,13 +1672,13 @@ function WorkList({
                   {
                     key: 'studyDate',
                     content: (
-                      <>
+                      <div className="pr-4">
                         {studyDate && <span className="mr-4">{studyDate}</span>}
                         {studyTime && <span>{studyTime}</span>}
-                      </>
+                      </div>
                     ),
                     title: `${studyDate || ''} ${studyTime || ''}`,
-                    gridCol: 4,
+                    gridCol: 5,
                   },
                   {
                     key: 'description',
@@ -1023,13 +1686,13 @@ function WorkList({
                       <div className="flex items-center gap-2">
                         {makeCopyTooltipCell(description)}
                         {study.clinicalPhase && (
-                          <span className="bg-blue-900/40 text-blue-300 border-blue-500 rounded border px-2 py-0.5 text-xs whitespace-nowrap">
+                          <span className="whitespace-nowrap rounded border border-blue-500 bg-blue-900/40 px-2 py-0.5 text-xs text-blue-300">
                             {study.clinicalPhase.replace(/([A-Z])/g, ' $1').trim()}
                           </span>
                         )}
                       </div>
                     ),
-                    gridCol: 4,
+                    gridCol: 5,
                   },
                   {
                     key: 'modality',
@@ -1057,11 +1720,16 @@ function WorkList({
                     key: 'removeButton',
                     content: (
                       <button
-                        onClick={(e) => {
+                        onClick={e => {
                           e.stopPropagation(); // Prevent row expansion
-                          if (window.confirm('Remove this study from the case?\n\nThe study will remain in Orthanc.')) {
+                          if (
+                            window.confirm(
+                              'Remove this study from the case?\n\nThe study will remain in Orthanc.'
+                            )
+                          ) {
                             if (caseService) {
-                              caseService.removeStudy(caseItem.caseId, studyInstanceUid)
+                              caseService
+                                .removeStudy(caseItem.caseId, studyInstanceUid)
                                 .then(() => {
                                   console.log(`✅ Study removed from case`);
                                   window.location.reload();
@@ -1073,7 +1741,7 @@ function WorkList({
                             }
                           }
                         }}
-                        className="hover:bg-red-900/50 rounded p-1 transition-colors"
+                        className="rounded p-1 transition-colors hover:bg-red-900/50"
                         title="Remove from Case"
                       >
                         <Icons.Close className="h-4 w-4 text-red-400 hover:text-red-300" />
@@ -1107,49 +1775,58 @@ function WorkList({
                     {(() => {
                       // Get caseStudy from caseStudies map (fetched from API)
                       const studiesInCase = caseStudies.get(caseItem.caseId) || [];
-                      const caseStudy = studiesInCase.find(s => s.studyInstanceUID === studyInstanceUid);
+                      const caseStudy = studiesInCase.find(
+                        s => s.studyInstanceUID === studyInstanceUid
+                      );
 
-                      return caseStudy && caseStudy.series && caseStudy.series.length > 0 && (
-                        <div className="mb-3 rounded border border-gray-700 bg-gray-900/30 p-2">
-                          <div className="mb-1 flex items-center justify-between">
-                            <h5 className="text-xs font-semibold text-gray-300">
-                              Series: {caseStudy.series.filter(s => s.isEnrolled).length}/{caseStudy.series.length} enrolled
-                            </h5>
-                          </div>
-                          <div className="space-y-1">
-                            {caseStudy.series.map(series => (
-                              <div
-                                key={series.seriesInstanceUID}
-                                className="flex items-center gap-2 rounded bg-gray-800/40 px-2 py-1 text-xs"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={series.isEnrolled}
-                                  onChange={async (e) => {
-                                    if (caseService) {
-                                      try {
-                                        await caseService.toggleSeriesEnrollment(
-                                          caseItem.caseId,
-                                          studyInstanceUid,
-                                          series.seriesInstanceUID,
-                                          e.target.checked
-                                        );
-                                        window.location.reload();
-                                      } catch (err) {
-                                        console.error('Failed to toggle series:', err);
+                      return (
+                        caseStudy &&
+                        caseStudy.series &&
+                        caseStudy.series.length > 0 && (
+                          <div className="mb-3 rounded border border-gray-700 bg-gray-900/30 p-2">
+                            <div className="mb-1 flex items-center justify-between">
+                              <h5 className="text-xs font-semibold text-gray-300">
+                                Series: {caseStudy.series.filter(s => s.isEnrolled).length}/
+                                {caseStudy.series.length} enrolled
+                              </h5>
+                            </div>
+                            <div className="space-y-1">
+                              {caseStudy.series.map(series => (
+                                <div
+                                  key={series.seriesInstanceUID}
+                                  className="flex items-center gap-2 rounded bg-gray-800/40 px-2 py-1 text-xs"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={series.isEnrolled}
+                                    onChange={async e => {
+                                      if (caseService) {
+                                        try {
+                                          await caseService.toggleSeriesEnrollment(
+                                            caseItem.caseId,
+                                            studyInstanceUid,
+                                            series.seriesInstanceUID,
+                                            e.target.checked
+                                          );
+                                          window.location.reload();
+                                        } catch (err) {
+                                          console.error('Failed to toggle series:', err);
+                                        }
                                       }
-                                    }
-                                  }}
-                                  className="h-3 w-3"
-                                />
-                                <span className="text-blue-400">#{series.seriesNumber}</span>
-                                <span className="text-gray-400">{series.modality}</span>
-                                <span className="flex-1 text-white">{series.description || '(no description)'}</span>
-                                <span className="text-gray-500">{series.instanceCount} img</span>
-                              </div>
-                            ))}
+                                    }}
+                                    className="h-3 w-3"
+                                  />
+                                  <span className="text-blue-400">#{series.seriesNumber}</span>
+                                  <span className="text-gray-400">{series.modality}</span>
+                                  <span className="flex-1 text-white">
+                                    {series.description || '(no description)'}
+                                  </span>
+                                  <span className="text-gray-500">{series.instanceCount} img</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        </div>
+                        )
                       );
                     })()}
                     <div className="flex flex-row gap-2">
@@ -1173,10 +1850,11 @@ function WorkList({
                         }
                         const modalitiesToCheck = modalities.replaceAll('/', '\\');
 
-                        const { valid: isValidMode, description: invalidModeDescription } = mode.isValidMode({
-                          modalities: modalitiesToCheck,
-                          study: fullStudy,
-                        });
+                        const { valid: isValidMode, description: invalidModeDescription } =
+                          mode.isValidMode({
+                            modalities: modalitiesToCheck,
+                            study: fullStudy,
+                          });
                         if (isValidMode === null) {
                           return null;
                         }
@@ -1238,7 +1916,9 @@ function WorkList({
                   </StudyListExpandedRow>
                 ),
                 onClickRow: () =>
-                  setExpandedRows(s => (isStudyExpanded ? s.filter(n => studyRowKey !== n) : [...s, studyRowKey])),
+                  setExpandedRows(s =>
+                    isStudyExpanded ? s.filter(n => studyRowKey !== n) : [...s, studyRowKey]
+                  ),
                 isExpanded: isStudyExpanded,
                 isStudyRow: true,
               });
@@ -1270,7 +1950,9 @@ function WorkList({
         const studyDate =
           date &&
           moment(date, ['YYYYMMDD', 'YYYY.MM.DD'], true).isValid() &&
-          moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(t('Common:localDateFormat', 'MMM-DD-YYYY'));
+          moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(
+            t('Common:localDateFormat', 'MMM-DD-YYYY')
+          );
         const studyTime =
           time &&
           moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).isValid() &&
@@ -1298,8 +1980,10 @@ function WorkList({
         };
 
         // Get clinical phase if study is in active case
-        const studyInfo = activeCaseId && activeCase ?
-          activeCase.studies.find(s => s.studyInstanceUID === studyInstanceUid) : null;
+        const studyInfo =
+          activeCaseId && activeCase
+            ? activeCase.studies.find(s => s.studyInstanceUID === studyInstanceUid)
+            : null;
         const clinicalPhase = studyInfo?.clinicalPhase;
 
         rows.push({
@@ -1309,7 +1993,7 @@ function WorkList({
             {
               key: 'patientName',
               content: patientName ? makeCopyTooltipCell(patientName) : null,
-              gridCol: 4,
+              gridCol: 5,
             },
             {
               key: 'mrn',
@@ -1319,10 +2003,10 @@ function WorkList({
             {
               key: 'studyDate',
               content: (
-                <>
+                <div className="pr-4">
                   {studyDate && <span className="mr-4">{studyDate}</span>}
                   {studyTime && <span>{studyTime}</span>}
-                </>
+                </div>
               ),
               title: `${studyDate || ''} ${studyTime || ''}`,
               gridCol: 5,
@@ -1333,13 +2017,13 @@ function WorkList({
                 <div className="flex items-center gap-2">
                   {makeCopyTooltipCell(description)}
                   {clinicalPhase && (
-                    <span className="bg-blue-900/40 text-blue-300 border-blue-500 rounded border px-2 py-0.5 text-xs whitespace-nowrap">
+                    <span className="whitespace-nowrap rounded border border-blue-500 bg-blue-900/40 px-2 py-0.5 text-xs text-blue-300">
                       {clinicalPhase.replace(/([A-Z])/g, ' $1').trim()}
                     </span>
                   )}
                 </div>
               ),
-              gridCol: 4,
+              gridCol: 5,
             },
             {
               key: 'modality',
@@ -1374,16 +2058,18 @@ function WorkList({
                 <div className="flex items-center justify-end gap-2">
                   {/* Show if study is already in the active case */}
                   {studyInfo ? (
-                    <span className="text-xs text-green-400 flex items-center gap-1">
+                    <span className="flex items-center gap-1 text-xs text-green-400">
                       <Icons.Checkmark className="h-4 w-4" />
                       In Case
                     </span>
                   ) : activeCaseId ? (
                     <button
-                      onClick={(e) => {
+                      onClick={e => {
                         e.stopPropagation();
                         if (caseService && activeCaseId) {
-                          console.log(`📝 Adding study ${studyInstanceUid} to case ${activeCaseId}`);
+                          console.log(
+                            `📝 Adding study ${studyInstanceUid} to case ${activeCaseId}`
+                          );
                           // Prompt for clinical phase
                           const phase = window.prompt(
                             'Enter clinical phase:\n\n1. PreOperativePlanning\n2. IntraOperative\n3. PostOperative\n4. FollowUp\n\nEnter number (1-4):',
@@ -1394,13 +2080,14 @@ function WorkList({
                             '1': 'PreOperativePlanning',
                             '2': 'IntraOperative',
                             '3': 'PostOperative',
-                            '4': 'FollowUp'
+                            '4': 'FollowUp',
                           };
 
                           const clinicalPhase = phaseMap[phase] || 'PreOperativePlanning';
                           console.log(`📋 Clinical phase: ${clinicalPhase}`);
 
-                          caseService.enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase)
+                          caseService
+                            .enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase)
                             .then(() => {
                               console.log(`✅ Study added to case ${activeCaseId}`);
                               window.location.reload();
@@ -1411,7 +2098,7 @@ function WorkList({
                             });
                         }
                       }}
-                      className="hover:bg-blue-900/50 flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors"
+                      className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors hover:bg-blue-900/50"
                       title="Add to Case"
                     >
                       <Icons.Add className="h-4 w-4 text-blue-400" />
@@ -1467,10 +2154,11 @@ function WorkList({
                   }
                   const modalitiesToCheck = modalities.replaceAll('/', '\\');
 
-                  const { valid: isValidMode, description: invalidModeDescription } = mode.isValidMode({
-                    modalities: modalitiesToCheck,
-                    study,
-                  });
+                  const { valid: isValidMode, description: invalidModeDescription } =
+                    mode.isValidMode({
+                      modalities: modalitiesToCheck,
+                      study,
+                    });
                   if (isValidMode === null) {
                     return null;
                   }
@@ -1551,9 +2239,8 @@ function WorkList({
 
   // In cases view, we don't slice because we're showing hierarchical data
   // In studies view, we slice for pagination
-  const paginatedTableData = viewMode === 'cases'
-    ? tableDataSource
-    : tableDataSource.slice(offset, offsetAndTake);
+  const paginatedTableData =
+    viewMode === 'cases' ? tableDataSource : tableDataSource.slice(offset, offsetAndTake);
 
   const hasStudies = numOfStudies > 0;
 
@@ -1571,7 +2258,8 @@ function WorkList({
       onClick: () =>
         show({
           content: AboutModal,
-          title: AboutModal?.title ?? t('AboutModal:About OHIF Viewer'),
+          // title: AboutModal?.title ?? t('AboutModal:About LifeSync Robotics'),
+          title: AboutModal?.title ?? 'About LifeSync Robotics',
           containerClassName: AboutModal?.containerClassName ?? 'max-w-md',
         }),
     },
@@ -1641,26 +2329,76 @@ function WorkList({
         isReturnEnabled={false}
         WhiteLabeling={appConfig.whiteLabeling}
         showPatientInfo={PatientInfoVisibility.DISABLED}
-        Secondary={<WorkListCaseSelector servicesManager={servicesManager} viewMode={viewMode} setViewMode={setViewMode} cases={cases} loadingCases={loadingCases} />}
+        Secondary={
+          <WorkListCaseSelector
+            servicesManager={servicesManager}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            cases={cases}
+            loadingCases={loadingCases}
+            onCaseCreated={newCase => {
+              setCases(prev => {
+                const exists = prev.some(c => c.caseId === newCase.caseId);
+                return exists ? prev : [...prev, newCase];
+              });
+            }}
+          />
+        }
       />
       <ApiConfigPanel servicesManager={servicesManager} />
       <Onboarding />
       <InvestigationalUseDialog dialogConfiguration={appConfig?.investigationalUseDialog} />
+      {/* Centralized Create Case dialog for WorkList */}
+      <CreateCaseDialog
+        isOpen={isCreateDialogOpen}
+        onClose={() => setIsCreateDialogOpen(false)}
+        onCreateCase={handleCreateCase}
+        servicesManager={servicesManager}
+      />
       <EditCaseDialog
         isOpen={isEditDialogOpen}
         caseData={selectedCase}
         onClose={() => setIsEditDialogOpen(false)}
         onUpdate={handleUpdateCase}
       />
+      {/* Case actions bar: currently only + Create Case, independent of Upload */}
+      <div className="border-b border-black bg-black">
+        <div className="container mx-auto flex items-center justify-start gap-4 px-4 py-3">
+          <ButtonNext
+            onClick={() => setIsCreateDialogOpen(true)}
+            className="!h-auto bg-blue-600 !px-1 !py-0.5 text-sm font-bold hover:bg-blue-700"
+          >
+            <Icons.Add className="mr-0.5 h-4 w-4" />
+            Create Case
+          </ButtonNext>
+        </div>
+      </div>
       <div className="flex h-full flex-col overflow-y-auto">
         <ScrollArea>
           <div className="flex grow flex-col">
             <StudyListFilter
-              numOfStudies={pageNumber * resultsPerPage > 100 ? 101 : numOfStudies}
+              numOfStudies={displayedCount}
+              countLabel={viewMode === 'cases' ? 'Cases' : undefined}
               filtersMeta={filtersMeta}
               filterValues={{ ...filterValues, ...defaultSortValues }}
               onChange={setFilterValues}
-              clearFilters={() => setFilterValues(defaultFilterValues)}
+              clearFilters={() => {
+                console.log('🧹 Clearing filters, resetting to:', defaultFilterValues);
+                // 清空所有查询条件
+                const clearedFilters = { ...defaultFilterValues };
+                setFilterValues(clearedFilters);
+                updateSessionQueryFilterValues(clearedFilters);
+                // 同时清空 URL 参数（暂时不包含 sortBy 和 sortDirection，避免 404 错误）
+                const newSearchParams = new URLSearchParams();
+                // TODO: 暂时注释掉排序参数的保留，避免触发 404 错误
+                if (filterValues.sortBy) {
+                  newSearchParams.set('sortBy', filterValues.sortBy);
+                }
+                if (filterValues.sortDirection && filterValues.sortDirection !== 'none') {
+                  newSearchParams.set('sortDirection', filterValues.sortDirection);
+                }
+                navigate({ search: newSearchParams.toString() }, { replace: true });
+              }}
               isFiltering={isFiltering(filterValues, defaultFilterValues)}
               onUploadClick={uploadProps ? () => show(uploadProps) : undefined}
               getDataSourceConfigurationComponent={
@@ -1694,11 +2432,11 @@ function WorkList({
               </ButtonNext>
             </div>
           )}
-          {hasStudies ? (
+          {displayedCount > 0 ? (
             <div className="flex grow flex-col">
               <StudyListTable
                 tableDataSource={paginatedTableData}
-                numOfStudies={numOfStudies}
+                numOfStudies={displayedCount}
                 querying={querying}
                 filtersMeta={filtersMeta}
               />
@@ -1731,7 +2469,7 @@ function WorkList({
         >
           <div
             className="bg-primary-dark relative max-h-[80vh] w-[90vw] max-w-4xl overflow-hidden rounded-lg border border-gray-700 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
           >
             {/* Modal Header */}
             <div className="border-secondary-light flex items-center justify-between border-b px-6 py-4">
@@ -1745,125 +2483,528 @@ function WorkList({
                 <Icons.Close className="h-5 w-5 text-white" />
               </button>
             </div>
+            {/* Tab Navigation */}
+            <div className="border-secondary-light bg-primary-dark flex border-b px-6">
+              <button
+                className={classnames(
+                  'px-4 py-2 font-semibold transition-colors',
+                  activeTab === 'upload'
+                    ? 'bg-secondary-main border-b-2 border-blue-400 text-white'
+                    : 'text-gray-400 hover:text-white'
+                )}
+                onClick={() => setActiveTab('upload')}
+              >
+                Upload
+              </button>
+              <button
+                className={classnames(
+                  'px-4 py-2 font-semibold transition-colors',
+                  activeTab === 'select'
+                    ? 'bg-secondary-main border-b-2 border-blue-400 text-white'
+                    : 'text-gray-400 hover:text-white'
+                )}
+                onClick={() => setActiveTab('select')}
+              >
+                Select Study
+              </button>
+            </div>
 
             {/* Modal Body */}
-            <div className="max-h-[60vh] overflow-y-auto p-6">
-              {loadingOrthancStudies ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="text-center">
-                    <div className="mb-4 text-white">Loading studies from Orthanc...</div>
-                    <div className="text-gray-400">Please wait</div>
+            <div className="max-h-[60vh] overflow-y-auto">
+              {activeTab === 'upload' && (
+                <div className="p-6">
+                  {/* Upload Method Selection */}
+                  <div className="mb-6">
+                    <label className="mb-3 block text-sm font-semibold text-white">
+                      上传方式：
+                    </label>
+                    <div className="space-y-2 rounded-lg border border-gray-700 bg-gray-900/50 p-4">
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input
+                          type="radio"
+                          name="uploadMethod"
+                          value="standard"
+                          checked={uploadMethod === 'standard'}
+                          onChange={e => setUploadMethod(e.target.value)}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-white">DICOMweb STOW-RS</div>
+                          <div className="text-xs text-gray-400">
+                            DICOMweb STOW-RS, upload directly to Orthanc PACS
+                          </div>
+                        </div>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input
+                          type="radio"
+                          name="uploadMethod"
+                          value="custom"
+                          checked={uploadMethod === 'custom'}
+                          onChange={e => setUploadMethod(e.target.value)}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-white">Custom Upload</div>
+                          <div className="text-xs text-gray-400">
+                            Batch upload via custom API endpoint
+                          </div>
+                        </div>
+                      </label>
+                    </div>
                   </div>
-                </div>
-              ) : orthancStudies.length === 0 ? (
-                <div className="py-12 text-center text-gray-400">
-                  No studies found in Orthanc
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {orthancStudies.map((study) => (
-                    <div
-                      key={study.studyInstanceUID}
-                      className={classnames(
-                        'hover:bg-secondary-dark flex items-center justify-between rounded border p-4 transition-colors',
-                        {
-                          'border-yellow-500/50 bg-yellow-900/20': study.hasCaseId,
-                          'border-gray-700 bg-secondary-main cursor-pointer': !study.hasCaseId,
-                        }
-                      )}
-                      onClick={async () => {
-                        if (study.hasCaseId) {
-                          const confirmAdd = window.confirm(
-                            `⚠️ WARNING: This study is already assigned to case "${study.existingCaseId}".\n\nDo you want to add it to "${addStudyToCaseId}" anyway?`
-                          );
-                          if (!confirmAdd) return;
-                        }
 
-                        // Prompt for clinical phase
-                        const phase = window.prompt(
-                          'Enter clinical phase:\n\n1. PreOperativePlanning\n2. IntraOperative\n3. PostOperative\n4. FollowUp\n\nEnter number (1-4):',
-                          '1'
-                        );
-
-                        const phaseMap = {
-                          '1': 'PreOperativePlanning',
-                          '2': 'IntraOperative',
-                          '3': 'PostOperative',
-                          '4': 'FollowUp',
-                        };
-
-                        const clinicalPhase = phaseMap[phase] || 'PreOperativePlanning';
-
+                  {/* Standard Upload */}
+                  {uploadMethod === 'standard' &&
+                  DicomUploadComponent &&
+                  dataSource.getConfig()?.dicomUploadEnabled ? (
+                    <DicomUploadComponent
+                      dataSource={dataSource}
+                      onComplete={async () => {
+                        // 上传完成后，刷新 Orthanc studies 列表
+                        setLoadingOrthancStudies(true);
                         try {
-                          if (caseService && addStudyToCaseId) {
-                            await caseService.enrollStudy(
-                              addStudyToCaseId,
-                              study.studyInstanceUID,
-                              clinicalPhase,
-                              {
-                                studyDate: study.studyDate,
-                                modalities: study.modalities,
-                                description: study.studyDescription
-                              }
-                            );
-                            console.log(`✅ Study added to case ${addStudyToCaseId}`);
-                            setShowAddStudyModal(false);
-                            window.location.reload();
+                          if (caseService) {
+                            // If adding to a case, enroll the study
+                            if (addStudyToCaseId) {
+                              await caseService.enrollStudy(
+                                addStudyToCaseId,
+                                study.studyInstanceUID,
+                                clinicalPhase,
+                                {
+                                  studyDate: study.studyDate,
+                                  modalities: study.modalities,
+                                  description: study.studyDescription
+                                }
+                              );
+                              console.log(`✅ Study added to case ${addStudyToCaseId}`);
+                              setShowAddStudyModal(false);
+                              window.location.reload();
+                            } else {
+                              // Refresh Orthanc studies list
+                              const studies = await caseService.getAllOrthancStudies();
+                              setOrthancStudies(studies);
+                              // 可选：自动切换到 Select Study 标签页
+                              // setActiveTab('select');
+                            }
                           }
+                          // 刷新页面数据
+                          onRefresh();
                         } catch (err) {
-                          console.error('Failed to add study:', err);
-                          alert('Failed to add study to case: ' + err.message);
+                          console.error('Failed to reload Orthanc studies:', err);
+                        } finally {
+                          setLoadingOrthancStudies(false);
                         }
                       }}
-                    >
-                      <div className="flex-1">
-                        <div className="mb-1 flex items-center gap-2">
-                          <span className="font-semibold text-white">
-                            {study.patientName || 'Unknown'}
-                          </span>
-                          {study.hasCaseId && (
-                            <span className="rounded border border-yellow-500 bg-yellow-900/40 px-2 py-0.5 text-xs text-yellow-300">
-                              ⚠️ Case: {study.existingCaseId}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-sm text-gray-400">
-                          <span className="mr-4">MRN: {study.patientId || 'N/A'}</span>
-                          <span className="mr-4">Date: {study.studyDate || 'N/A'}</span>
-                          <span className="mr-4">Modality: {study.modalities || 'N/A'}</span>
-                          <span>Series: {study.seriesCount}</span>
-                        </div>
-                        <div className="mt-1 text-xs text-gray-500">
-                          {study.studyDescription || 'No description'}
-                        </div>
-                      </div>
-                      <div>
-                        {study.hasCaseId ? (
-                          <span className="text-xs text-yellow-400">Click to override</span>
-                        ) : (
-                          <Icons.Add className="h-6 w-6 text-green-400" />
-                        )}
+                      onStarted={() => {
+                        // 上传开始时，可以显示加载状态
+                        console.log('Upload started');
+                      }}
+                    />
+                  ) : uploadMethod === 'standard' ? (
+                    <div className="flex h-[400px] items-center justify-center rounded-lg border-2 border-dashed border-gray-600">
+                      <div className="text-center text-gray-400">
+                        <p className="mb-2 text-lg">Upload DICOM Files</p>
+                        <p className="text-sm">DICOM upload is not enabled</p>
                       </div>
                     </div>
-                  ))}
+                  ) : null}
+
+                  {/* Custom Upload */}
+                  {uploadMethod === 'custom' && (
+                    <div className="space-y-4">
+                      {/* File Selection */}
+                      <div>
+                        <label className="mb-2 block text-sm font-semibold text-white">
+                          Select Files:
+                        </label>
+                        <div className="rounded-lg border-2 border-dashed border-gray-600 bg-gray-900/30 p-8 text-center">
+                          <input
+                            type="file"
+                            multiple
+                            accept=".dcm,application/dicom"
+                            onChange={handleFileSelect}
+                            className="hidden"
+                            id="file-upload-input"
+                            disabled={isUploading}
+                          />
+                          <input
+                            type="file"
+                            // @ts-ignore - webkitdirectory is a valid HTML attribute but not in React types
+                            webkitdirectory=""
+                            multiple
+                            onChange={handleFileSelect}
+                            className="hidden"
+                            id="folder-upload-input"
+                            disabled={isUploading}
+                          />
+                          <div className="mb-4">
+                            <div className="mb-2 text-4xl">📁</div>
+                            <div className="mb-2 text-white">
+                              Drag files here or click to select
+                            </div>
+                            <div className="mb-4 text-sm text-gray-400">
+                              Supports multiple file upload, format: .dcm
+                            </div>
+                            <div className="flex justify-center gap-3">
+                              <label
+                                htmlFor="file-upload-input"
+                                className="cursor-pointer rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Add Files
+                              </label>
+                              <label
+                                htmlFor="folder-upload-input"
+                                className="cursor-pointer rounded bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Add Folder
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Selected Files List */}
+                        {selectedFiles.length > 0 && (
+                          <div className="mt-4 rounded-lg border border-gray-700 bg-gray-900/50 p-4">
+                            <div className="mb-2 text-sm font-semibold text-white">
+                              Selected Files ({selectedFiles.length}):
+                            </div>
+                            <div className="max-h-40 space-y-2 overflow-y-auto">
+                              {selectedFiles.map((file, index) => (
+                                <div
+                                  key={index}
+                                  className="flex items-center justify-between rounded bg-gray-800/50 px-3 py-2"
+                                >
+                                  <span className="text-sm text-gray-300">{file.name}</span>
+                                  <button
+                                    onClick={() => handleFileRemove(index)}
+                                    className="text-red-400 hover:text-red-300"
+                                    disabled={isUploading}
+                                  >
+                                    <Icons.Close className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Custom Upload Options */}
+                      {/* 自动注册功能已注释
+                      <div className="rounded-lg border border-gray-700 bg-gray-900/50 p-4">
+                        <label className="mb-3 flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={autoEnroll}
+                            onChange={e => setAutoEnroll(e.target.checked)}
+                            className="rounded"
+                            disabled={isUploading}
+                          />
+                          <span className="font-semibold text-white">自动注册到当前 Case</span>
+                        </label>
+                        {autoEnroll && (
+                          <div className="mt-3 space-y-3">
+                            <div>
+                              <label className="mb-2 block text-sm text-gray-300">临床阶段：</label>
+                              <select
+                                value={clinicalPhase}
+                                onChange={e => setClinicalPhase(e.target.value)}
+                                className="w-full rounded border border-gray-600 bg-black px-3 py-2 text-white"
+                                disabled={isUploading}
+                              >
+                                <option value="Diagnostic">Diagnostic</option>
+                                <option value="PreSurgicalOptimization">
+                                  PreSurgicalOptimization
+                                </option>
+                                <option value="PreOperativePlanning">PreOperativePlanning</option>
+                                <option value="PreOperativeCheck">PreOperativeCheck</option>
+                                <option value="IntraOperative">IntraOperative</option>
+                                <option value="PostOperativeImmediate">
+                                  PostOperativeImmediate
+                                </option>
+                                <option value="PostOperativeShortTerm">
+                                  PostOperativeShortTerm
+                                </option>
+                                <option value="PostOperativeLongTerm">PostOperativeLongTerm</option>
+                                <option value="Surveillance">Surveillance</option>
+                                <option value="Revision">Revision</option>
+                              </select>
+                            </div>
+                            {addStudyToCaseId && (
+                              <div className="rounded border border-blue-500/30 bg-blue-900/20 p-3">
+                                <div className="text-sm text-blue-300">
+                                  <span className="font-semibold">将注册到 Case ID:</span>{' '}
+                                  <span className="font-mono text-blue-200">
+                                    {addStudyToCaseId}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                            <p className="text-xs text-gray-400">
+                              勾选后，上传完成后会自动将 study 注册到当前 case
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      */}
+
+                      {/* Upload Button */}
+                      <div className="flex justify-end gap-3">
+                        <button
+                          onClick={() => {
+                            setSelectedFiles([]);
+                            setUploadProgress({});
+                          }}
+                          className="rounded border border-gray-600 bg-gray-800 px-4 py-2 text-white hover:bg-gray-700"
+                          disabled={isUploading || selectedFiles.length === 0}
+                        >
+                          Clear
+                        </button>
+                        <button
+                          onClick={handleCustomUpload}
+                          disabled={isUploading || selectedFiles.length === 0}
+                          className={classnames(
+                            'rounded px-4 py-2 font-semibold text-white transition-colors',
+                            isUploading || selectedFiles.length === 0
+                              ? 'cursor-not-allowed bg-gray-600'
+                              : 'bg-blue-600 hover:bg-blue-700'
+                          )}
+                        >
+                          {isUploading ? 'Uploading...' : 'Start Upload'}
+                        </button>
+                      </div>
+
+                      {/* Upload Progress */}
+                      {isUploading && (
+                        <div className="rounded-lg border border-blue-500/50 bg-blue-900/20 p-4">
+                          <div className="mb-2 text-sm text-blue-300">上传中，请稍候...</div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-gray-700">
+                            <div
+                              className="h-full animate-pulse bg-blue-500"
+                              style={{ width: '50%' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'select' && (
+                <div>
+                  {/* Search Bar - TODO: 搜索功能暂时注释，后续实现 */}
+                  {/* <div className="border-secondary-light bg-secondary-main flex items-center gap-3 border-b p-4">
+                    <select
+                      value={searchFilter}
+                      onChange={e => setSearchFilter(e.target.value)}
+                      className="w-40 rounded border border-gray-600 bg-black px-3 py-2 text-white"
+                    >
+                      <option value="studyUID">StudyUID</option>
+                      <option value="patientName">Patient Name</option>
+                      <option value="mrn">MRN</option>
+                      <option value="studyDate">Study Date</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      placeholder="Enter search term..."
+                      className="flex-1 rounded border border-gray-600 bg-black px-3 py-2 text-white placeholder-gray-500"
+                    />
+                    <button
+                      onClick={() => {
+                        // TODO: 实现搜索功能
+                        console.log('Search clicked:', searchQuery, searchFilter);
+                      }}
+                      className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+                    >
+                      Search
+                    </button>
+                  </div> */}
+
+                  {/* Study List */}
+                  <div className="p-6">
+                    {loadingOrthancStudies ? (
+                      <div className="flex items-center justify-center py-12">
+                        <div className="text-center">
+                          <div className="mb-4 text-white">Loading studies from Orthanc...</div>
+                          <div className="text-gray-400">Please wait</div>
+                        </div>
+                      </div>
+                    ) : filteredOrthancStudies.length === 0 ? (
+                      <div className="py-12 text-center text-gray-400">
+                        No studies found in Orthanc
+                        {/* {searchQuery
+                          ? 'No studies found matching your search'
+                          : 'No studies found in Orthanc'} */}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {filteredOrthancStudies.map(study => (
+                          <div
+                            key={study.studyInstanceUID}
+                            className={classnames(
+                              'hover:bg-secondary-dark flex items-center justify-between rounded border p-4 transition-colors',
+                              {
+                                'border-yellow-500/50 bg-yellow-900/20': study.hasCaseId,
+                                'bg-secondary-main cursor-pointer border-gray-700':
+                                  !study.hasCaseId,
+                              }
+                            )}
+                            onClick={() => {
+                              if (!isEnrolling) {
+                                handleStudyClick(study);
+                              }
+                            }}
+                          >
+                            <div className="flex-1">
+                              <div className="mb-1 flex items-center gap-2">
+                                <span className="font-semibold text-white">
+                                  {study.patientName || 'Unknown'}
+                                </span>
+                                {study.hasCaseId && (
+                                  <span className="rounded border border-yellow-500 bg-yellow-900/40 px-2 py-0.5 text-xs text-yellow-300">
+                                    ⚠️ Case: {study.existingCaseId}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-sm text-gray-400">
+                                <span className="mr-4">MRN: {study.patientId || 'N/A'}</span>
+                                <span className="mr-4">Date: {study.studyDate || 'N/A'}</span>
+                                <span className="mr-4">Modality: {study.modalities || 'N/A'}</span>
+                                <span>Series: {study.seriesCount}</span>
+                              </div>
+                              <div className="mt-1 text-xs text-gray-500">
+                                {study.studyDescription || 'No description'}
+                              </div>
+                            </div>
+                            <div>
+                              {study.hasCaseId ? (
+                                <span className="text-xs text-yellow-400">Click to override</span>
+                              ) : (
+                                <Icons.Add className="h-6 w-6 text-green-400" />
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
+
+            {/* Enroll Study Confirmation Dialog */}
+            {showEnrollDialog && selectedStudy && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                <div className="bg-secondary-main border-secondary-light w-full max-w-md rounded-lg border p-6 shadow-lg">
+                  <h3 className="mb-4 text-lg font-semibold text-white">Add Study to Case</h3>
+
+                  {/* Study Info */}
+                  <div className="bg-secondary-dark mb-4 rounded p-4">
+                    <div className="mb-2">
+                      <span className="text-sm text-gray-400">Patient:</span>
+                      <span className="ml-2 font-semibold text-white">
+                        {selectedStudy.patientName || 'Unknown'}
+                      </span>
+                    </div>
+                    <div className="mb-2">
+                      <span className="text-sm text-gray-400">MRN:</span>
+                      <span className="ml-2 text-white">{selectedStudy.patientId || 'N/A'}</span>
+                    </div>
+                    <div className="mb-2">
+                      <span className="text-sm text-gray-400">Date:</span>
+                      <span className="ml-2 text-white">{selectedStudy.studyDate || 'N/A'}</span>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-400">Case ID:</span>
+                      <span className="ml-2 text-white">{addStudyToCaseId}</span>
+                    </div>
+                    {selectedStudy.hasCaseId && (
+                      <div className="mt-3 rounded border border-yellow-500/50 bg-yellow-900/20 p-2">
+                        <span className="text-xs text-yellow-300">
+                          ⚠️ This study is already assigned to case &quot;
+                          {selectedStudy.existingCaseId || selectedStudy.caseId}&quot;
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Clinical Phase Selector */}
+                  <div className="mb-4">
+                    <label className="mb-2 block text-sm text-gray-300">Clinical Phase:</label>
+                    <select
+                      value={selectedClinicalPhase}
+                      onChange={e => setSelectedClinicalPhase(e.target.value)}
+                      disabled={isEnrolling}
+                      className="w-full rounded border border-gray-600 bg-black px-3 py-2 text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                    >
+                      {Object.entries(CLINICAL_PHASE_LABELS).map(([key, label]) => (
+                        <option
+                          key={key}
+                          value={key}
+                        >
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Error Message */}
+                  {enrollError && (
+                    <div className="mb-4 rounded border border-red-500/50 bg-red-900/30 p-3">
+                      <span className="text-sm text-red-300">{enrollError}</span>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end gap-3">
+                    <Button
+                      onClick={() => {
+                        setShowEnrollDialog(false);
+                        setSelectedStudy(null);
+                        setEnrollError(null);
+                      }}
+                      disabled={isEnrolling}
+                      className="bg-secondary-dark hover:bg-secondary-light"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleEnrollStudy}
+                      disabled={isEnrolling}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      {isEnrolling ? 'Adding...' : 'Confirm Add'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Modal Footer */}
             <div className="border-secondary-light border-t px-6 py-4">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-400">
-                  {orthancStudies.length} studies available
-                  {orthancStudies.filter((s) => s.hasCaseId).length > 0 && (
+                  {/* {orthancStudies.length} studies available */}
+                  {activeTab === 'select'
+                    ? `${orthancStudies.length} studies available`
+                    : `${orthancStudies.length} studies available`}
+                  {/* TODO: 搜索功能暂时注释
+                  {activeTab === 'select'
+                    ? `${filteredOrthancStudies.length} of ${orthancStudies.length} studies`
+                    : `${orthancStudies.length} studies available`}
+                  */}
+                  {orthancStudies.filter(s => s.hasCaseId).length > 0 && (
                     <span className="ml-2 text-yellow-400">
-                      ({orthancStudies.filter((s) => s.hasCaseId).length} already assigned)
+                      ({orthancStudies.filter(s => s.hasCaseId).length} already assigned)
                     </span>
                   )}
                 </div>
                 <Button
                   onClick={() => setShowAddStudyModal(false)}
-                  size="small"
                   className="bg-secondary-dark hover:bg-secondary-light"
                 >
                   Close
@@ -1921,12 +3062,32 @@ function _getQueryFilterValues(params) {
   }
   params = newParams;
 
+  // 获取日期参数，并验证格式
+  const startDateParam = params.get('startdate');
+  const endDateParam = params.get('enddate');
+
+  // 验证日期格式：必须是有效的日期字符串（至少8个字符，YYYYMMDD 或 YYYY-MM-DD）
+  const isValidDateString = dateStr => {
+    if (!dateStr || dateStr.trim().length < 8) {
+      return false;
+    }
+    // 检查是否是 YYYYMMDD 格式（8位数字）
+    if (/^\d{8}$/.test(dateStr.trim())) {
+      return true;
+    }
+    // 检查是否是 YYYY-MM-DD 格式（带连字符）
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+      return true;
+    }
+    return false;
+  };
+
   const queryFilterValues = {
     patientName: params.get('patientname'),
     mrn: params.get('mrn'),
     studyDate: {
-      startDate: params.get('startdate') || null,
-      endDate: params.get('enddate') || null,
+      startDate: isValidDateString(startDateParam) ? startDateParam : null,
+      endDate: isValidDateString(endDateParam) ? endDateParam : null,
     },
     description: params.get('description'),
     modalities: params.get('modalities') ? params.get('modalities').split(',') : [],
