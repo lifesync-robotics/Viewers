@@ -101,7 +101,7 @@ export class ToolProjectionRenderer {
     try {
       // Get viewport name for debugging
       const viewportName = viewport.id || 'unknown';
-      
+
       if (shouldLog) {
         console.log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
         console.log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
@@ -127,7 +127,7 @@ export class ToolProjectionRenderer {
         console.log(`\n📐 Viewport Plane Info:`);
         console.log(`   Plane Normal: [${planeNormal[0].toFixed(3)}, ${planeNormal[1].toFixed(3)}, ${planeNormal[2].toFixed(3)}]`);
         console.log(`   Plane Point (focal): [${planePoint[0].toFixed(1)}, ${planePoint[1].toFixed(1)}, ${planePoint[2].toFixed(1)}]`);
-        
+
         // Identify plane type based on normal
         let planeType = 'Unknown';
         if (Math.abs(planeNormal[2]) > 0.9) planeType = 'Axial (Z-normal)';
@@ -168,27 +168,17 @@ export class ToolProjectionRenderer {
       const PARALLEL_THRESHOLD = 0.001;
       if (Math.abs(denominator) < PARALLEL_THRESHOLD) {
         // Tool is parallel to plane
-        // Check if origin is close to plane (within 1mm)
+        // Always show projection, even if tool is far from plane
         const distanceToPlane = Math.abs(vec3.dot(planeNormal, originToPlane));
 
         if (shouldLog) {
           console.log(`   ⚠️ Tool is PARALLEL to plane`);
           console.log(`   Distance to plane: ${distanceToPlane.toFixed(2)}mm`);
+          console.log(`   ✅ Always showing projected line (dashed) regardless of distance`);
         }
 
-        if (distanceToPlane < 1.0) {
-          // Tool is on or very close to plane - project entire line
-          if (shouldLog) {
-            console.log(`   ✅ Tool is ON the plane - showing projected line (dashed)`);
-          }
-          this._renderProjectedLine(viewport, originVec, tipVec);
-        } else {
-          // Tool is parallel but far from plane - don't show
-          if (shouldLog) {
-            console.log(`   ❌ Tool is too far from plane - not showing`);
-          }
-          this._clearViewportProjection(viewport.id);
-        }
+        // Always show projection, even if far from plane
+        this._renderProjectedLine(viewport, originVec, tipVec, distanceToPlane);
         return;
       }
 
@@ -204,31 +194,24 @@ export class ToolProjectionRenderer {
       if (t < 0 || t > toolLength) {
         const originDistance = Math.abs(vec3.dot(planeNormal, vec3.subtract(vec3.create(), originVec, planePoint)));
         const tipDistance = Math.abs(vec3.dot(planeNormal, vec3.subtract(vec3.create(), tipVec, planePoint)));
+        const minDistance = Math.min(originDistance, tipDistance);
 
         if (shouldLog) {
           console.log(`   ⚠️ Intersection OUTSIDE tool segment`);
           console.log(`   Origin distance from plane: ${originDistance.toFixed(2)}mm`);
           console.log(`   Tip distance from plane: ${tipDistance.toFixed(2)}mm`);
+          console.log(`   ✅ Always showing projected line (dashed) regardless of distance`);
         }
 
-        const MIN_DISTANCE = 5.0; // 5mm threshold
-        if (originDistance < MIN_DISTANCE || tipDistance < MIN_DISTANCE) {
-          if (shouldLog) {
-            console.log(`   ✅ Close enough - showing projected line (dashed)`);
-          }
-          this._renderProjectedLine(viewport, originVec, tipVec);
-        } else {
-          if (shouldLog) {
-            console.log(`   ❌ Too far - not showing`);
-          }
-          this._clearViewportProjection(viewport.id);
-        }
+        // Always show projection, even if far from plane
+        // Pass minimum distance to adjust opacity/visibility
+        this._renderProjectedLine(viewport, originVec, tipVec, minDistance);
         return;
       }
 
       // Calculate intersection point
       const intersectionPoint = vec3.scaleAndAdd(vec3.create(), originVec, toolDirection, t);
-      
+
       if (shouldLog) {
         console.log(`   ✅ INTERSECTION FOUND!`);
         console.log(`   Intersection point: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
@@ -246,8 +229,9 @@ export class ToolProjectionRenderer {
 
   /**
    * Render projected line (tool is parallel to plane or close to plane)
+   * @param distanceToPlane - Distance from tool to plane in mm (optional, for opacity adjustment)
    */
-  private _renderProjectedLine(viewport: any, origin: vec3, tip: vec3): void {
+  private _renderProjectedLine(viewport: any, origin: vec3, tip: vec3, distanceToPlane?: number): void {
     try {
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
       const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
@@ -264,8 +248,14 @@ export class ToolProjectionRenderer {
       }
 
       // Draw as dashed line to indicate it's a projection, not intersection
-      this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true);
-      this._drawOriginCircle(svgElement, viewport.id, originCanvas);
+      // Adjust opacity based on distance: closer = more opaque, farther = more transparent
+      // Distance > 50mm: opacity 0.3, distance < 5mm: opacity 0.8
+      const opacity = distanceToPlane !== undefined
+        ? Math.max(0.3, Math.min(0.8, 0.8 - (distanceToPlane / 50.0) * 0.5))
+        : 0.7;
+
+      this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true, opacity);
+      this._drawOriginCircle(svgElement, viewport.id, originCanvas, opacity);
     } catch (error) {
       console.error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
     }
@@ -390,13 +380,15 @@ export class ToolProjectionRenderer {
 
   /**
    * Draw projection line (origin to tip) on SVG
+   * @param opacity - Opacity value (0-1), defaults to 0.7 for dashed, 0.9 for solid
    */
   private _drawProjectionLine(
     svg: SVGElement,
     viewportId: string,
     originCanvas: number[],
     tipCanvas: number[],
-    isDashed: boolean = false
+    isDashed: boolean = false,
+    opacity?: number
   ): void {
     // Get canvas bounds for clipping (use SVG dimensions)
     const canvasWidth = parseFloat(svg.getAttribute('width') || '0');
@@ -432,18 +424,20 @@ export class ToolProjectionRenderer {
     line.setAttribute('y2', tip[1].toString());
 
     // Style based on line type
+    const lineOpacity = opacity !== undefined ? opacity : (isDashed ? 0.7 : 0.9);
+
     if (isDashed) {
       // Dashed line = projection (tool parallel to plane or near plane)
       line.setAttribute('stroke', '#ffaa00'); // Orange color for projection
       line.setAttribute('stroke-width', '2');
       line.setAttribute('stroke-dasharray', '8,4'); // Dashed line
-      line.setAttribute('opacity', '0.7');
+      line.setAttribute('opacity', lineOpacity.toString());
       line.setAttribute('marker-end', `url(#arrowhead-dashed-${viewportId})`);
     } else {
       // Solid line = intersection (tool crosses plane)
       line.setAttribute('stroke', '#00ff00'); // Green color for intersection
       line.setAttribute('stroke-width', '3');
-      line.setAttribute('opacity', '0.9');
+      line.setAttribute('opacity', lineOpacity.toString());
       line.setAttribute('marker-end', `url(#arrowhead-solid-${viewportId})`);
     }
 
@@ -523,8 +517,9 @@ export class ToolProjectionRenderer {
 
   /**
    * Draw origin circle
+   * @param opacity - Opacity value (0-1), defaults to 0.9
    */
-  private _drawOriginCircle(svg: SVGElement, viewportId: string, originCanvas: number[]): void {
+  private _drawOriginCircle(svg: SVGElement, viewportId: string, originCanvas: number[], opacity: number = 0.9): void {
     // Remove existing circle if any
     const existingCircle = svg.querySelector(`[data-id="origin-circle-${viewportId}"]`);
     if (existingCircle) {
@@ -540,7 +535,7 @@ export class ToolProjectionRenderer {
     circle.setAttribute('fill', '#0088ff'); // Blue color for origin
     circle.setAttribute('stroke', '#ffffff');
     circle.setAttribute('stroke-width', '2');
-    circle.setAttribute('opacity', '0.9');
+    circle.setAttribute('opacity', opacity.toString());
 
     svg.appendChild(circle);
   }
