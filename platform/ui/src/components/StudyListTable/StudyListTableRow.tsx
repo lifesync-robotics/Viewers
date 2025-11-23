@@ -78,7 +78,7 @@ const StudyListTableRow = props => {
                     );
                   })}
                 </tr>
-                {isExpanded && (
+                {isExpanded && expandedContent && (
                   <tr className="max-h-0 w-full select-text overflow-hidden bg-black">
                     <td colSpan={row.length}>{expandedContent}</td>
                   </tr>
@@ -105,7 +105,7 @@ StudyListTableRow.propTypes = {
         gridCol: PropTypes.number.isRequired,
       })
     ).isRequired,
-    expandedContent: PropTypes.node.isRequired,
+    expandedContent: PropTypes.node, // Made optional to support rows without expanded content
     onClickRow: PropTypes.func.isRequired,
     isExpanded: PropTypes.bool.isRequired,
     dataCY: PropTypes.string,

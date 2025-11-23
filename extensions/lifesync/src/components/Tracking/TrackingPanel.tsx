@@ -657,8 +657,8 @@ function PanelTracking() {
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <div className="text-white font-medium">
-                          {toolId.toUpperCase()}
+                      <div className="text-white font-medium">
+                        {toolId.toUpperCase()}
                         </div>
                         {isSelected && (
                           <div className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">

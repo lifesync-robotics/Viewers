@@ -2,6 +2,7 @@ import getPanelModule from './panels/getPanelModule';
 import getToolbarModule from './tools/getToolbarModule';
 import getCommandsModule from './commandsModule';
 import TrackingService from './services/TrackingService';
+import RegistrationService from './services/RegistrationService';
 import LifeSyncWorklist from './components/Worklist/LifeSyncWorklist';
 import { id } from './id.js';
 
@@ -53,13 +54,20 @@ const lifesyncExtension = {
           return new TrackingService(servicesManager);
         },
       },
+      {
+        name: 'registrationService',
+        create: ({ configuration = {} }) => {
+          return new RegistrationService(servicesManager, configuration);
+        },
+      },
     ];
   },
 
   preRegistration({ servicesManager }) {
-    // Register TrackingService using the REGISTRATION pattern
+    // Register services using the REGISTRATION pattern
     servicesManager.registerService(TrackingService.REGISTRATION);
-    console.log('✅ LifeSync extension pre-registration completed - TrackingService registered');
+    servicesManager.registerService(RegistrationService.REGISTRATION);
+    console.log('✅ LifeSync extension pre-registration completed - Services registered');
   },
 
   onModeEnter({ servicesManager }) {

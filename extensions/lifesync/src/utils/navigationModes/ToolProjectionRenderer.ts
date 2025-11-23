@@ -254,7 +254,7 @@ export class ToolProjectionRenderer {
           console.log(`   Origin distance from plane: ${originDistance.toFixed(2)}mm`);
           console.log(`   Tip distance from plane: ${tipDistance.toFixed(2)}mm`);
           console.log(`   ✅ Always showing projected line (dashed) regardless of distance`);
-        }
+          }
 
         // Always show projection, even if far from plane
         // Pass minimum distance to adjust color (green if within ±2mm, red otherwise)

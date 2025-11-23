@@ -31,7 +31,7 @@ StudyListTable.propTypes = {
   tableDataSource: PropTypes.arrayOf(
     PropTypes.shape({
       row: PropTypes.array.isRequired,
-      expandedContent: PropTypes.node.isRequired,
+      expandedContent: PropTypes.node, // Made optional to support rows without expanded content
       querying: PropTypes.bool,
       onClickRow: PropTypes.func.isRequired,
       isExpanded: PropTypes.bool.isRequired,
