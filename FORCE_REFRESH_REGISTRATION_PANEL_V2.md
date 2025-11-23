@@ -154,3 +154,4 @@ ls -la extensions/lifesync/src/components/Registration/FiducialTemplateEditorPan
 3. 检查浏览器网络标签页，确认新的 JavaScript 文件已加载
 
 4. 尝试使用无痕/隐私模式打开浏览器
+

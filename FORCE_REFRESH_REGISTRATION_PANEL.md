@@ -119,3 +119,4 @@ ls -la extensions/lifesync/src/components/Registration/ManualRegistrationPanel.t
 - [ ] 浏览器控制台没有红色错误
 - [ ] 可以看到 "Manual Fiducial" 和 "Auto (Phantom)" 标签页
 - [ ] 可以看到 "📋 Fiducial Template Management" 区域在顶部
+
