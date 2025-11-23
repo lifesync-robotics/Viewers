@@ -1071,13 +1071,14 @@ function PanelTracking() {
               </button>
             )}
 
-            <button
+            {/* Set Center button - Hidden */}
+            {/* <button
               onClick={handleSetCenter}
               disabled={!isNavigating}
               className="w-full p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded text-sm transition-colors"
             >
               📍 Set Center
-            </button>
+            </button> */}
           </div>
         </div>
 
@@ -1109,15 +1110,17 @@ function PanelTracking() {
             ⚙️ Configure Tracking
           </button>
 
-          <button
+          {/* Refresh Configuration button - Hidden */}
+          {/* <button
             onClick={loadConfig}
             disabled={loading}
             className="w-full p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded transition-colors"
           >
             Refresh Configuration
-          </button>
+          </button> */}
 
-          <button
+          {/* Reload Tracking Servers button - Hidden */}
+          {/* <button
             onClick={async () => {
               try{
                 const response = await fetch('/api/tracking/reload-config', {
@@ -1138,7 +1141,7 @@ function PanelTracking() {
             className="w-full p-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 text-white rounded transition-colors"
           >
             Reload Tracking Servers
-          </button>
+          </button> */}
         </div>
 
         {/* Footer - Minimal Info */}
