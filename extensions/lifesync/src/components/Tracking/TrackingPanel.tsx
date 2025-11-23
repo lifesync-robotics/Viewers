@@ -132,6 +132,9 @@ function PanelTracking() {
   // Extension length for instrument projection mode
   const [extensionLength, setExtensionLength] = React.useState(50); // Default 50mm (5cm)
 
+  // Selected tool for visualization
+  const [selectedToolId, setSelectedToolId] = React.useState<string | null>(null);
+
   // Initialize NavigationController early so mode switching works even when navigation is not started
   React.useEffect(() => {
     const initNavigationController = async () => {
@@ -428,6 +431,19 @@ function PanelTracking() {
           frame_number: data.frame_number || 0
         });
 
+        // Auto-select first tool if no selection and tools are available
+        if (!selectedToolId && data.tools) {
+          const availableTools = Object.entries(data.tools)
+            .filter(([toolId, toolData]: [string, any]) => !toolData.is_patient_reference && toolData.visible)
+            .map(([toolId]) => toolId);
+
+          if (availableTools.length > 0) {
+            const firstTool = availableTools[0];
+            setSelectedToolId(firstTool);
+            trackingService.setSelectedTool(firstTool);
+          }
+        }
+
         // Log periodically (every 100th frame)
         if (data.frame_number % 100 === 0) {
           console.log('📊 TrackingPanel: Tracking data received:', {
@@ -620,18 +636,35 @@ function PanelTracking() {
                 .filter(([toolId, toolData]) => !toolData.is_patient_reference)  // 🆕 过滤掉 Patient Reference
                 .map(([toolId, toolData]) => {
                 const coords = toolData.coordinates[coordinateSystem];
+                const isSelected = selectedToolId === toolId;
                 return (
                   <div
                     key={toolId}
-                    className={`p-3 rounded border ${
-                      toolData.visible
-                        ? 'bg-gray-800 border-gray-600'
-                        : 'bg-gray-900 border-gray-700 opacity-50'
+                    onClick={() => {
+                      if (toolData.visible) {
+                        setSelectedToolId(toolId);
+                        trackingService.setSelectedTool(toolId);
+                        console.log(`🎯 Selected tool for visualization: ${toolId}`);
+                      }
+                    }}
+                    className={`p-3 rounded border cursor-pointer transition-all ${
+                      isSelected
+                        ? 'bg-blue-900 border-blue-500 ring-2 ring-blue-400'
+                        : toolData.visible
+                          ? 'bg-gray-800 border-gray-600 hover:bg-gray-700'
+                          : 'bg-gray-900 border-gray-700 opacity-50 cursor-not-allowed'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-white font-medium">
-                        {toolId.toUpperCase()}
+                      <div className="flex items-center gap-2">
+                        <div className="text-white font-medium">
+                          {toolId.toUpperCase()}
+                        </div>
+                        {isSelected && (
+                          <div className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">
+                            VISUALIZED
+                          </div>
+                        )}
                       </div>
                       <div className={`text-xs ${
                         toolData.visible ? 'text-green-400' : 'text-red-400'
