@@ -18,12 +18,14 @@ export interface ToolRepresentation {
 export class ToolProjectionRenderer {
   private servicesManager: any;
   private projectionSVGElements: Map<string, SVGElement> = new Map(); // viewportId -> SVG element
-  private extensionLength: number = 200; // 200mm = 20cm default (increased for better visibility)
+  private extensionLength: number = 50; // 50mm = 5cm default
+  private instrumentLength: number = 200; // 200mm = 20cm default (instrument body length in -z direction)
   private debugCount: Map<string, number> = new Map(); // Per-viewport debug counter
 
-  constructor(servicesManager: any, extensionLength: number = 200) {
+  constructor(servicesManager: any, extensionLength: number = 50, instrumentLength: number = 200) {
     this.servicesManager = servicesManager;
     this.extensionLength = extensionLength;
+    this.instrumentLength = instrumentLength;
   }
 
   /**
@@ -36,8 +38,12 @@ export class ToolProjectionRenderer {
       return;
     }
 
-    // Calculate tip point if not provided
+    // Calculate tip point if not provided (extension part)
     const tipPoint = toolRep.tipPoint || this._calculateTipPoint(toolRep);
+
+    // Calculate instrument base point (origin - zAxis * instrumentLength)
+    // This represents the back end of the instrument body
+    const instrumentBase = this._calculateInstrumentBase(toolRep);
 
     const viewports = renderingEngine.getViewports();
 
@@ -56,6 +62,10 @@ export class ToolProjectionRenderer {
         return; // Skip 3D viewports
       }
 
+      // Render instrument body (solid line from base to origin)
+      this._renderInstrumentBody(viewport, instrumentBase, toolRep.origin, toolRep.zAxis);
+
+      // Render extension part (from origin to tip)
       this._renderProjectionOnViewport(viewport, toolRep.origin, tipPoint, toolRep.zAxis);
     });
   }
@@ -72,6 +82,48 @@ export class ToolProjectionRenderer {
 
     // Scale zAxis by extension length
     vec3.scale(zAxis, zAxis, toolRep.extensionLength);
+
+    return [
+      toolRep.origin[0] + zAxis[0],
+      toolRep.origin[1] + zAxis[1],
+      toolRep.origin[2] + zAxis[2]
+    ];
+  }
+
+  /**
+   * Calculate instrument base point: origin - zAxis * instrumentLength
+   * This represents the back end of the instrument body (in -z direction)
+   */
+  private _calculateInstrumentBase(toolRep: ToolRepresentation): number[] {
+    const zAxis = vec3.fromValues(
+      toolRep.zAxis[0],
+      toolRep.zAxis[1],
+      toolRep.zAxis[2]
+    );
+
+    // Scale zAxis by instrument length (negative direction)
+    vec3.scale(zAxis, zAxis, -this.instrumentLength);
+
+    return [
+      toolRep.origin[0] + zAxis[0],
+      toolRep.origin[1] + zAxis[1],
+      toolRep.origin[2] + zAxis[2]
+    ];
+  }
+
+  /**
+   * Calculate instrument base point: origin - zAxis * instrumentLength
+   * This represents the back end of the instrument body (in -z direction)
+   */
+  private _calculateInstrumentBase(toolRep: ToolRepresentation): number[] {
+    const zAxis = vec3.fromValues(
+      toolRep.zAxis[0],
+      toolRep.zAxis[1],
+      toolRep.zAxis[2]
+    );
+
+    // Scale zAxis by instrument length (negative direction)
+    vec3.scale(zAxis, zAxis, -this.instrumentLength);
 
     return [
       toolRep.origin[0] + zAxis[0],
@@ -178,6 +230,7 @@ export class ToolProjectionRenderer {
         }
 
         // Always show projection, even if far from plane
+        // Pass distance to determine color (green if within ±2mm, red otherwise)
         this._renderProjectedLine(viewport, originVec, tipVec, distanceToPlane);
         return;
       }
@@ -204,7 +257,7 @@ export class ToolProjectionRenderer {
         }
 
         // Always show projection, even if far from plane
-        // Pass minimum distance to adjust opacity/visibility
+        // Pass minimum distance to adjust color (green if within ±2mm, red otherwise)
         this._renderProjectedLine(viewport, originVec, tipVec, minDistance);
         return;
       }
@@ -212,18 +265,51 @@ export class ToolProjectionRenderer {
       // Calculate intersection point
       const intersectionPoint = vec3.scaleAndAdd(vec3.create(), originVec, toolDirection, t);
 
+      // Since the line intersects the plane, the distance from line to plane is 0
+      // This means the tool is crossing the slice, so it should be green
+      const distanceToPlane = 0.0;
+
       if (shouldLog) {
         console.log(`   ✅ INTERSECTION FOUND!`);
         console.log(`   Intersection point: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
-        console.log(`   → Drawing SOLID GREEN line from origin to intersection`);
+        console.log(`   Line-to-plane distance: ${distanceToPlane.toFixed(2)}mm (line intersects plane)`);
+        console.log(`   → Drawing SOLID line from origin to intersection`);
       }
 
-      this._renderIntersectionLine(viewport, originVec, intersectionPoint);
+      this._renderIntersectionLine(viewport, originVec, intersectionPoint, distanceToPlane);
 
     } catch (error) {
       console.error(`❌ Error rendering projection on ${viewport.id}:`, error);
       // Fallback to simple worldToCanvas projection if complex math fails
       this._renderSimpleProjectionFallback(viewport, origin, tipPoint);
+    }
+  }
+
+  /**
+   * Render instrument body (solid line from base to origin, representing the physical instrument)
+   * @param base - Instrument base point (back end)
+   * @param origin - Instrument origin point (tip of instrument body)
+   * @param zAxis - Tool Z-axis direction
+   */
+  private _renderInstrumentBody(viewport: any, base: number[], origin: number[], zAxis: number[]): void {
+    try {
+      const baseCanvas = viewport.worldToCanvas([base[0], base[1], base[2]]);
+      const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
+
+      if (!this._isValidCanvasPoint(baseCanvas) || !this._isValidCanvasPoint(originCanvas)) {
+        return; // Don't clear, just skip rendering
+      }
+
+      const svgElement = this._getOrCreateSVGOverlay(viewport);
+      if (!svgElement) {
+        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        return;
+      }
+
+      // Draw instrument body as solid line (always visible, represents physical instrument)
+      this._drawInstrumentBodyLine(svgElement, viewport.id, baseCanvas, originCanvas);
+    } catch (error) {
+      console.error(`❌ Error rendering instrument body on ${viewport.id}:`, error);
     }
   }
 
@@ -254,7 +340,8 @@ export class ToolProjectionRenderer {
         ? Math.max(0.3, Math.min(0.8, 0.8 - (distanceToPlane / 50.0) * 0.5))
         : 0.7;
 
-      this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true, opacity);
+      // Pass distance to determine color (green if within ±2mm, red otherwise)
+      this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true, opacity, distanceToPlane);
       this._drawOriginCircle(svgElement, viewport.id, originCanvas, opacity);
     } catch (error) {
       console.error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
@@ -263,8 +350,9 @@ export class ToolProjectionRenderer {
 
   /**
    * Render intersection line (tool crosses the plane)
+   * @param distanceToPlane - Distance from tool origin to plane in mm (for color determination)
    */
-  private _renderIntersectionLine(viewport: any, origin: vec3, intersection: vec3): void {
+  private _renderIntersectionLine(viewport: any, origin: vec3, intersection: vec3, distanceToPlane?: number): void {
     try {
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
       const intersectionCanvas = viewport.worldToCanvas([intersection[0], intersection[1], intersection[2]]);
@@ -281,7 +369,8 @@ export class ToolProjectionRenderer {
       }
 
       // Draw as solid line to indicate actual intersection
-      this._drawProjectionLine(svgElement, viewport.id, originCanvas, intersectionCanvas, false);
+      // Pass distance to determine color (green if within ±2mm, red otherwise)
+      this._drawProjectionLine(svgElement, viewport.id, originCanvas, intersectionCanvas, false, undefined, distanceToPlane);
       this._drawOriginCircle(svgElement, viewport.id, originCanvas);
       this._drawIntersectionMarker(svgElement, viewport.id, intersectionCanvas);
     } catch (error) {
@@ -381,6 +470,7 @@ export class ToolProjectionRenderer {
   /**
    * Draw projection line (origin to tip) on SVG
    * @param opacity - Opacity value (0-1), defaults to 0.7 for dashed, 0.9 for solid
+   * @param distanceToPlane - Distance from tool to plane in mm (for color determination: green if within ±2mm, red otherwise)
    */
   private _drawProjectionLine(
     svg: SVGElement,
@@ -388,7 +478,8 @@ export class ToolProjectionRenderer {
     originCanvas: number[],
     tipCanvas: number[],
     isDashed: boolean = false,
-    opacity?: number
+    opacity?: number,
+    distanceToPlane?: number
   ): void {
     // Get canvas bounds for clipping (use SVG dimensions)
     const canvasWidth = parseFloat(svg.getAttribute('width') || '0');
@@ -423,26 +514,32 @@ export class ToolProjectionRenderer {
     line.setAttribute('x2', tip[0].toString());
     line.setAttribute('y2', tip[1].toString());
 
-    // Style based on line type
+    // Style based on line type and distance to plane
     const lineOpacity = opacity !== undefined ? opacity : (isDashed ? 0.7 : 0.9);
+
+    // Determine color: green if within ±2mm of plane, red otherwise
+    const SLICE_THRESHOLD = 2.0; // 2mm threshold
+    const isWithinSlice = distanceToPlane !== undefined && distanceToPlane <= SLICE_THRESHOLD;
+    const lineColor = isWithinSlice ? '#00ff00' : '#ff0000'; // Green if within slice, red otherwise
+
+    // Thicker line for better visibility
+    const lineWidth = isDashed ? '4' : '5'; // Increased from 2/3 to 4/5
 
     if (isDashed) {
       // Dashed line = projection (tool parallel to plane or near plane)
-      line.setAttribute('stroke', '#ffaa00'); // Orange color for projection
-      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke', lineColor);
+      line.setAttribute('stroke-width', lineWidth);
       line.setAttribute('stroke-dasharray', '8,4'); // Dashed line
       line.setAttribute('opacity', lineOpacity.toString());
-      line.setAttribute('marker-end', `url(#arrowhead-dashed-${viewportId})`);
     } else {
       // Solid line = intersection (tool crosses plane)
-      line.setAttribute('stroke', '#00ff00'); // Green color for intersection
-      line.setAttribute('stroke-width', '3');
+      line.setAttribute('stroke', lineColor);
+      line.setAttribute('stroke-width', lineWidth);
       line.setAttribute('opacity', lineOpacity.toString());
-      line.setAttribute('marker-end', `url(#arrowhead-solid-${viewportId})`);
     }
 
-    // Create arrowhead marker
-    this._createArrowheadMarker(svg, viewportId, isDashed);
+    // Add ruler-like tick marks instead of arrow
+    this._drawRulerTicks(svg, viewportId, origin, tip, lineColor, lineOpacity);
 
     // Add line to SVG
     svg.appendChild(line);
@@ -479,40 +576,104 @@ export class ToolProjectionRenderer {
   }
 
   /**
-   * Create arrowhead marker for line end
+   * Draw ruler-like tick marks along the extension line
+   * @param origin - Start point of the line [x, y]
+   * @param tip - End point of the line [x, y]
+   * @param color - Color for the ticks
+   * @param opacity - Opacity for the ticks
    */
-  private _createArrowheadMarker(svg: SVGElement, viewportId: string, isDashed: boolean = false): void {
-    const markerId = isDashed ? `arrowhead-dashed-${viewportId}` : `arrowhead-solid-${viewportId}`;
-
-    // Check if marker already exists
-    const existingMarker = svg.querySelector(`#${markerId}`);
-    if (existingMarker) {
-      return;
+  private _drawRulerTicks(
+    svg: SVGElement,
+    viewportId: string,
+    origin: number[],
+    tip: number[],
+    color: string,
+    opacity: number
+  ): void {
+    // Remove existing ruler ticks if any
+    const existingGroup = svg.querySelector(`[data-id="ruler-ticks-${viewportId}"]`);
+    if (existingGroup) {
+      existingGroup.remove();
     }
 
-    // Create defs element if it doesn't exist
-    let defs = svg.querySelector('defs');
-    if (!defs) {
-      defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-      svg.appendChild(defs);
+    // Calculate line direction and length
+    const dx = tip[0] - origin[0];
+    const dy = tip[1] - origin[1];
+    const lineLength = Math.sqrt(dx * dx + dy * dy);
+
+    if (lineLength < 10) {
+      return; // Line too short to draw ticks
     }
 
-    // Create marker
-    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-    marker.setAttribute('id', markerId);
-    marker.setAttribute('markerWidth', '10');
-    marker.setAttribute('markerHeight', '10');
-    marker.setAttribute('refX', '9');
-    marker.setAttribute('refY', '3');
-    marker.setAttribute('orient', 'auto');
+    // Normalize direction vector
+    const dirX = dx / lineLength;
+    const dirY = dy / lineLength;
 
-    // Create arrowhead path with color matching line type
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M 0 0 L 0 6 L 9 3 z');
-    path.setAttribute('fill', isDashed ? '#ffaa00' : '#00ff00'); // Orange for dashed, green for solid
+    // Perpendicular vector for tick marks (rotated 90 degrees)
+    const perpX = -dirY;
+    const perpY = dirX;
 
-    marker.appendChild(path);
-    defs.appendChild(marker);
+    // Create group for all ticks
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.setAttribute('data-id', `ruler-ticks-${viewportId}`);
+
+    // Tick mark parameters
+    const tickSpacing = 20; // Pixels between major ticks (adjust based on zoom level)
+    const majorTickLength = 8; // Length of major ticks (every 10mm)
+    const minorTickLength = 4; // Length of minor ticks (every 5mm)
+    const numTicks = Math.floor(lineLength / tickSpacing);
+
+    // Draw tick marks along the line
+    for (let i = 0; i <= numTicks; i++) {
+      const t = (i * tickSpacing) / lineLength;
+      if (t > 1) break;
+
+      const tickX = origin[0] + t * dx;
+      const tickY = origin[1] + t * dy;
+
+      // Determine if this is a major or minor tick
+      const isMajorTick = (i % 2 === 0); // Every other tick is major
+      const tickLength = isMajorTick ? majorTickLength : minorTickLength;
+
+      // Create tick line
+      const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      tick.setAttribute('x1', tickX.toString());
+      tick.setAttribute('y1', tickY.toString());
+      tick.setAttribute('x2', (tickX + perpX * tickLength).toString());
+      tick.setAttribute('y2', (tickY + perpY * tickLength).toString());
+      tick.setAttribute('stroke', color);
+      tick.setAttribute('stroke-width', isMajorTick ? '2' : '1');
+      tick.setAttribute('opacity', opacity.toString());
+      tick.setAttribute('stroke-linecap', 'round');
+
+      group.appendChild(tick);
+
+      // Add text labels for major ticks (optional, can be enabled if needed)
+      // if (isMajorTick && i > 0) {
+      //   const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      //   label.setAttribute('x', (tickX + perpX * (tickLength + 5)).toString());
+      //   label.setAttribute('y', (tickY + perpY * (tickLength + 5)).toString());
+      //   label.setAttribute('fill', color);
+      //   label.setAttribute('font-size', '10');
+      //   label.setAttribute('opacity', opacity.toString());
+      //   label.textContent = `${i * 10}mm`;
+      //   group.appendChild(label);
+      // }
+    }
+
+    // Add end tick at the tip
+    const endTick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    endTick.setAttribute('x1', tip[0].toString());
+    endTick.setAttribute('y1', tip[1].toString());
+    endTick.setAttribute('x2', (tip[0] + perpX * majorTickLength).toString());
+    endTick.setAttribute('y2', (tip[1] + perpY * majorTickLength).toString());
+    endTick.setAttribute('stroke', color);
+    endTick.setAttribute('stroke-width', '2');
+    endTick.setAttribute('opacity', opacity.toString());
+    endTick.setAttribute('stroke-linecap', 'round');
+    group.appendChild(endTick);
+
+    svg.appendChild(group);
   }
 
   /**
@@ -594,7 +755,7 @@ export class ToolProjectionRenderer {
       return;
     }
 
-    // Remove projection elements
+    // Remove projection elements (but keep instrument body)
     const line = svg.querySelector(`[data-id="projection-line-${viewportId}"]`);
     const origin = svg.querySelector(`[data-id="projection-origin-${viewportId}"]`);
 
@@ -603,12 +764,31 @@ export class ToolProjectionRenderer {
   }
 
   /**
+   * Clear all elements for a specific viewport (including instrument body)
+   */
+  private _clearAllViewportElements(viewportId: string): void {
+    const svg = this.projectionSVGElements.get(viewportId);
+    if (!svg) {
+      return;
+    }
+
+    // Remove all elements
+    const line = svg.querySelector(`[data-id="projection-line-${viewportId}"]`);
+    const origin = svg.querySelector(`[data-id="projection-origin-${viewportId}"]`);
+    const instrumentBody = svg.querySelector(`[data-id="instrument-body-${viewportId}"]`);
+
+    if (line) line.remove();
+    if (origin) origin.remove();
+    if (instrumentBody) instrumentBody.remove();
+  }
+
+  /**
    * Clear all projections and cleanup
    */
   public cleanup(): void {
-    // Clear all viewport projections
+    // Clear all viewport projections (including instrument body)
     this.projectionSVGElements.forEach((svg, viewportId) => {
-      this._clearViewportProjection(viewportId);
+      this._clearAllViewportElements(viewportId);
 
       // Remove SVG element
       if (svg && svg.parentElement) {
@@ -631,5 +811,69 @@ export class ToolProjectionRenderer {
    */
   public getExtensionLength(): number {
     return this.extensionLength;
+  }
+
+  /**
+   * Set instrument length
+   */
+  public setInstrumentLength(length: number): void {
+    this.instrumentLength = length;
+  }
+
+  /**
+   * Get instrument length
+   */
+  public getInstrumentLength(): number {
+    return this.instrumentLength;
+  }
+
+  /**
+   * Draw instrument body line (solid line representing physical instrument)
+   */
+  private _drawInstrumentBodyLine(
+    svg: SVGElement,
+    viewportId: string,
+    baseCanvas: number[],
+    originCanvas: number[]
+  ): void {
+    // Get canvas bounds for clipping
+    const canvasWidth = parseFloat(svg.getAttribute('width') || '0');
+    const canvasHeight = parseFloat(svg.getAttribute('height') || '0');
+
+    // Clip line to canvas bounds
+    const clipped = this._clipLineToBounds(
+      baseCanvas,
+      originCanvas,
+      [0, 0, canvasWidth, canvasHeight]
+    );
+
+    if (!clipped) {
+      return; // Line is completely outside bounds
+    }
+
+    const [base, origin] = clipped;
+
+    // Remove existing instrument body line if any
+    const existingLine = svg.querySelector(`[data-id="instrument-body-${viewportId}"]`);
+    if (existingLine) {
+      existingLine.remove();
+    }
+
+    // Create line element for instrument body
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('data-id', `instrument-body-${viewportId}`);
+    line.setAttribute('x1', base[0].toString());
+    line.setAttribute('y1', base[1].toString());
+    line.setAttribute('x2', origin[0].toString());
+    line.setAttribute('y2', origin[1].toString());
+
+    // Style: solid line, thicker, yellow color to represent physical instrument
+    line.setAttribute('stroke', '#ffff00'); // Yellow color for instrument body
+    line.setAttribute('stroke-width', '4'); // Thicker line for instrument body
+    line.setAttribute('opacity', '0.8');
+    line.setAttribute('stroke-linecap', 'round');
+
+    // Add line to SVG
+    svg.appendChild(line);
   }
 }

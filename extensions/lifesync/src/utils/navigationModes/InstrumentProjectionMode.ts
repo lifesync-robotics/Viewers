@@ -15,10 +15,21 @@
 import NavigationMode from './NavigationMode';
 import { ToolProjectionRenderer, ToolRepresentation } from './ToolProjectionRenderer';
 
+// Import configuration (optional - will use defaults if not available)
+let projectionConfig: { extensionLength?: number; instrumentLength?: number } | null = null;
+try {
+  // Try to load configuration file (this will be bundled at build time)
+  projectionConfig = require('./instrumentProjection.config.json');
+} catch (e) {
+  // Configuration file not found, use defaults
+  projectionConfig = null;
+}
+
 export class InstrumentProjectionMode extends NavigationMode {
   private toolProjectionRenderer: ToolProjectionRenderer | null = null;
   private lastPosition: number[] | null = null;
-  private extensionLength: number = 200; // 200mm = 20cm default (increased for better visibility)
+  private extensionLength: number = projectionConfig?.extensionLength ?? 50; // 50mm = 5cm default
+  private instrumentLength: number = projectionConfig?.instrumentLength ?? 200; // 200mm = 20cm default
 
   constructor(servicesManager: any, coordinateTransformer: any) {
     super(servicesManager, coordinateTransformer);
@@ -39,7 +50,8 @@ export class InstrumentProjectionMode extends NavigationMode {
     // Initialize projection renderer
     this.toolProjectionRenderer = new ToolProjectionRenderer(
       this.servicesManager,
-      this.extensionLength
+      this.extensionLength,
+      this.instrumentLength
     );
 
     const viewports = this.getViewports();
@@ -225,5 +237,22 @@ export class InstrumentProjectionMode extends NavigationMode {
    */
   public getExtensionLength(): number {
     return this.extensionLength;
+  }
+
+  /**
+   * Set instrument length
+   */
+  public setInstrumentLength(length: number): void {
+    this.instrumentLength = length;
+    if (this.toolProjectionRenderer) {
+      this.toolProjectionRenderer.setInstrumentLength(length);
+    }
+  }
+
+  /**
+   * Get instrument length
+   */
+  public getInstrumentLength(): number {
+    return this.instrumentLength;
   }
 }

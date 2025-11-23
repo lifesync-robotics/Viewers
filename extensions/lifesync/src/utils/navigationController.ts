@@ -81,6 +81,23 @@ class NavigationController {
   }
 
   /**
+   * Get current navigation mode instance
+   */
+  public getCurrentModeInstance(): NavigationMode | null {
+    return this.currentMode;
+  }
+
+  /**
+   * Get InstrumentProjectionMode instance if it's the current mode
+   */
+  public getInstrumentProjectionMode(): InstrumentProjectionMode | null {
+    if (this.currentMode && this.currentMode.getModeName() === 'instrument-projection') {
+      return this.currentMode as InstrumentProjectionMode;
+    }
+    return null;
+  }
+
+  /**
    * Set navigation mode
    */
   public setNavigationMode(

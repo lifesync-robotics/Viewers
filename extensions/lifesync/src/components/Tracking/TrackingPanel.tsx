@@ -129,6 +129,9 @@ function PanelTracking() {
   });
   const [actualNavigationMode, setActualNavigationMode] = React.useState<string | null>(null);
 
+  // Extension length for instrument projection mode
+  const [extensionLength, setExtensionLength] = React.useState(50); // Default 50mm (5cm)
+
   // Initialize NavigationController early so mode switching works even when navigation is not started
   React.useEffect(() => {
     const initNavigationController = async () => {
@@ -146,6 +149,17 @@ function PanelTracking() {
           } else {
             setActualNavigationMode(window.__navigationController.getNavigationMode());
           }
+
+          // Load extension length if instrument projection mode is active
+          const currentMode = window.__navigationController.getNavigationMode();
+          if (currentMode === 'instrument-projection') {
+            const modeInstance = window.__navigationController.getInstrumentProjectionMode();
+            if (modeInstance) {
+              const currentLength = modeInstance.getExtensionLength();
+              setExtensionLength(currentLength);
+            }
+          }
+
           console.log('✅ [TrackingPanel] NavigationController initialized');
         } catch (error) {
           console.error('❌ [TrackingPanel] Failed to initialize NavigationController:', error);
@@ -789,6 +803,15 @@ function PanelTracking() {
                           setActualNavigationMode(currentMode || null);
                           console.log(`   ✅ Mode switched to: ${currentMode}`);
 
+                          // Update extension length if switching to instrument projection mode
+                          if (currentMode === 'instrument-projection') {
+                            const modeInstance = window.__navigationController?.getInstrumentProjectionMode();
+                            if (modeInstance) {
+                              const currentLength = modeInstance.getExtensionLength();
+                              setExtensionLength(currentLength);
+                            }
+                          }
+
                           if (currentMode !== newMode) {
                             console.error(`   ⚠️ Mode mismatch! Requested ${newMode} but got ${currentMode}`);
                           }
@@ -845,6 +868,15 @@ function PanelTracking() {
                           setActualNavigationMode(currentMode || null);
                           console.log(`   ✅ Mode switched to: ${currentMode}`);
 
+                          // Update extension length if switching to instrument projection mode
+                          if (currentMode === 'instrument-projection') {
+                            const modeInstance = window.__navigationController?.getInstrumentProjectionMode();
+                            if (modeInstance) {
+                              const currentLength = modeInstance.getExtensionLength();
+                              setExtensionLength(currentLength);
+                            }
+                          }
+
                           if (currentMode !== newMode) {
                             console.error(`   ⚠️ Mode mismatch! Requested ${newMode} but got ${currentMode}`);
                           }
@@ -877,6 +909,64 @@ function PanelTracking() {
               </div>
             )}
           </div>
+
+          {/* Extension Length Control - Only for Instrument Projection mode */}
+          {actualNavigationMode === 'instrument-projection' && (
+            <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
+              <div className="text-sm text-gray-300 mb-2 font-medium">Extension Length</div>
+              <div className="text-xs text-gray-500 mb-3">
+                Set the length of the extension line for active tools (projection part)
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="10"
+                  max="500"
+                  step="5"
+                  value={extensionLength}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setExtensionLength(value);
+                    if ((window as any).__navigationController) {
+                      const modeInstance = (window as any).__navigationController.getInstrumentProjectionMode();
+                      if (modeInstance) {
+                        modeInstance.setExtensionLength(value);
+                        console.log(`📏 Extension length set to: ${value}mm (${value / 10}cm)`);
+                      }
+                    }
+                  }}
+                  className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                />
+                <input
+                  type="number"
+                  min="10"
+                  max="500"
+                  step="5"
+                  value={extensionLength}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (value >= 10 && value <= 500) {
+                      setExtensionLength(value);
+                      if ((window as any).__navigationController) {
+                        const modeInstance = (window as any).__navigationController.getInstrumentProjectionMode();
+                        if (modeInstance) {
+                          modeInstance.setExtensionLength(value);
+                          console.log(`📏 Extension length set to: ${value}mm (${value / 10}cm)`);
+                        }
+                      }
+                    }
+                  }}
+                  className="w-20 px-2 py-1 text-sm text-white bg-gray-700 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-sm text-gray-400 w-12 text-right">
+                  {extensionLength / 10}cm
+                </span>
+              </div>
+              <div className="text-xs text-gray-500 mt-2">
+                Range: 10mm - 500mm (1cm - 50cm)
+              </div>
+            </div>
+          )}
 
           {/* Orientation Tracking (6-DOF) - Only for Camera Follow mode */}
           {navigationMode === 'camera-follow' && (

@@ -1,0 +1,8 @@
+{
+  "extensionLength": 50,
+  "instrumentLength": 200,
+  "description": {
+    "extensionLength": "Length of the extension line in mm (projection part, from origin to tip). Default: 50mm (5cm)",
+    "instrumentLength": "Length of the instrument body in mm (physical instrument part, from base to origin in -z direction). Default: 200mm (20cm)"
+  }
+}
