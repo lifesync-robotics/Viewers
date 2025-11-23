@@ -537,8 +537,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
           sessionId: sessionId,
           screw: {
             caseId: 'OHIF-CASE-' + Date.now(), // TODO: Get from actual case service
-            radius: finalRadiusValue,
-            length: finalLengthValue,
+            radius: radiusValue,
+            length: lengthValue,
             screwLabel: screwLabel,  // Send user's label
             screwVariantId: screwVariantId,
             vertebralLevel: 'unknown',  // Could be auto-detected later
@@ -546,7 +546,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
             entryPoint: entryPoint,    // Now extracted from crosshair position
             trajectory: {
               direction: direction,    // Now extracted from transform matrix
-              insertionDepth: finalLengthValue,
+              insertionDepth: lengthValue,
               convergenceAngle: 0,
               cephaladAngle: 0
             },

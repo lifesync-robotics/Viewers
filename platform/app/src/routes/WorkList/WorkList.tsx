@@ -998,9 +998,12 @@ function WorkList({
 
       try {
         const caseStudiesData = await caseService.getStudiesForCase(caseId);
-        setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData.studies)));
+        // Safe access with fallback to empty array
+        setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData?.studies || [])));
       } catch (error) {
         console.warn(`Failed to load studies for case ${caseId}:`, error);
+        // Set empty array on error
+        setCaseStudies(prev => new Map(prev.set(caseId, [])));
       }
     },
     [caseService]
@@ -1125,21 +1128,6 @@ function WorkList({
     } catch (err) {
       console.error('Failed to update case:', err);
       throw err; // Let EditCaseDialog show the error
-    }
-  };
-
-  // Load studies for a specific case
-  const loadStudiesForCase = async (caseId) => {
-    if (!caseService) return;
-
-    try {
-      const caseStudiesData = await caseService.getStudiesForCase(caseId);
-      // Safe access with fallback to empty array
-      setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData?.studies || [])));
-    } catch (error) {
-      console.warn(`Failed to load studies for case ${caseId}:`, error);
-      // Set empty array on error
-      setCaseStudies(prev => new Map(prev.set(caseId, [])));
     }
   };
 
