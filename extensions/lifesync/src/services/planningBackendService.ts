@@ -148,8 +148,66 @@ export interface ListPlansResponse {
 class PlanningBackendService {
   private readonly baseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:3001/api/planning') {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    // If baseUrl is explicitly provided, use it
+    if (baseUrl) {
+      this.baseUrl = baseUrl;
+      return;
+    }
+
+    // Otherwise, auto-detect API URL similar to CaseService
+    const globalConfig = (typeof window !== 'undefined' && (window as any).config) || {};
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
+    // Check if we're being served through a proxy (nginx)
+    const isProxied = typeof window !== 'undefined' && (
+      window.location.port === '8081' ||
+      window.location.port === '8080' ||
+      (window.location.port === '' && window.location.protocol === 'https:')
+    );
+
+    // Default API URL logic
+    let defaultApiUrl: string;
+    if (isProxied) {
+      // Use same origin when served through nginx (relative to current URL)
+      defaultApiUrl = `${window.location.origin}/api/planning`;
+    } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      // Use localhost:3001 for direct development access
+      defaultApiUrl = 'http://localhost:3001/api/planning';
+    } else {
+      // Allow remote access from other machines on the LAN
+      defaultApiUrl = `http://${hostname}:3001/api/planning`;
+    }
+
+    // Check for syncforge config
+    const syncforgeApiUrl = globalConfig.syncforge?.apiUrl;
+    if (syncforgeApiUrl) {
+      // Append /api/planning if not already present
+      defaultApiUrl = syncforgeApiUrl.endsWith('/api/planning') 
+        ? syncforgeApiUrl 
+        : `${syncforgeApiUrl.replace(/\/$/, '')}/api/planning`;
+    }
+
+    // Check localStorage for saved API URL (for remote access via ngrok)
+    const savedApiUrl = typeof window !== 'undefined' 
+      ? localStorage.getItem('syncforge_api_url') 
+      : null;
+    if (savedApiUrl) {
+      // Append /api/planning if not already present
+      defaultApiUrl = savedApiUrl.endsWith('/api/planning')
+        ? savedApiUrl
+        : `${savedApiUrl.replace(/\/$/, '')}/api/planning`;
+    }
+
+    this.baseUrl = defaultApiUrl;
+    
+    if (typeof window !== 'undefined') {
+      console.log('📋 PlanningBackendService initialized', {
+        baseUrl: this.baseUrl,
+        isProxied,
+        fromLocalStorage: !!savedApiUrl,
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
