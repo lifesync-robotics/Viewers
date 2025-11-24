@@ -1353,7 +1353,8 @@ function WorkList({
                   <span className="text-base font-bold text-blue-200">📁 {caseItem.caseId}</span>
                 </div>
               ),
-              gridCol: 4,
+              // title: caseItem.caseId,
+              gridCol: 6,
             },
             {
               key: 'patientName',
@@ -2279,31 +2280,31 @@ function WorkList({
   );
   const DicomUploadComponent = customizationService.getCustomization('dicomUploadComponent');
 
-  const uploadProps =
-    DicomUploadComponent && dataSource.getConfig()?.dicomUploadEnabled
-      ? {
-          title: 'Upload files',
-          closeButton: true,
-          shouldCloseOnEsc: false,
-          shouldCloseOnOverlayClick: false,
-          content: () => (
-            <DicomUploadComponent
-              dataSource={dataSource}
-              onComplete={() => {
-                hide();
-                onRefresh();
-              }}
-              onStarted={() => {
-                show({
-                  ...uploadProps,
-                  // when upload starts, hide the default close button as closing the dialogue must be handled by the upload dialogue itself
-                  closeButton: false,
-                });
-              }}
-            />
-          ),
-        }
-      : undefined;
+  const uploadProps = undefined;
+    // DicomUploadComponent && dataSource.getConfig()?.dicomUploadEnabled
+    //   ? {
+    //       title: 'Upload files',
+    //       closeButton: true,
+    //       shouldCloseOnEsc: false,
+    //       shouldCloseOnOverlayClick: false,
+    //       content: () => (
+    //         <DicomUploadComponent
+    //           dataSource={dataSource}
+    //           onComplete={() => {
+    //             hide();
+    //             onRefresh();
+    //           }}
+    //           onStarted={() => {
+    //             show({
+    //               ...uploadProps,
+    //               // when upload starts, hide the default close button as closing the dialogue must be handled by the upload dialogue itself
+    //               closeButton: false,
+    //             });
+    //           }}
+    //         />
+    //       ),
+    //     }
+    //   : undefined;
 
   const dataSourceConfigurationComponent = customizationService.getCustomization(
     'ohif.dataSourceConfigurationComponent'
@@ -2388,39 +2389,38 @@ function WorkList({
                 navigate({ search: newSearchParams.toString() }, { replace: true });
               }}
               isFiltering={isFiltering(filterValues, defaultFilterValues)}
-              onUploadClick={uploadProps ? () => show(uploadProps) : undefined}
+              // onUploadClick={uploadProps ? () => show(uploadProps) : undefined}
               getDataSourceConfigurationComponent={
                 dataSourceConfigurationComponent
                   ? () => dataSourceConfigurationComponent()
                   : undefined
               }
             />
-          </div>
-          {activeCaseId && activeCase && (
-            <div className="bg-blue-900/20 border-blue-500 text-blue-300 mx-4 mb-2 flex items-center justify-between rounded border p-3">
-              <div className="flex items-center gap-3">
-                <Icons.Info className="h-5 w-5" />
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium">
-                    Filtering studies for case: {activeCase.caseId}
-                  </span>
-                  <span className="text-xs opacity-80">
-                    Patient: {activeCase?.patientInfo?.name || activeCase?.patientInfo?.mrn || 'Unknown'} • {activeCase?.studies?.length || 0} enrolled {(activeCase?.studies?.length || 0) === 1 ? 'study' : 'studies'}
-                  </span>
+            {/* {activeCaseId && activeCase && (
+              <div className="bg-blue-900/20 border-blue-500 text-blue-300 mx-4 mb-2 flex items-center justify-between rounded border p-3">
+                <div className="flex items-center gap-3">
+                  <Icons.Info className="h-5 w-5" />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">
+                      Filtering studies for case: {activeCase.caseId}
+                    </span>
+                    <span className="text-xs opacity-80">
+                      Patient: {activeCase?.patientInfo?.name || activeCase?.patientInfo?.mrn || 'Unknown'} • {activeCase?.studies?.length || 0} enrolled {(activeCase?.studies?.length || 0) === 1 ? 'study' : 'studies'}
+                    </span>
+                  </div>
                 </div>
+                <ButtonNext
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => caseService.setActiveCaseId(null)}
+                  className="hover:bg-blue-800"
+                >
+                  <Icons.Close className="mr-1 h-4 w-4" />
+                  Clear Filter
+                </ButtonNext>
               </div>
-              <ButtonNext
-                variant="ghost"
-                size="sm"
-                onClick={() => caseService.setActiveCaseId(null)}
-                className="hover:bg-blue-800"
-              >
-                <Icons.Close className="mr-1 h-4 w-4" />
-                Clear Filter
-              </ButtonNext>
-            </div>
-          )}
-          {displayedCount > 0 ? (
+            )} */}
+            {displayedCount > 0 ? (
             <div className="flex grow flex-col">
               <StudyListTable
                 tableDataSource={paginatedTableData}
@@ -2446,6 +2446,7 @@ function WorkList({
               )}
             </div>
           )}
+          </div>
         </ScrollArea>
       </div>
 

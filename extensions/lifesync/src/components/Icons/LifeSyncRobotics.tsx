@@ -21,9 +21,9 @@ type IconProps = HTMLAttributes<SVGElement>;
  */
 export const LifeSyncRobotics = (props: IconProps) => (
   <svg
-    width="160px"
+    width="220px"
     height="28px"
-    viewBox="0 0 160 28"
+    viewBox="0 0 220 28"
     version="1.1"
     xmlns="http://www.w3.org/2000/svg"
     {...props}
@@ -92,7 +92,7 @@ export const LifeSyncRobotics = (props: IconProps) => (
           fontWeight="600"
           fill="#FFFFFF"
         >
-          LifeSyncRobotics
+          Asclepius SyncForge
         </text>
       </g>
     </g>
