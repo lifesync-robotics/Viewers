@@ -51,7 +51,7 @@ export const plannerInstance = {
 export const plannerRoute =
     {
       ...basicRoute,
-      path: 'planner',
+      path: 'planner2d',
         /*init: ({ servicesManager, extensionManager }) => {
           //defaultViewerRouteInit
         },*/
@@ -87,12 +87,12 @@ export const modeInstance = {
     // TODO: We're using this as a route segment
     // We should not be.
     id,
-    routeName: 'planner',
-    displayName: i18n.t('Modes:Surgical Planner'),
+    routeName: 'planner2d',
+    displayName: i18n.t('Modes:2D Surgical Planner'),
     routes: [
       plannerRoute
     ],
-    hangingProtocol: 'fourUpMesh',
+    hangingProtocol: 'mpr',
     extensions: extensionDependencies,
     onModeEnter: plannerOnModeEnter,
   };

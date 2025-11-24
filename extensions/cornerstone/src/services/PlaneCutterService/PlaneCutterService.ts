@@ -178,7 +178,7 @@ class PlaneCutterService extends PubSubService {
 
   /**
    * Initialize plane cutters for orthographic viewports
-   * This should be called when fourUpMesh layout loads
+   * This should be called when fourUpMesh or MPR layout loads
    * @returns Promise<boolean> - true if initialization successful, false otherwise
    */
   public async initialize(): Promise<boolean> {
@@ -195,20 +195,28 @@ class PlaneCutterService extends PubSubService {
         return false;
       }
 
-      // Define the specific fourUpMesh viewport IDs we need
-      const fourUpMeshViewports = [
+      // Define the viewport IDs we need - support both fourUpMesh and MPR layouts
+      const targetViewports = [
         { id: 'fourUpMesh-mpr-axial', orientation: 'axial' as const },
         { id: 'fourUpMesh-mpr-coronal', orientation: 'coronal' as const },
         { id: 'fourUpMesh-mpr-sagittal', orientation: 'sagittal' as const },
+        { id: 'mpr-axial', orientation: 'axial' as const },
+        { id: 'mpr-coronal', orientation: 'coronal' as const },
+        { id: 'mpr-sagittal', orientation: 'sagittal' as const },
       ];
 
-      console.log('🔍 [PlaneCutterService] Looking for specific fourUpMesh viewports:');
-      fourUpMeshViewports.forEach(vp => console.log(`   - ${vp.id}`));
+      console.log('🔍 [PlaneCutterService] Looking for orthographic viewports (fourUpMesh or MPR):');
+      targetViewports.forEach(vp => console.log(`   - ${vp.id}`));
 
       const orthographicViewports: { viewport: any; orientation: 'axial' | 'coronal' | 'sagittal' }[] = [];
+      const foundOrientations = new Set<string>(); // Track which orientations we've found
 
-      // Find the specific fourUpMesh orthographic viewports
-      for (const targetViewport of fourUpMeshViewports) {
+      // Find the orthographic viewports
+      for (const targetViewport of targetViewports) {
+        // Skip if we already found this orientation
+        if (foundOrientations.has(targetViewport.orientation)) {
+          continue;
+        }
         let found = false;
 
         for (const engine of renderingEngines) {
@@ -234,6 +242,7 @@ class PlaneCutterService extends PubSubService {
                 orientation: targetViewport.orientation
               });
               console.log(`  ✅ Found ${targetViewport.orientation} viewport: ${targetViewport.id}`);
+              foundOrientations.add(targetViewport.orientation);
               found = true;
               break;
             }
@@ -248,16 +257,16 @@ class PlaneCutterService extends PubSubService {
       }
 
       if (orthographicViewports.length === 0) {
-        console.warn('⚠️ [PlaneCutterService] No fourUpMesh viewports found - viewports may not be ready yet');
+        console.warn('⚠️ [PlaneCutterService] No orthographic viewports found - viewports may not be ready yet');
         return false;
       }
 
       if (orthographicViewports.length < 3) {
-        console.warn(`⚠️ [PlaneCutterService] Only found ${orthographicViewports.length}/3 fourUpMesh viewports - some may not be ready yet`);
+        console.warn(`⚠️ [PlaneCutterService] Only found ${orthographicViewports.length}/3 orthographic viewports - some may not be ready yet`);
         return false;
       }
 
-      console.log(`✅ [PlaneCutterService] Found all 3 fourUpMesh viewports`);
+      console.log(`✅ [PlaneCutterService] Found all 3 orthographic viewports:`, orthographicViewports.map(v => v.viewport.id));
 
       // Clear any existing plane cutters before creating new ones
       if (this.planeCutters.length > 0) {
@@ -520,17 +529,20 @@ class PlaneCutterService extends PubSubService {
     console.log(`🔪 [PlaneCutterService] Adding model ${modelId} to ${this.planeCutters.length} plane cutters`);
     console.log(`   Plane cutter viewport IDs:`, this.planeCutters.map(pc => pc.viewportId));
 
-    // Check for non-fourUpMesh plane cutters (stale/invalid)
-    const validViewportIds = ['fourUpMesh-mpr-axial', 'fourUpMesh-mpr-coronal', 'fourUpMesh-mpr-sagittal'];
+    // Check for valid plane cutters (support both fourUpMesh and MPR layouts)
+    const validViewportIds = [
+      'fourUpMesh-mpr-axial', 'fourUpMesh-mpr-coronal', 'fourUpMesh-mpr-sagittal',
+      'mpr-axial', 'mpr-coronal', 'mpr-sagittal'
+    ];
     const invalidCutters = this.planeCutters.filter(pc => !validViewportIds.includes(pc.viewportId));
 
     if (invalidCutters.length > 0) {
       console.error(`❌ [PlaneCutterService] Detected invalid plane cutters! Cleaning up...`);
       console.error(`   Invalid viewport IDs:`, invalidCutters.map(pc => pc.viewportId));
-      console.error(`   Expected fourUpMesh viewport IDs:`, validViewportIds);
+      console.error(`   Expected viewport IDs (fourUpMesh or MPR):`, validViewportIds);
       this.cleanup();
       console.log(`ℹ️ [PlaneCutterService] After cleanup, skipping model ${modelId}`);
-      console.log(`ℹ️ Please reload fourUpMesh layout to reinitialize plane cutters`);
+      console.log(`ℹ️ Please reload fourUpMesh or MPR layout to reinitialize plane cutters`);
       return;
     }
 
