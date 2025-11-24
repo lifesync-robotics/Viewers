@@ -47,13 +47,20 @@ const StudyListTableRow = props => {
                   data-cy={clickableCY}
                 >
                   {row.map((cell, index) => {
-                    const { content, title, gridCol } = cell;
+                    const { content, title, gridCol, key } = cell;
+                    // 判断是否是 actions 列，如果是则不应用 truncate
+                    const isActionsColumn = key === 'actions';
+                    const isExpandIconColumn = key === 'expandIcon';
+                    
                     return (
                       <td
                         key={index}
                         className={classnames(
-                          'truncate px-4 py-2 text-base',
+                          // actions 和 expandIcon 列使用更小的 padding
+                          isActionsColumn || isExpandIconColumn ? 'px-2 py-2' : 'px-4 py-2',
+                          'text-base',
                           { 'border-secondary-light border-b': !isExpanded },
+                          { 'truncate': !isActionsColumn && !isExpandIconColumn },
                           getGridWidthClass(gridCol) || ''
                         )}
                         title={title}
@@ -69,7 +76,13 @@ const StudyListTableRow = props => {
                             </div>
                           )}
                           <div
-                            className={classnames({ 'overflow-hidden': true }, { truncate: true })}
+                            className={classnames(
+                              { 'overflow-hidden': !isActionsColumn && !isExpandIconColumn },
+                              { 'truncate': !isActionsColumn && !isExpandIconColumn },
+                              { 'flex items-center gap-2 flex-wrap': isActionsColumn },
+                              // expandIcon 列居中对齐
+                              { 'flex items-center justify-center': isExpandIconColumn }
+                            )}
                           >
                             {content}
                           </div>

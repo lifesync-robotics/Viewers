@@ -6,28 +6,28 @@ const filtersMeta = [
     displayName: i18n.t('StudyList:PatientName'),
     inputType: 'Text',
     isSortable: true,
-    gridCol: 4,
+    gridCol: 4, // 从 4 改为 3
   },
   {
     name: 'mrn',
     displayName: i18n.t('StudyList:MRN'),
     inputType: 'Text',
     isSortable: true,
-    gridCol: 3,
+    gridCol: 4, // 保持 3
   },
   {
     name: 'studyDate',
     displayName: i18n.t('StudyList:StudyDate'),
     inputType: 'DateRange',
     isSortable: true,
-    gridCol: 6,
+    gridCol: 6, // 从 6 改为 4
   },
   {
     name: 'description',
     displayName: i18n.t('StudyList:Description'),
     inputType: 'Text',
     isSortable: true,
-    gridCol: 4,
+    gridCol: 4, // 从 4 改为 2
   },
   // {
   //   name: 'modalities',

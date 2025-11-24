@@ -1354,16 +1354,16 @@ function WorkList({
                 </div>
               ),
               // title: caseItem.caseId,
-              gridCol: 6,
+              gridCol: 6, // 恢复为 6，不调整
             },
             {
               key: 'patientName',
               content: (
-                <span className="font-semibold text-white">
+                <span className="font-semibold text-white whitespace-nowrap">
                   {caseItem.patientName || 'Unknown Patient'}
                 </span>
               ),
-              gridCol: 5,
+              gridCol: 3, // 从 2 增大到 3，避免长名字被截断
             },
             {
               key: 'mrn',
@@ -1372,27 +1372,27 @@ function WorkList({
                   {caseItem.patientMRN || caseItem.patientInfo?.mrn || caseItem.mrn || 'N/A'}
                 </span>
               ),
-              gridCol: 3,
+              gridCol: 5, // 保持不变
             },
             {
               key: 'createdAt',
               content: moment(caseItem.createdAt).format('MMM-DD-YYYY'),
-              gridCol: 3,
+              gridCol: 3, // 保持不变，日期格式固定
             },
             {
               key: 'studyCount',
               content: (
-                <div className="flex items-center gap-2">
-                  <Icons.GroupLayers className="h-4 w-4 text-gray-400" />
+                <div className="flex items-center gap-2 whitespace-nowrap">
+                  <Icons.GroupLayers className="h-4 w-4 text-gray-400 flex-shrink-0" />
                   <span>{caseItem.studyCount} studies</span>
                 </div>
               ),
-              gridCol: 3,
+              gridCol: 3, // 保持不变，确保 "0 studies" 在一行显示
             },
             {
               key: 'actions',
               content: (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-0.5"> {/* 从 gap-1 改为 gap-0.5 */}
                   <button
                     onClick={async e => {
                       e.stopPropagation();
@@ -1421,10 +1421,10 @@ function WorkList({
                         setLoadingOrthancStudies(false);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-2 py-1 transition-colors hover:bg-green-900/50"
+                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-1 py-1 transition-colors hover:bg-green-900/50 whitespace-nowrap" // px-1.5 改为 px-1
                     title="Add Study to Case"
                   >
-                    <Icons.Add className="h-4 w-4 text-green-400" />
+                    <Icons.Add className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
                     <span className="text-xs text-green-300">Add Study</span>
                   </button>
                   <button
@@ -1444,10 +1444,10 @@ function WorkList({
                       setSelectedCase(caseDataForDialog);
                       setIsEditDialogOpen(true);
                     }}
-                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors hover:bg-blue-900/50"
+                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-1 py-1 transition-colors hover:bg-blue-900/50 whitespace-nowrap" // px-1.5 改为 px-1
                     title="Edit Case"
                   >
-                    <Icons.Settings className="h-4 w-4 text-blue-400" />
+                    <Icons.Settings className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
                     <span className="text-xs text-blue-300">Edit</span>
                   </button>
                   <button
@@ -1473,15 +1473,15 @@ function WorkList({
                         alert(`Failed to delete case: ${err.message}`);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-2 py-1 transition-colors hover:bg-red-900/50"
+                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-1 py-1 transition-colors hover:bg-red-900/50 whitespace-nowrap" // px-1.5 改为 px-1
                     title="Delete Case"
                   >
-                    <Icons.Cancel className="h-4 w-4 text-red-400" />
-                    <span className="text-xs text-red-300">Delete</span>
+                    <Icons.Cancel className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+                    <span className="text-xs text-red-300">Del</span>
                   </button>
                 </div>
               ),
-              gridCol: 4,
+              gridCol: 7, // 从 8 减小到 7，因为移除了 expandIcon 列，可以重新分配空间
             },
             {
               key: 'expandIcon',
@@ -2087,10 +2087,10 @@ function WorkList({
                             });
                         }
                       }}
-                      className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors hover:bg-blue-900/50"
+                      className="flex items-center gap-1.5 rounded border border-blue-500/30 bg-blue-900/20 px-1.5 py-1 transition-colors hover:bg-blue-900/50"
                       title="Add to Case"
                     >
-                      <Icons.Add className="h-4 w-4 text-blue-400" />
+                      <Icons.Add className="h-3.5 w-3.5 text-blue-400" />
                       <span className="text-xs text-blue-300">Add</span>
                     </button>
                   ) : (
