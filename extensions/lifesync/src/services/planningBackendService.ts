@@ -226,6 +226,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/session/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(request),
       });
 
@@ -260,6 +261,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/session/${sessionId}/end`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
       });
 
       const data = await response.json();
@@ -285,7 +287,9 @@ class PlanningBackendService {
     try {
       console.log('📊 [PlanningBackend] Getting session summary:', sessionId);
 
-      const response = await fetch(`${this.baseUrl}/session/${sessionId}/summary`);
+      const response = await fetch(`${this.baseUrl}/session/${sessionId}/summary`, {
+        credentials: 'include',
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -328,6 +332,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/screws/add-with-transform`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(request),
       });
 
@@ -359,7 +364,9 @@ class PlanningBackendService {
       console.log('📥 [PlanningBackend] Loading screws from API...');
       console.log(`   Session ID: ${sessionId}`);
 
-      const response = await fetch(`${this.baseUrl}/screws/${sessionId}/list`);
+      const response = await fetch(`${this.baseUrl}/screws/${sessionId}/list`, {
+        credentials: 'include',
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -391,7 +398,9 @@ class PlanningBackendService {
     try {
       console.log('📥 [PlanningBackend] Getting screw:', screwId);
 
-      const response = await fetch(`${this.baseUrl}/screws/${screwId}?sessionId=${sessionId}`);
+      const response = await fetch(`${this.baseUrl}/screws/${screwId}?sessionId=${sessionId}`, {
+        credentials: 'include',
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -427,6 +436,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/screws/${screwId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           sessionId,
           updates,
@@ -464,6 +474,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/screws/${screwId}?sessionId=${sessionId}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -527,6 +538,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/screws/delete-batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           sessionId,
           screwIds,
@@ -568,7 +580,10 @@ class PlanningBackendService {
       console.log(`🔍 [PlanningBackend] Querying model: R=${radius}mm, L=${length}mm`);
 
       const response = await fetch(
-        `${this.baseUrl}/models/query?radius=${radius}&length=${length}`
+        `${this.baseUrl}/models/query?radius=${radius}&length=${length}`,
+        {
+          credentials: 'include',
+        }
       );
 
       if (!response.ok) {
@@ -628,6 +643,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/plan/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(request),
       });
 
@@ -658,7 +674,9 @@ class PlanningBackendService {
     try {
       console.log('📥 [PlanningBackend] Loading plan:', planId);
 
-      const response = await fetch(`${this.baseUrl}/plan/${planId}`);
+      const response = await fetch(`${this.baseUrl}/plan/${planId}`, {
+        credentials: 'include',
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -690,6 +708,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/plan/${planId}/restore-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -738,7 +757,9 @@ class PlanningBackendService {
         url += `?${params.toString()}`;
       }
 
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        credentials: 'include',
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -770,6 +791,7 @@ class PlanningBackendService {
       const response = await fetch(`${this.baseUrl}/plan/${planId}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -803,6 +825,7 @@ class PlanningBackendService {
     try {
       const response = await fetch(`${this.baseUrl}/health`, {
         method: 'GET',
+        credentials: 'include',
         signal: AbortSignal.timeout(5000), // 5 second timeout
       });
 
@@ -818,7 +841,9 @@ class PlanningBackendService {
    */
   async getStatus(): Promise<{ success: boolean; version?: string; uptime?: number; error?: string }> {
     try {
-      const response = await fetch(`${this.baseUrl}/status`);
+      const response = await fetch(`${this.baseUrl}/status`, {
+        credentials: 'include',
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);

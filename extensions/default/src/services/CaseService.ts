@@ -156,7 +156,7 @@ class CaseService extends PubSubService {
       hostname: hostname,
       currentOrigin: window.location.origin,
       fromLocalStorage: !!savedApiUrl,
-      remoteAccess: hostname !== 'localhost' && hostname !== '127.0.0.1',
+      remoteAccess: window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1',
       activeCaseId: this.activeCaseId,
     });
 

@@ -317,13 +317,24 @@ window.config = {
   //     );
   //   },
   // },
+  whiteLabeling: {
+    createLogoComponentFn: function (React) {
+      // Original Node-style require kept for reference (not available in browser):
+      // const LifeSyncRobotics =
+      //   require('../../../extensions/lifesync/src/components/Icons/LifeSyncRobotics').default;
+      const lifeSyncLogoComponent =
+        typeof window !== 'undefined' ? window['LifeSyncRobotics'] : undefined;
 
-  // SyncForge API Configuration
-  // Automatically determine API URL based on current location
-  // When accessed via Ngrok/other reverse proxy, API calls go through the same domain
-  syncforge: {
-    apiUrl: window.location.protocol + '//' + window.location.host,
-    apiBasePath: '/api',
+      if (!lifeSyncLogoComponent) {
+        console.warn('LifeSyncRobotics logo component is not available on window.');
+        return React.createElement('img', {
+          src: './Logo.svg',
+          alt: 'LifeSync Robotics',
+        });
+      }
+
+      return React.createElement(lifeSyncLogoComponent);
+    },
   },
 
   whiteLabeling: {

@@ -1275,6 +1275,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Close the dialog
       setShowPlanDialog(false);
+
     } catch (error) {
       console.error('❌ Error restoring plan:', error);
       alert(`Failed to restore plan: ${error.message}`);

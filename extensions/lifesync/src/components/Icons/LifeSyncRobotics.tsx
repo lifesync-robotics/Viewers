@@ -4,7 +4,7 @@ import type { HTMLAttributes } from 'react';
 type IconProps = HTMLAttributes<SVGElement>;
 
 /**
- * LifeSyncRobotics Logo Component
+ * LifeSyncRotics Logo Component
  *
  * Custom logo component to replace the default OHIF logo in the header.
  * You can customize the SVG content and text to match your branding.
@@ -79,7 +79,7 @@ export const LifeSyncRobotics = (props: IconProps) => (
         />
       </g>
 
-      {/* Text Area - "LifeSyncRobotics" */}
+      {/* Text Area - "LifeSyncRotics" */}
       <g
         id="Logo-Text"
         transform="translate(28, 0)"
@@ -92,11 +92,11 @@ export const LifeSyncRobotics = (props: IconProps) => (
           fontWeight="600"
           fill="#FFFFFF"
         >
-          LifeSyncRobotics
+          LifeSyncRotics
         </text>
       </g>
     </g>
   </svg>
 );
 
-export default LifeSyncRobotics;
+export default LifeSyncRotics;
