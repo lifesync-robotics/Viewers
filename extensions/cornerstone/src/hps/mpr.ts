@@ -33,7 +33,20 @@ export const mpr: Types.HangingProtocol.Protocol = {
   numberOfPriorsReferenced: 0,
   protocolMatchingRules: [],
   imageLoadStrategy: 'nth',
-  callbacks: {},
+  callbacks: {
+    onProtocolEnter: [
+      {
+        commandName: 'initializePlaneCutters',
+        context: 'CORNERSTONE',
+      },
+    ],
+    onProtocolExit: [
+      {
+        commandName: 'disablePlaneCutters',
+        context: 'CORNERSTONE',
+      },
+    ],
+  },
   displaySetSelectors: {
     activeDisplaySet: {
       seriesMatchingRules: [

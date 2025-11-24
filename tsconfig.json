@@ -28,7 +28,9 @@
       "@ohif/extension-cornerstone": ["./extensions/cornerstone/src"],
       "@ohif/extension-lifesync": ["./extensions/lifesync/src"],
       "@ohif/extension-dicom-pdf": ["./extensions/dicom-pdf/src"],
+      "@ohif/mode-basic": ["./modes/basic/src"],
       "@ohif/mode-planner": ["./modes/planner/src"],
+      "@ohif/mode-planner2d": ["./modes/planner2d/src"],
       "@state": ["./platform/app/src/state"]
     }
   },

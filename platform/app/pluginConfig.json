@@ -79,6 +79,9 @@
       "packageName": "@ohif/mode-planner"
     },
     {
+      "packageName": "@ohif/mode-planner2d"
+    },
+    {
       "packageName": "@ohif/mode-basic"
     },
     {

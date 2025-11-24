@@ -92,11 +92,11 @@ export const LifeSyncRobotics = (props: IconProps) => (
           fontWeight="600"
           fill="#FFFFFF"
         >
-          LifeSyncRotics
+          LifeSyncRobotics
         </text>
       </g>
     </g>
   </svg>
 );
 
-export default LifeSyncRotics;
+export default LifeSyncRobotics;

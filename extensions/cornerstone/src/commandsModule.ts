@@ -1081,6 +1081,54 @@ function commandsModule({
 
       const activeToolName = toolGroup.getActivePrimaryMouseButtonTool();
 
+      // ============================================================================
+      // FIX: Detect toggle behavior (same tool clicked again)
+      // ============================================================================
+      if (activeToolName === toolName) {
+        console.log(`[setToolActive] Toggling off tool: ${toolName}`);
+
+        // Remove crosshair annotations from all viewports before deactivating
+        if (toolName === 'Crosshairs') {
+          viewports.forEach(({ viewportId }) => {
+            const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+            if (viewport && viewport.element) {
+              const annotations = cornerstoneTools.annotation.state.getAnnotations(
+                'Crosshairs',
+                viewport.element
+              );
+              if (annotations && annotations.length > 0) {
+                console.log(`[setToolActive] Removing ${annotations.length} crosshair annotations from viewport ${viewportId}`);
+                annotations.forEach(annotation => {
+                  cornerstoneTools.annotation.state.removeAnnotation(annotation.annotationUID);
+                });
+              }
+            }
+          });
+        }
+
+        // Get the configuration of the tool being deactivated (not the previous tool)
+        const toolConfig = toolGroup.getToolConfiguration(toolName);
+
+        // Check if this tool should be disabled (vs passive) when deactivated
+        if (toolConfig?.disableOnPassive) {
+          toolGroup.setToolDisabled(toolName);
+        } else {
+          toolGroup.setToolPassive(toolName);
+        }
+
+        // Force viewport render to update UI
+        const renderingEngine = cornerstoneViewportService.getRenderingEngine();
+        if (renderingEngine) {
+          renderingEngine.render();
+        }
+
+        // Exit early to prevent reactivation
+        return;
+      }
+
+      // ============================================================================
+      // Normal flow: Switching from one tool to another
+      // ============================================================================
       if (activeToolName) {
         const activeToolOptions = toolGroup.getToolConfiguration(activeToolName);
         activeToolOptions?.disableOnPassive
