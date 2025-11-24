@@ -25,9 +25,8 @@ class TrackingSimulator:
 
     def __init__(self):
         self.t = 0  # Time parameter
-        # Center point for 64×64 image with 3.2mm spacing starting at [0,0,0]
-        # Image extends to [204.8, 204.8, z] so center is at [102.4, 102.4, z/2]
-        self.center = [102.4, 102.4, 70.0]  # Image center in patient coordinates (mm)
+        # Origin starts at [0, 0, -150] for simulation mode
+        self.center = [0, 0, -150]  # Origin in patient coordinates (mm)
         self.radius = 50  # Movement radius in mm
         self.speed = 0.5  # Rotation speed
 
@@ -268,7 +267,7 @@ async def handle_client(websocket):
 
                 elif cmd == "set_center":
                     # Set center point from DICOM coordinates
-                    center = data.get("position", [0, 0, 0])
+                    center = data.get("position", [0, 0, -150])
                     simulator.center = center
                     print(f"📍 Center set to: {center}")
 

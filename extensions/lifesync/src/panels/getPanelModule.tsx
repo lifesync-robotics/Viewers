@@ -3,7 +3,7 @@ import React from 'react';
 // Import LifeSync components
 import ScrewManagementPanel from '../components/ScrewManagement/ScrewManagementPanel';
 import NavigationPanel from '../components/Navigation/NavigationPanel';
-import RegistrationPanel from '../components/Registration/RegistrationPanel';
+import RegistrationPanelContainer from '../components/Registration/RegistrationPanelContainer';
 import LifeSyncWorklist from '../components/Worklist/LifeSyncWorklist';
 import TrackingPanel from '../components/Tracking/TrackingPanel';
 import SimpleTrackingPanel from '../components/Tracking/SimpleTrackingPanel';
@@ -42,7 +42,7 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
       label: 'Registration',
       iconName: 'tab-linear',
       component: (props) => (
-        <RegistrationPanel
+        <RegistrationPanelContainer
           servicesManager={servicesManager}
           commandsManager={commandsManager}
           extensionManager={extensionManager}

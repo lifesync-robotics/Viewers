@@ -73,6 +73,9 @@ module.exports = (env, argv) => {
       },
     },
     resolve: {
+      alias: {
+        '@ohif/mode-planner': path.resolve(__dirname, '../../../modes/planner/src'),
+      },
       modules: [
         // Modules specific to this package
         path.resolve(__dirname, '../node_modules'),

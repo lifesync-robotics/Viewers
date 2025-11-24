@@ -118,6 +118,65 @@ function PanelTracking() {
   // Selected tracking mode for navigation (simulation or hardware)
   const [selectedMode, setSelectedMode] = React.useState<'simulation' | 'hardware'>('simulation');
 
+  // Orientation tracking (6-DOF vs 3-DOF)
+  const [enableOrientation, setEnableOrientation] = React.useState<boolean>(true);
+
+  // Navigation mode (camera-follow vs instrument-projection)
+  const [navigationMode, setNavigationMode] = React.useState<'camera-follow' | 'instrument-projection'>(() => {
+    // Load from localStorage or default
+    const saved = localStorage.getItem('lifesync_navigation_mode');
+    return (saved === 'instrument-projection' ? 'instrument-projection' : 'camera-follow');
+  });
+  const [actualNavigationMode, setActualNavigationMode] = React.useState<string | null>(null);
+
+  // Extension length for instrument projection mode
+  const [extensionLength, setExtensionLength] = React.useState(50); // Default 50mm (5cm)
+
+  // Selected tool for visualization
+  const [selectedToolId, setSelectedToolId] = React.useState<string | null>(null);
+
+  // Initialize NavigationController early so mode switching works even when navigation is not started
+  React.useEffect(() => {
+    const initNavigationController = async () => {
+      if (!window.__navigationController && servicesManager) {
+        try {
+          console.log('🔧 [TrackingPanel] Initializing NavigationController for mode switching...');
+          const { default: NavigationController } = await import('../../utils/navigationController');
+          window.__navigationController = new NavigationController(servicesManager);
+
+          // Set the mode that was saved
+          const savedMode = localStorage.getItem('lifesync_navigation_mode') as 'camera-follow' | 'instrument-projection' | null;
+          if (savedMode) {
+            window.__navigationController.setNavigationMode(savedMode);
+            setActualNavigationMode(savedMode);
+          } else {
+            setActualNavigationMode(window.__navigationController.getNavigationMode());
+          }
+
+          // Load extension length if instrument projection mode is active
+          const currentMode = window.__navigationController.getNavigationMode();
+          if (currentMode === 'instrument-projection') {
+            const modeInstance = window.__navigationController.getInstrumentProjectionMode();
+            if (modeInstance) {
+              const currentLength = modeInstance.getExtensionLength();
+              setExtensionLength(currentLength);
+            }
+          }
+
+          console.log('✅ [TrackingPanel] NavigationController initialized');
+        } catch (error) {
+          console.error('❌ [TrackingPanel] Failed to initialize NavigationController:', error);
+        }
+      } else if (window.__navigationController) {
+        // Already exists, just sync the mode
+        const currentMode = window.__navigationController.getNavigationMode();
+        setActualNavigationMode(currentMode);
+      }
+    };
+
+    initNavigationController();
+  }, [servicesManager]);
+
   // Phase 7: Configuration dialog state
   const [configDialogOpen, setConfigDialogOpen] = React.useState(false);
   const [currentTrackingConfig, setCurrentTrackingConfig] = React.useState<any>(null);
@@ -229,13 +288,31 @@ function PanelTracking() {
       // 4. Connect with the new mode
 
       console.log(`🚀 Starting navigation in ${selectedMode} mode...`);
+      console.log(`   Navigation mode: ${navigationMode}`);
+      console.log(`   Orientation tracking: ${enableOrientation ? '6-DOF ✅' : '3-DOF ❌'}`);
+
       await commandsManager.runCommand('startNavigation', {
         mode: 'circular',
-        trackingMode: selectedMode
+        trackingMode: selectedMode,
+        enableOrientation: enableOrientation,
+        navigationMode: navigationMode
       });
 
       setIsNavigating(true);
-      console.log('✅ Navigation started successfully');
+
+      // Verify the mode was set correctly
+      setTimeout(() => {
+        if (window.__navigationController) {
+          const actualMode = window.__navigationController.getNavigationMode();
+          setActualNavigationMode(actualMode);
+          console.log('✅ Navigation started successfully');
+          console.log(`   Requested mode: ${navigationMode}`);
+          console.log(`   Actual mode: ${actualMode}`);
+          if (actualMode !== navigationMode) {
+            console.error(`   ⚠️ WARNING: Mode mismatch! Requested ${navigationMode} but got ${actualMode}`);
+          }
+        }
+      }, 500);
 
     } catch (error) {
       console.error('❌ Failed to start navigation:', error);
@@ -354,6 +431,19 @@ function PanelTracking() {
           frame_number: data.frame_number || 0
         });
 
+        // Auto-select first tool if no selection and tools are available
+        if (!selectedToolId && data.tools) {
+          const availableTools = Object.entries(data.tools)
+            .filter(([toolId, toolData]: [string, any]) => !toolData.is_patient_reference && toolData.visible)
+            .map(([toolId]) => toolId);
+
+          if (availableTools.length > 0) {
+            const firstTool = availableTools[0];
+            setSelectedToolId(firstTool);
+            trackingService.setSelectedTool(firstTool);
+          }
+        }
+
         // Log periodically (every 100th frame)
         if (data.frame_number % 100 === 0) {
           console.log('📊 TrackingPanel: Tracking data received:', {
@@ -375,6 +465,29 @@ function PanelTracking() {
   React.useEffect(() => {
     loadConfig();
   }, [loadConfig]);
+
+  // Sync with NavigationController to show actual active mode
+  React.useEffect(() => {
+    const updateActualMode = () => {
+      if (window.__navigationController) {
+        const currentMode = window.__navigationController.getNavigationMode();
+        setActualNavigationMode(currentMode);
+
+        // Also sync UI selection if different
+        if (currentMode && currentMode !== navigationMode) {
+          setNavigationMode(currentMode as 'camera-follow' | 'instrument-projection');
+        }
+      }
+    };
+
+    // Check immediately
+    updateActualMode();
+
+    // Check periodically (every 2 seconds)
+    const interval = setInterval(updateActualMode, 2000);
+
+    return () => clearInterval(interval);
+  }, [navigationMode]);
 
   return (
     <div className="h-full overflow-hidden bg-black p-4">
@@ -523,18 +636,35 @@ function PanelTracking() {
                 .filter(([toolId, toolData]) => !toolData.is_patient_reference)  // 🆕 过滤掉 Patient Reference
                 .map(([toolId, toolData]) => {
                 const coords = toolData.coordinates[coordinateSystem];
+                const isSelected = selectedToolId === toolId;
                 return (
                   <div
                     key={toolId}
-                    className={`p-3 rounded border ${
-                      toolData.visible
-                        ? 'bg-gray-800 border-gray-600'
-                        : 'bg-gray-900 border-gray-700 opacity-50'
+                    onClick={() => {
+                      if (toolData.visible) {
+                        setSelectedToolId(toolId);
+                        trackingService.setSelectedTool(toolId);
+                        console.log(`🎯 Selected tool for visualization: ${toolId}`);
+                      }
+                    }}
+                    className={`p-3 rounded border cursor-pointer transition-all ${
+                      isSelected
+                        ? 'bg-blue-900 border-blue-500 ring-2 ring-blue-400'
+                        : toolData.visible
+                          ? 'bg-gray-800 border-gray-600 hover:bg-gray-700'
+                          : 'bg-gray-900 border-gray-700 opacity-50 cursor-not-allowed'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
                       <div className="text-white font-medium">
                         {toolId.toUpperCase()}
+                        </div>
+                        {isSelected && (
+                          <div className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">
+                            VISUALIZED
+                          </div>
+                        )}
                       </div>
                       <div className={`text-xs ${
                         toolData.visible ? 'text-green-400' : 'text-red-400'
@@ -655,6 +785,257 @@ function PanelTracking() {
             </div>
           </div>
 
+          {/* Navigation Mode Selection */}
+          <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm text-gray-300 font-medium">Navigation Mode</div>
+              {actualNavigationMode && (
+                <div className={`text-xs px-2 py-1 rounded font-medium ${
+                  actualNavigationMode === 'instrument-projection'
+                    ? 'bg-green-900 text-green-300'
+                    : 'bg-blue-900 text-blue-300'
+                }`}>
+                  {actualNavigationMode === 'instrument-projection' ? '🎯 Active' : '📹 Active'}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <label className={`flex items-center space-x-2 cursor-pointer p-2 rounded hover:bg-gray-700 ${
+                actualNavigationMode === 'camera-follow' ? 'bg-gray-700' : ''
+              }`}>
+                <input
+                  type="radio"
+                  name="navigationMode"
+                  value="camera-follow"
+                  checked={navigationMode === 'camera-follow'}
+                  onChange={(e) => {
+                    const newMode = e.target.value as 'camera-follow';
+                    setNavigationMode(newMode);
+                    console.log(`🔄 [TrackingPanel] Setting navigation mode to: ${newMode}`);
+
+                    // Ensure NavigationController exists
+                    const ensureController = async () => {
+                      if (!window.__navigationController && servicesManager) {
+                        try {
+                          const { default: NavigationController } = await import('../../utils/navigationController');
+                          window.__navigationController = new NavigationController(servicesManager);
+                          console.log('   ✅ NavigationController created for mode switching');
+                        } catch (error) {
+                          console.error('   ❌ Failed to create NavigationController:', error);
+                          return;
+                        }
+                      }
+
+                      // Now switch mode
+                      if (window.__navigationController) {
+                        console.log(`   Switching mode now...`);
+                        window.__navigationController.setNavigationMode(newMode);
+                        // Update actual mode immediately
+                        setTimeout(() => {
+                          const currentMode = window.__navigationController?.getNavigationMode();
+                          setActualNavigationMode(currentMode || null);
+                          console.log(`   ✅ Mode switched to: ${currentMode}`);
+
+                          // Update extension length if switching to instrument projection mode
+                          if (currentMode === 'instrument-projection') {
+                            const modeInstance = window.__navigationController?.getInstrumentProjectionMode();
+                            if (modeInstance) {
+                              const currentLength = modeInstance.getExtensionLength();
+                              setExtensionLength(currentLength);
+                            }
+                          }
+
+                          if (currentMode !== newMode) {
+                            console.error(`   ⚠️ Mode mismatch! Requested ${newMode} but got ${currentMode}`);
+                          }
+                        }, 100);
+                      } else {
+                        console.error('   ❌ NavigationController not available');
+                      }
+                    };
+
+                    ensureController();
+                  }}
+                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
+                />
+                <div className="flex-1">
+                  <span className="text-sm text-gray-300">📹 Camera Follow</span>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Viewport camera follows tool movement and rotation
+                  </div>
+                </div>
+              </label>
+              <label className={`flex items-center space-x-2 cursor-pointer p-2 rounded hover:bg-gray-700 ${
+                actualNavigationMode === 'instrument-projection' ? 'bg-gray-700' : ''
+              }`}>
+                <input
+                  type="radio"
+                  name="navigationMode"
+                  value="instrument-projection"
+                  checked={navigationMode === 'instrument-projection'}
+                  onChange={(e) => {
+                    const newMode = e.target.value as 'instrument-projection';
+                    setNavigationMode(newMode);
+                    console.log(`🔄 [TrackingPanel] Setting navigation mode to: ${newMode}`);
+
+                    // Ensure NavigationController exists
+                    const ensureController = async () => {
+                      if (!window.__navigationController && servicesManager) {
+                        try {
+                          const { default: NavigationController } = await import('../../utils/navigationController');
+                          window.__navigationController = new NavigationController(servicesManager);
+                          console.log('   ✅ NavigationController created for mode switching');
+                        } catch (error) {
+                          console.error('   ❌ Failed to create NavigationController:', error);
+                          return;
+                        }
+                      }
+
+                      // Now switch mode
+                      if (window.__navigationController) {
+                        console.log(`   Switching mode now...`);
+                        window.__navigationController.setNavigationMode(newMode);
+                        // Update actual mode immediately
+                        setTimeout(() => {
+                          const currentMode = window.__navigationController?.getNavigationMode();
+                          setActualNavigationMode(currentMode || null);
+                          console.log(`   ✅ Mode switched to: ${currentMode}`);
+
+                          // Update extension length if switching to instrument projection mode
+                          if (currentMode === 'instrument-projection') {
+                            const modeInstance = window.__navigationController?.getInstrumentProjectionMode();
+                            if (modeInstance) {
+                              const currentLength = modeInstance.getExtensionLength();
+                              setExtensionLength(currentLength);
+                            }
+                          }
+
+                          if (currentMode !== newMode) {
+                            console.error(`   ⚠️ Mode mismatch! Requested ${newMode} but got ${currentMode}`);
+                          }
+                        }, 100);
+                      } else {
+                        console.error('   ❌ NavigationController not available');
+                      }
+                    };
+
+                    ensureController();
+                  }}
+                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
+                />
+                <div className="flex-1">
+                  <span className="text-sm text-gray-300">🎯 Instrument Projection</span>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Tool projected on viewport - camera free to move
+                  </div>
+                </div>
+              </label>
+            </div>
+            {isNavigating && (
+              <div className="text-xs text-green-400 mt-2">
+                ✅ Mode can be changed during navigation
+              </div>
+            )}
+            {actualNavigationMode && (
+              <div className="text-xs text-blue-400 mt-2 font-mono">
+                Current: {actualNavigationMode} {actualNavigationMode === navigationMode ? '✓' : '⚠️ Mismatch!'}
+              </div>
+            )}
+          </div>
+
+          {/* Extension Length Control - Only for Instrument Projection mode */}
+          {actualNavigationMode === 'instrument-projection' && (
+            <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
+              <div className="text-sm text-gray-300 mb-2 font-medium">Extension Length</div>
+              <div className="text-xs text-gray-500 mb-3">
+                Set the length of the extension line for active tools (projection part)
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="10"
+                  max="500"
+                  step="5"
+                  value={extensionLength}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setExtensionLength(value);
+                    if ((window as any).__navigationController) {
+                      const modeInstance = (window as any).__navigationController.getInstrumentProjectionMode();
+                      if (modeInstance) {
+                        modeInstance.setExtensionLength(value);
+                        console.log(`📏 Extension length set to: ${value}mm (${value / 10}cm)`);
+                      }
+                    }
+                  }}
+                  className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                />
+                <input
+                  type="number"
+                  min="10"
+                  max="500"
+                  step="5"
+                  value={extensionLength}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (value >= 10 && value <= 500) {
+                      setExtensionLength(value);
+                      if ((window as any).__navigationController) {
+                        const modeInstance = (window as any).__navigationController.getInstrumentProjectionMode();
+                        if (modeInstance) {
+                          modeInstance.setExtensionLength(value);
+                          console.log(`📏 Extension length set to: ${value}mm (${value / 10}cm)`);
+                        }
+                      }
+                    }
+                  }}
+                  className="w-20 px-2 py-1 text-sm text-white bg-gray-700 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-sm text-gray-400 w-12 text-right">
+                  {extensionLength / 10}cm
+                </span>
+              </div>
+              <div className="text-xs text-gray-500 mt-2">
+                Range: 10mm - 500mm (1cm - 50cm)
+              </div>
+            </div>
+          )}
+
+          {/* Orientation Tracking (6-DOF) - Only for Camera Follow mode */}
+          {navigationMode === 'camera-follow' && (
+            <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
+              <div className="text-sm text-gray-300 mb-2 font-medium">Degrees of Freedom</div>
+              <label className={`flex items-center space-x-2 cursor-pointer ${isNavigating ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={enableOrientation}
+                  onChange={(e) => setEnableOrientation(e.target.checked)}
+                  disabled={isNavigating}
+                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                />
+                <span className="text-sm text-gray-300">
+                  🔄 Enable Orientation Tracking (6-DOF)
+                </span>
+              </label>
+              <div className="text-xs text-gray-500 mt-2">
+                {enableOrientation ? (
+                  <div className="text-green-400">
+                    ✅ 6-DOF: Position + Orientation (MPR views will rotate with tool)
+                  </div>
+                ) : (
+                  <div className="text-blue-400">
+                    📍 3-DOF: Position only (MPR views will pan only)
+                  </div>
+                )}
+              </div>
+              {isNavigating && (
+                <div className="text-xs text-yellow-400 mt-1">
+                  ⚠️ Setting locked during navigation
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Status Display */}
           <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
             <div className="flex items-center justify-between mb-2">
@@ -690,13 +1071,14 @@ function PanelTracking() {
               </button>
             )}
 
-            <button
+            {/* Set Center button - Hidden */}
+            {/* <button
               onClick={handleSetCenter}
               disabled={!isNavigating}
               className="w-full p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded text-sm transition-colors"
             >
               📍 Set Center
-            </button>
+            </button> */}
           </div>
         </div>
 
@@ -728,15 +1110,17 @@ function PanelTracking() {
             ⚙️ Configure Tracking
           </button>
 
-          <button
+          {/* Refresh Configuration button - Hidden */}
+          {/* <button
             onClick={loadConfig}
             disabled={loading}
             className="w-full p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded transition-colors"
           >
             Refresh Configuration
-          </button>
+          </button> */}
 
-          <button
+          {/* Reload Tracking Servers button - Hidden */}
+          {/* <button
             onClick={async () => {
               try{
                 const response = await fetch('/api/tracking/reload-config', {
@@ -757,7 +1141,7 @@ function PanelTracking() {
             className="w-full p-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 text-white rounded transition-colors"
           >
             Reload Tracking Servers
-          </button>
+          </button> */}
         </div>
 
         {/* Footer - Minimal Info */}

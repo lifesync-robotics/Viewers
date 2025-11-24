@@ -2420,7 +2420,7 @@ function WorkList({
               </ButtonNext>
             </div>
           )}
-          {hasStudies ? (
+          {displayedCount > 0 ? (
             <div className="flex grow flex-col">
               <StudyListTable
                 tableDataSource={paginatedTableData}
@@ -2553,10 +2553,28 @@ function WorkList({
                         setLoadingOrthancStudies(true);
                         try {
                           if (caseService) {
-                            const studies = await caseService.getAllOrthancStudies();
-                            setOrthancStudies(studies);
-                            // 可选：自动切换到 Select Study 标签页
-                            // setActiveTab('select');
+                            // If adding to a case, enroll the study
+                            if (addStudyToCaseId) {
+                              await caseService.enrollStudy(
+                                addStudyToCaseId,
+                                study.studyInstanceUID,
+                                clinicalPhase,
+                                {
+                                  studyDate: study.studyDate,
+                                  modalities: study.modalities,
+                                  description: study.studyDescription
+                                }
+                              );
+                              console.log(`✅ Study added to case ${addStudyToCaseId}`);
+                              setShowAddStudyModal(false);
+                              window.location.reload();
+                            } else {
+                              // Refresh Orthanc studies list
+                              const studies = await caseService.getAllOrthancStudies();
+                              setOrthancStudies(studies);
+                              // 可选：自动切换到 Select Study 标签页
+                              // setActiveTab('select');
+                            }
                           }
                           // 刷新页面数据
                           onRefresh();

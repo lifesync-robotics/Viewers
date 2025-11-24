@@ -18,7 +18,7 @@ export const tracked = {
   viewportState: '@ohif/extension-cornerstone.panelModule.viewport-state',
   screwManagement: '@ohif/extension-lifesync.panelModule.screw-management',
   trackingPanel: '@ohif/extension-lifesync.panelModule.trackingPanel',
-  registrationPanel: '@ohif/extension-default.panelModule.registrationPanel',
+  registrationPanel: '@ohif/extension-lifesync.panelModule.registration-panel',
 };
 
 export const extensionDependencies = {

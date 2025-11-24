@@ -135,20 +135,6 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
       ),
     },
     // NOTE: Tracking control panel moved to @ohif/extension-lifesync
-    // Viewport state panel (legacy)
-    {
-      name: 'viewport-state',
-      label: 'Viewport States',
-      iconName: 'icon-panel-seg',
-      component: (props) => (
-        <ViewportStatePanel
-          servicesManager={servicesManager}
-          commandsManager={commandsManager}
-          extensionManager={extensionManager}
-          {...props}
-        />
-      ),
-    },
   ];
 };
 

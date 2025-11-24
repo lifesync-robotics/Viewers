@@ -56,6 +56,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
+  // Debug: Log screws whenever they change
+  useEffect(() => {
+    console.log(`🔍 [ScrewManagement] Screws state changed. Count: ${screws.length}`);
+    if (screws.length > 0) {
+      console.log('🔍 [ScrewManagement] Screws data:', screws);
+    }
+  }, [screws]);
+
   useEffect(() => {
     initializeSession();
   }, []);

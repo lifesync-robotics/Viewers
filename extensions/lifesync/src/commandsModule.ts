@@ -13,10 +13,14 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
      * Connects to tracking server and starts receiving position updates
      * @param mode - Navigation mode (e.g., 'circular')
      * @param trackingMode - Tracking mode ('simulation' or 'hardware')
+     * @param enableOrientation - Enable 6-DOF orientation tracking (default: false)
+     * @param navigationMode - Navigation visualization mode ('camera-follow' or 'instrument-projection')
      */
-    startNavigation: ({ mode = 'circular', trackingMode }) => {
+    startNavigation: ({ mode = 'circular', trackingMode, enableOrientation = false, navigationMode = 'camera-follow' }) => {
       console.log('🧭 [startNavigation] Starting navigation mode:', mode);
       console.log('🎯 [startNavigation] Tracking mode:', trackingMode || 'from config');
+      console.log('🔄 [startNavigation] Orientation tracking:', enableOrientation ? 'ENABLED ✅' : 'DISABLED ❌');
+      console.log('📹 [startNavigation] Navigation mode:', navigationMode);
 
       const { trackingService } = servicesManager.services;
 
@@ -35,7 +39,39 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
         .then(({ default: NavigationController }) => {
           // Create or get singleton instance
           if (!window.__navigationController) {
+            console.log('🔧 [startNavigation] Creating new NavigationController instance');
             window.__navigationController = new NavigationController(servicesManager);
+          } else {
+            console.log('🔧 [startNavigation] Using existing NavigationController instance');
+          }
+
+          // IMPORTANT: Always set navigation mode from the parameter, not from localStorage
+          // This ensures the mode requested by the UI is used, even if it conflicts with saved preferences
+          if (navigationMode) {
+            console.log(`📹 [startNavigation] Setting navigation mode to: ${navigationMode}`);
+            const currentModeBefore = window.__navigationController.getNavigationMode();
+            console.log(`   Current mode before setting: ${currentModeBefore}`);
+            
+            // Always force set the mode to ensure proper initialization
+            // This ensures mode is set correctly even if NavigationController was just created
+            window.__navigationController.setNavigationMode(navigationMode, false, true); // force=true
+            
+            // Verify mode was set correctly
+            const verifiedMode = window.__navigationController.getNavigationMode();
+            console.log(`   Mode after setting: ${verifiedMode}`);
+            
+            if (verifiedMode !== navigationMode) {
+              console.error(`   ⚠️ WARNING: Mode mismatch! Requested ${navigationMode} but got ${verifiedMode}`);
+              console.error(`   This is a critical error - mode switching failed!`);
+            } else {
+              console.log(`   ✅ Mode successfully set to: ${verifiedMode}`);
+              console.log(`   Mode verification: ${window.__navigationController.getNavigationMode()} === ${navigationMode}`);
+            }
+          }
+
+          // Enable orientation tracking if requested (only for camera-follow mode)
+          if (enableOrientation !== undefined && navigationMode === 'camera-follow') {
+            window.__navigationController.enableOrientationTracking(enableOrientation);
           }
 
           // Connect to tracking server with specified mode
@@ -46,9 +82,11 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
           window.__navigationController.startNavigation(mode);
 
           const modeText = trackingMode ? ` (${trackingMode})` : '';
+          const dofText = enableOrientation && navigationMode === 'camera-follow' ? ' [6-DOF]' : navigationMode === 'camera-follow' ? ' [3-DOF]' : '';
+          const navModeText = navigationMode === 'camera-follow' ? 'Camera Follow' : 'Instrument Projection';
           uiNotificationService?.show({
             title: 'Navigation Started',
-            message: `Navigation mode: ${mode}${modeText}`,
+            message: `${navModeText}${modeText}${dofText}`,
             type: 'success',
             duration: 2000,
           });

@@ -1,6 +1,1 @@
-export { default } from './RegistrationPanel';
-
-
-
-
-
+export { default } from './RegistrationPanelContainer';

@@ -14,12 +14,12 @@ type IconProps = HTMLAttributes<SVGElement>;
  * whiteLabeling: {
  *   createLogoComponentFn: (React) => {
  *     return React.createElement(
- *       require('@ohif/extension-worklist/LifeSyncRotics').default
+ *       require('@ohif/extension-worklist/LifeSyncRobotics').default
  *     );
  *   }
  * }
  */
-export const LifeSyncRotics = (props: IconProps) => (
+export const LifeSyncRobotics = (props: IconProps) => (
   <svg
     width="160px"
     height="28px"
@@ -29,7 +29,7 @@ export const LifeSyncRotics = (props: IconProps) => (
     {...props}
   >
     <g
-      id="LifeSyncRotics-Logo"
+      id="LifeSyncRobotics-Logo"
       stroke="none"
       strokeWidth="1"
       fill="none"

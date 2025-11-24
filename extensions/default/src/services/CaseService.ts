@@ -117,6 +117,7 @@ class CaseService extends PubSubService {
 
     // Get global config for API URL determination
     const globalConfig = (window as any).config || {};
+    const hostname = window.location.hostname;
 
     // Check if we're being served through a proxy (nginx)
     // If so, use same origin so API calls go through the proxy
@@ -129,9 +130,12 @@ class CaseService extends PubSubService {
     if (isProxied) {
       // Use same origin when served through nginx (relative to current URL)
       defaultApiUrl = window.location.origin;
-    } else {
+    } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
       // Use localhost:3001 for direct development access
       defaultApiUrl = 'http://localhost:3001';
+    } else {
+      // Allow remote access from other machines on the LAN (wireless network)
+      defaultApiUrl = `http://${hostname}:3001`;
     }
 
     // Check for syncforge config (automatically determined based on current location)
@@ -149,6 +153,7 @@ class CaseService extends PubSubService {
     console.log('📁 CaseService initialized', {
       apiUrl: this.apiUrl,
       isProxied: isProxied,
+      hostname: hostname,
       currentOrigin: window.location.origin,
       fromLocalStorage: !!savedApiUrl,
       remoteAccess: window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1',

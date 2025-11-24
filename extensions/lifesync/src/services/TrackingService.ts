@@ -47,6 +47,7 @@ class TrackingService extends PubSubService {
     fpsHistory: [] as number[],
   };
   private lastConnectionMode: string | null = null;
+  private selectedToolId: string | null = null; // Selected tool for visualization
 
   constructor(servicesManager, config: any = {}) {
     super(EVENTS);
@@ -488,18 +489,35 @@ class TrackingService extends PubSubService {
         let primaryTool: any = null;
         let primaryToolId: string | null = null;
 
-        // Strategy: Find first non-PR tool
-        for (const [toolId, toolData] of Object.entries(tools)) {
-          const tool = toolData as any;
-
-          // Skip if this is the patient reference
-          if (tool.is_patient_reference) {
-            continue;
+        // Strategy: Use selected tool if available, otherwise find first non-PR tool
+        if (this.selectedToolId && tools[this.selectedToolId]) {
+          const selectedTool = tools[this.selectedToolId] as any;
+          if (!selectedTool.is_patient_reference) {
+            primaryTool = selectedTool;
+            primaryToolId = this.selectedToolId;
           }
+        }
 
-          primaryTool = tool;
-          primaryToolId = toolId;
-          break;
+        // Fallback: Find first non-PR tool if no selection or selected tool not available
+        if (!primaryTool) {
+          for (const [toolId, toolData] of Object.entries(tools)) {
+            const tool = toolData as any;
+
+            // Skip if this is the patient reference
+            if (tool.is_patient_reference) {
+              continue;
+            }
+
+            primaryTool = tool;
+            primaryToolId = toolId;
+
+            // Auto-select first tool if no selection
+            if (!this.selectedToolId) {
+              this.selectedToolId = toolId;
+              console.log(`🎯 Auto-selected tool for visualization: ${toolId}`);
+            }
+            break;
+          }
         }
 
         // DEBUG: Log matrix data for first few frames to check if real NDI data
@@ -544,8 +562,19 @@ class TrackingService extends PubSubService {
               toolName: primaryTool.tool_name,
               hasPosition: !!position,
               matrixKey: matrixKey,
-              hasMatrix: !!matrix
+              hasMatrix: !!matrix,
+              matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null',
+              matrixSample: matrix ? (Array.isArray(matrix) && matrix.length > 0 ? `First element: ${Array.isArray(matrix[0]) ? `Array[${matrix[0].length}]` : matrix[0]}` : 'Not array') : 'null'
             });
+
+            if (matrix) {
+              console.log('🔍 [TrackingService] Matrix details:', {
+                isArray: Array.isArray(matrix),
+                length: Array.isArray(matrix) ? matrix.length : 'N/A',
+                is2D: Array.isArray(matrix) && matrix.length > 0 && Array.isArray(matrix[0]),
+                firstRow: Array.isArray(matrix) && matrix.length > 0 ? matrix[0] : 'N/A'
+              });
+            }
           }
 
           // Pass to tracking update handler
@@ -643,6 +672,22 @@ class TrackingService extends PubSubService {
       visible: data.visible,
       tools: data.tools,
     });
+  }
+
+  /**
+   * Set the selected tool ID for visualization
+   * Only the selected tool will be used for navigation/projection
+   */
+  public setSelectedTool(toolId: string | null): void {
+    this.selectedToolId = toolId;
+    console.log(`🎯 Selected tool for visualization: ${toolId || 'none'}`);
+  }
+
+  /**
+   * Get the currently selected tool ID
+   */
+  public getSelectedTool(): string | null {
+    return this.selectedToolId;
   }
 
   /**

@@ -223,15 +223,15 @@ window.config = {
         friendlyName: 'Local Orthanc DICOMWeb Server',
         name: 'Orthanc',
 
-      // Use RELATIVE URLs for webpack proxy to intercept
-      wadoUriRoot: '/dicom-web',
-      qidoRoot: '/dicom-web',
-      wadoRoot: '/dicom-web',
+        // Use RELATIVE URLs for webpack proxy to intercept
+        wadoUriRoot: '/dicom-web',
+        qidoRoot: '/dicom-web',
+        wadoRoot: '/dicom-web',
 
-      // Orthanc authentication
-      headers: {
-        Authorization: 'Basic ' + btoa('lsr:lsr#!$$!59'),
-      },
+        // Orthanc authentication
+        headers: {
+          Authorization: 'Basic ' + btoa('lsr:lsr#!$$!59'),
+        },
 
         // Orthanc does NOT support includefield=all
         qidoSupportsIncludeField: false,
@@ -317,6 +317,26 @@ window.config = {
   //     );
   //   },
   // },
+  whiteLabeling: {
+    createLogoComponentFn: function (React) {
+      // Original Node-style require kept for reference (not available in browser):
+      // const LifeSyncRobotics =
+      //   require('../../../extensions/lifesync/src/components/Icons/LifeSyncRobotics').default;
+      const lifeSyncLogoComponent =
+        typeof window !== 'undefined' ? window['LifeSyncRobotics'] : undefined;
+
+      if (!lifeSyncLogoComponent) {
+        console.warn('LifeSyncRobotics logo component is not available on window.');
+        return React.createElement('img', {
+          src: './Logo.svg',
+          alt: 'LifeSync Robotics',
+        });
+      }
+
+      return React.createElement(lifeSyncLogoComponent);
+    },
+  },
+
   whiteLabeling: {
     createLogoComponentFn: function (React) {
       // Original Node-style require kept for reference (not available in browser):
