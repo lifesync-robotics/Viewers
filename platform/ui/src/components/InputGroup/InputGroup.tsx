@@ -119,7 +119,7 @@ const InputGroup = ({
   };
   return (
     <div className="container relative m-auto flex flex-col">
-      <div className="flex w-full flex-row gap-4"> {/* 添加 gap-4 统一间距 */}
+      <div className="flex w-full flex-row"> 
         {inputMeta.map((inputMeta, index) => {
           const isDescription = inputMeta.name === 'description';
           return (
