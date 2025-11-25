@@ -1026,6 +1026,13 @@ function WorkList({
     setIsEnrolling(true);
     setEnrollError(null);
 
+    // 保存 caseId（统一转换为字符串用于比较）和当前的 studyCount
+    const targetCaseId = String(addStudyToCaseId);
+    
+    // 保存添加前的 studyCount，用于后续验证（确保第二个及后续的 study 也能正确显示）
+    const previousStudyCount = cases.find(c => String(c.caseId) === targetCaseId)?.studyCount || 0;
+    const expectedCount = previousStudyCount + 1;
+
     try {
       await caseService.enrollStudy(
         addStudyToCaseId,
@@ -1038,8 +1045,37 @@ function WorkList({
       setShowAddStudyModal(false);
       setSelectedStudy(null);
 
-      // Reload cases to update studyCount
+      // 立即更新本地状态中的 studyCount，让 UI 立即反映变化
+      setCases(prevCases => 
+        prevCases.map(caseItem => {
+          const caseIdStr = String(caseItem.caseId);
+          if (caseIdStr === targetCaseId) {
+            return { ...caseItem, studyCount: expectedCount };
+          }
+          return caseItem;
+        })
+      );
+
+      // 然后重新加载以确保数据同步
       await loadCases();
+
+      // 加载完成后，确保 studyCount 已正确更新
+      // 如果服务器返回的 count 小于期望值，说明可能还没更新，使用我们手动增加的值
+      setCases(prevCases => 
+        prevCases.map(caseItem => {
+          const caseIdStr = String(caseItem.caseId);
+          if (caseIdStr === targetCaseId) {
+            const serverCount = caseItem.studyCount || 0;
+            // 如果服务器返回的 count 小于期望值，使用期望值
+            // 否则使用服务器返回的值（可能已经正确更新了，甚至更多）
+            return { 
+              ...caseItem, 
+              studyCount: serverCount >= expectedCount ? serverCount : expectedCount
+            };
+          }
+          return caseItem;
+        })
+      );
 
       // Reload studies for this case if it's already expanded
       if (caseStudies.has(addStudyToCaseId)) {
@@ -1063,6 +1099,7 @@ function WorkList({
     loadStudiesForCase,
     caseStudies,
     onRefresh,
+    cases, // 添加 cases 到依赖项，以便获取 previousStudyCount
   ]);
 
   // Handle file selection
