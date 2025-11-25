@@ -540,6 +540,7 @@ function WorkList({
   const [expandedCases, setExpandedCases] = useState([]);
   const [caseStudies, setCaseStudies] = useState(new Map()); // caseId -> studies
   const [loadingCases, setLoadingCases] = useState(false);
+  const [casePagination, setCasePagination] = useState(null); // Pagination info from API
 
   // ~ Create Case Dialog State
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -740,16 +741,12 @@ function WorkList({
 
       const { cases: caseData, pagination } = await caseService.searchCases(searchParams);
 
-      console.log('✅ Cases loaded:', {
-        count: caseData?.length || 0,
-        cases: caseData,
-        pagination,
-      });
-
       setCases(caseData || []);
+      setCasePagination(pagination || null); // 保存 pagination 信息
     } catch (error) {
       console.error('❌ Failed to load cases:', error);
       setCases([]);
+      setCasePagination(null); // 出错时清空 pagination
     } finally {
       setLoadingCases(false);
     }
@@ -838,8 +835,10 @@ function WorkList({
   const [seriesDataForCases, setSeriesDataForCases] = useState(new Map()); // Map<studyUID, seriesData>
   const numOfStudies = studiesTotal;
   const caseCount = cases?.length || 0;
+  // 在 cases 视图模式下，使用 pagination.totalCount 显示总数；如果没有 pagination，fallback 到当前页数量
+  const totalCaseCount = casePagination?.totalCount ?? caseCount;
   const displayedCount =
-    viewMode === 'cases' ? caseCount : pageNumber * resultsPerPage > 100 ? 101 : numOfStudies;
+    viewMode === 'cases' ? totalCaseCount : pageNumber * resultsPerPage > 100 ? 101 : numOfStudies;
 
   // ~ Add Study Modal
   const [showAddStudyModal, setShowAddStudyModal] = useState(false);
@@ -1124,13 +1123,31 @@ function WorkList({
 
   const onPageNumberChange = newPageNumber => {
     const oldPageNumber = filterValues.pageNumber;
-    const rollingPageNumberMod = Math.floor(101 / filterValues.resultsPerPage);
-    const rollingPageNumber = oldPageNumber % rollingPageNumberMod;
     const isNextPage = newPageNumber > oldPageNumber;
-    const hasNextPage = Math.max(rollingPageNumber, 1) * resultsPerPage < numOfStudies;
+    const isPrevPage = newPageNumber < oldPageNumber;
 
-    if (isNextPage && !hasNextPage) {
-      return;
+    // 在 cases 视图模式下，使用后端返回的 pagination 信息来判断
+    if (viewMode === 'cases') {
+      if (casePagination) {
+        // 使用后端返回的 hasNext/hasPrev 来判断
+        if (isNextPage && !casePagination.hasNext) {
+          return; // 没有下一页，直接返回
+        }
+        if (isPrevPage && !casePagination.hasPrev) {
+          return; // 没有上一页，直接返回
+        }
+      } else {
+        console.warn('⚠️ No pagination info available in cases view mode');
+      }
+    } else {
+      // 在 studies 视图模式下，使用原来的逻辑
+      const rollingPageNumberMod = Math.floor(101 / filterValues.resultsPerPage);
+      const rollingPageNumber = oldPageNumber % rollingPageNumberMod;
+      const hasNextPage = Math.max(rollingPageNumber, 1) * resultsPerPage < numOfStudies;
+
+      if (isNextPage && !hasNextPage) {
+        return;
+      }
     }
 
     setFilterValues({ ...filterValues, pageNumber: newPageNumber });
