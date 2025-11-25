@@ -1195,8 +1195,21 @@ function WorkList({
     }
 
     try {
-      await caseService.updateCase(selectedCase.caseId, updates);
+      const updatedCase = await caseService.updateCase(selectedCase.caseId, updates);
       await loadCases(); // Reload cases list
+      
+      // Update selectedCase with the latest data from server
+      // This ensures the edit dialog shows updated data if reopened
+      setSelectedCase({
+        caseId: updatedCase.caseId,
+        patientInfo: updatedCase.patientInfo || {
+          mrn: updatedCase.patientInfo?.mrn || selectedCase.patientInfo?.mrn || '',
+          name: updatedCase.patientInfo?.name || selectedCase.patientInfo?.name || '',
+          dateOfBirth: updatedCase.patientInfo?.dateOfBirth || selectedCase.patientInfo?.dateOfBirth || '',
+        },
+        status: updatedCase.status || selectedCase.status || 'created',
+      });
+      
       console.log(`✅ Case ${selectedCase.caseId} updated successfully`);
     } catch (err) {
       console.error('Failed to update case:', err);
@@ -1503,17 +1516,32 @@ function WorkList({
                   <button
                     onClick={e => {
                       e.stopPropagation();
+                      // 🔍 DEBUG: 检查原始 caseItem 数据
+                      console.log('🔍 WorkList: ========== DEBUG INFO ==========');
+                      console.log('🔍 Original caseItem:', JSON.stringify(caseItem, null, 2));
+                      console.log('🔍 caseItem.patientInfo:', caseItem.patientInfo);
+                      console.log('🔍 caseItem.patientInfo?.dateOfBirth:', caseItem.patientInfo?.dateOfBirth);
+                      console.log('🔍 caseItem.patientMRN:', caseItem.patientMRN);
+                      console.log('🔍 caseItem.patientName:', caseItem.patientName);
+                      console.log('🔍 ===========================================');
+                      
                       // Transform case data to match EditCaseDialog's expected structure
+                      // Use patientInfo as primary source, fallback to case-level fields for backward compatibility
                       const caseDataForDialog = {
                         caseId: caseItem.caseId,
                         patientInfo: {
                           mrn:
-                            caseItem.patientMRN || caseItem.patientInfo?.mrn || caseItem.mrn || '',
-                          name: caseItem.patientName || '',
-                          dateOfBirth: caseItem.dateOfBirth || '',
+                            caseItem.patientInfo?.mrn || caseItem.patientMRN || caseItem.mrn || '',
+                          name: caseItem.patientInfo?.name || caseItem.patientName || '',
+                          dateOfBirth: caseItem.patientInfo?.dateOfBirth || '',
                         },
                         status: caseItem.status || 'created',
                       };
+                      
+                      // 🔍 DEBUG: 检查转换后的数据
+                      console.log('🔍 WorkList: caseDataForDialog:', JSON.stringify(caseDataForDialog, null, 2));
+                      console.log('🔍 WorkList: caseDataForDialog.patientInfo?.dateOfBirth:', caseDataForDialog.patientInfo?.dateOfBirth);
+                      
                       setSelectedCase(caseDataForDialog);
                       setIsEditDialogOpen(true);
                     }}

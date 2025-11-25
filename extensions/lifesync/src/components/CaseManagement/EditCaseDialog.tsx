@@ -47,10 +47,9 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // Initialize form when dialog opens (only on first open, not on every render)
+  // Initialize form when dialog opens or caseData changes
   React.useEffect(() => {
     if (isOpen && caseData) {
-      console.log('EditCaseDialog: Initializing form with case data:', caseData);
       setFormData({
         patientMRN: caseData.patientInfo?.mrn || '',
         patientName: caseData.patientInfo?.name || '',
@@ -68,7 +67,7 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
       });
       setError(null);
     }
-  }, [isOpen]); // Only depend on isOpen, not caseData - prevents form reset while typing
+  }, [isOpen, caseData?.caseId, caseData?.patientInfo?.mrn, caseData?.patientInfo?.name, caseData?.patientInfo?.dateOfBirth, caseData?.status]);
 
   const handleUpdate = async () => {
     setIsUpdating(true);
