@@ -584,10 +584,27 @@ class CaseService extends PubSubService {
         method: 'DELETE',
       });
 
-      const data = await response.json();
+      // 检查响应状态
+      if (!response.ok) {
+        // 如果是错误响应，尝试解析错误信息
+        let errorMessage = 'Failed to delete case';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          // 如果无法解析 JSON，使用状态文本
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
 
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to delete case');
+      // 204 No Content 表示成功但没有响应体，不需要解析 JSON
+      // 其他成功状态码（如 200）可能有 JSON 响应体
+      if (response.status !== 204) {
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to delete case');
+        }
       }
 
       this._broadcastEvent(EVENTS.CASE_DELETED, { caseId });
