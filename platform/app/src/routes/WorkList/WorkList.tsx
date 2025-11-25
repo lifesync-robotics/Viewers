@@ -857,10 +857,29 @@ function WorkList({
   // TODO: 搜索功能暂时注释，后续实现
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFilter, setSearchFilter] = useState('studyUID'); // 'studyUID' | 'patientName' | 'mrn' | 'studyDate'
+  
   // Filter studies based on search query (placeholder - will implement later)
   const filteredOrthancStudies = useMemo(() => {
-    // TODO: 实现搜索过滤逻辑
-    return orthancStudies;
+    if (!searchQuery.trim()) {
+      return orthancStudies;
+    }
+    
+    const query = searchQuery.toLowerCase().trim();
+    
+    return orthancStudies.filter(study => {
+      switch (searchFilter) {
+        case 'studyUID':
+          return study.studyInstanceUID?.toLowerCase().includes(query);
+        case 'patientName':
+          return study.patientName?.toLowerCase().includes(query);
+        case 'mrn':
+          return study.patientId?.toLowerCase().includes(query);
+        case 'studyDate':
+          return study.studyDate?.includes(query);
+        default:
+          return true;
+      }
+    });
   }, [orthancStudies, searchQuery, searchFilter]);
 
   // Select Study dialog state
@@ -2838,7 +2857,7 @@ function WorkList({
               {activeTab === 'select' && (
                 <div>
                   {/* Search Bar - TODO: 搜索功能暂时注释，后续实现 */}
-                  {/* <div className="border-secondary-light bg-secondary-main flex items-center gap-3 border-b p-4">
+                  <div className="border-secondary-light bg-secondary-main flex items-center gap-3 border-b p-4">
                     <select
                       value={searchFilter}
                       onChange={e => setSearchFilter(e.target.value)}
@@ -2856,7 +2875,7 @@ function WorkList({
                       placeholder="Enter search term..."
                       className="flex-1 rounded border border-gray-600 bg-black px-3 py-2 text-white placeholder-gray-500"
                     />
-                    <button
+                    {/* <button
                       onClick={() => {
                         // TODO: 实现搜索功能
                         console.log('Search clicked:', searchQuery, searchFilter);
@@ -2864,8 +2883,8 @@ function WorkList({
                       className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
                     >
                       Search
-                    </button>
-                  </div> */}
+                    </button> */}
+                  </div> 
 
                   {/* Study List */}
                   <div className="p-6">
@@ -2878,10 +2897,9 @@ function WorkList({
                       </div>
                     ) : filteredOrthancStudies.length === 0 ? (
                       <div className="py-12 text-center text-gray-400">
-                        No studies found in Orthanc
-                        {/* {searchQuery
-                          ? 'No studies found matching your search'
-                          : 'No studies found in Orthanc'} */}
+                        {searchQuery
+                          ? `No studies found matching "${searchQuery}"`
+                          : 'No studies found in Orthanc'}
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -3031,15 +3049,11 @@ function WorkList({
             <div className="border-secondary-light border-t px-6 py-4">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-400">
-                  {/* {orthancStudies.length} studies available */}
                   {activeTab === 'select'
-                    ? `${orthancStudies.length} studies available`
+                    ? searchQuery
+                      ? `${filteredOrthancStudies.length} of ${orthancStudies.length} studies`
+                      : `${orthancStudies.length} studies available`
                     : `${orthancStudies.length} studies available`}
-                  {/* TODO: 搜索功能暂时注释
-                  {activeTab === 'select'
-                    ? `${filteredOrthancStudies.length} of ${orthancStudies.length} studies`
-                    : `${orthancStudies.length} studies available`}
-                  */}
                   {orthancStudies.filter(s => s.hasCaseId).length > 0 && (
                     <span className="ml-2 text-yellow-400">
                       ({orthancStudies.filter(s => s.hasCaseId).length} already assigned)
