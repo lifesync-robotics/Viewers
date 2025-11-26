@@ -55,23 +55,6 @@ const StudyListFilter = ({
                 )}
               </div>
               <div className="flex h-[34px] flex-row items-center">
-                {/* TODO revisit the completely rounded style of button used for clearing the study list filter - for now use LegacyButton*/}
-                {isFiltering && (
-                  <LegacyButton
-                    rounded="full"
-                    variant="outlined"
-                    color="primaryActive"
-                    border="primaryActive"
-                    className="mx-8"
-                    startIcon={<Icons.Cancel />}
-                    onClick={clearFilters}
-                    endIcon={null}
-                    name="clear-filters"
-                  >
-                    {t('ClearFilters')}
-                  </LegacyButton>
-                )}
-
                 <Typography
                   component="span"
                   variant="h6"
@@ -94,14 +77,34 @@ const StudyListFilter = ({
       </div>
       <div className="sticky -top-1 z-10 mx-auto border-b-4 border-black">
         <div className="bg-primary-dark pt-3 pb-3">
-          <InputGroup
-            inputMeta={filtersMeta}
-            values={filterValues}
-            onValuesChange={onChange}
-            sorting={filterSorting}
-            onSortingChange={setFilterSorting}
-            isSortingEnabled={isSortingEnabled}
-          />
+          <div className="container relative m-auto flex flex-row items-end">
+            <div className="flex-1">
+              <InputGroup
+                inputMeta={filtersMeta}
+                values={filterValues}
+                onValuesChange={onChange}
+                sorting={filterSorting}
+                onSortingChange={setFilterSorting}
+                isSortingEnabled={isSortingEnabled}
+              />
+            </div>
+            {/* Clear Filters 按钮放在搜索栏最右边，始终显示 */}
+            <div className="flex items-center px-4 pb-2">
+              <LegacyButton
+                rounded="full"
+                variant="outlined"
+                color="primaryActive"
+                border="primaryActive"
+                className=""
+                startIcon={<Icons.Cancel />}
+                onClick={clearFilters}
+                endIcon={null}
+                name="clear-filters"
+              >
+                {t('ClearFilters')}
+              </LegacyButton>
+            </div>
+          </div>
         </div>
         {numOfStudies > 100 && (
           <div className="container m-auto">

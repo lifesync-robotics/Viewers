@@ -623,6 +623,7 @@ class CaseService extends PubSubService {
 
   /**
    * Enroll study in case
+   * @param enrollAllSeries - If true, uses enroll-from-orthanc endpoint to automatically enroll all series
    */
   public async enrollStudy(
     caseId: string,
@@ -632,8 +633,78 @@ class CaseService extends PubSubService {
       studyDate?: string;
       modalities?: string[];
       description?: string;
+      enrollAllSeries?: boolean; // New option to auto-enroll series
     }
   ): Promise<Study> {
+    const enrollAllSeries = metadata?.enrollAllSeries ?? false;
+    
+    // If enrollAllSeries is true, use the enroll-from-orthanc endpoint
+    if (enrollAllSeries) {
+      console.log(`📁 Enrolling study ${studyInstanceUID} in case ${caseId} from Orthanc with auto-series enrollment`);
+
+      try {
+        const response = await fetch(
+          `${this.apiUrl}/api/cases/${caseId}/enroll-from-orthanc`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              studyInstanceUID,
+              clinicalPhase,
+              enrollAllSeries: true,
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to enroll study from Orthanc');
+        }
+
+        this._broadcastEvent(EVENTS.STUDY_ENROLLED, {
+          caseId,
+          study: data.study,
+        });
+
+        // Reload active case if this is it
+        if (this.activeCaseId === caseId) {
+          await this.loadActiveCase();
+        }
+
+        // 显示详细的 Series 注册信息
+        const seriesInfo = data.seriesEnrollment || {};
+        console.log(`✅ Study enrolled: ${studyInstanceUID}`);
+        console.log(`📊 Series 注册统计:`);
+        console.log(`   - 从 Orthanc 找到: ${seriesInfo.totalSeriesFound || 0} 个 Series`);
+        console.log(`   - 成功注册: ${data.enrolledSeriesCount || 0} 个 Series`);
+        
+        if (seriesInfo.seriesList && seriesInfo.seriesList.length > 0) {
+          console.log(`📋 已注册的 Series 列表:`);
+          seriesInfo.seriesList.forEach((series: any, index: number) => {
+            console.log(`   ${index + 1}. ${series.seriesInstanceUID || 'N/A'}`);
+            console.log(`      - Series Number: ${series.seriesNumber || 0}`);
+            console.log(`      - Modality: ${series.modality || 'N/A'}`);
+            console.log(`      - Description: ${series.description || 'N/A'}`);
+            console.log(`      - Instances: ${series.instanceCount || 0}`);
+          });
+        }
+        
+        if (seriesInfo.errors && seriesInfo.errors.length > 0) {
+          console.warn(`⚠️  Series 注册过程中的错误:`);
+          seriesInfo.errors.forEach((error: any, index: number) => {
+            console.warn(`   ${index + 1}. ${error.message || 'Unknown error'}`);
+          });
+        }
+        
+        return data.study;
+      } catch (error) {
+        console.error('❌ Failed to enroll study from Orthanc:', error);
+        throw error;
+      }
+    }
+
+    // Original implementation for backward compatibility
     console.log(`📁 Enrolling study ${studyInstanceUID} in case ${caseId}`);
 
     try {

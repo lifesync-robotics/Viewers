@@ -5,20 +5,20 @@ import classnames from 'classnames';
 import StudyListTableRow from './StudyListTableRow';
 import getGridWidthClass from '../../utils/getGridWidthClass';
 
-// 列名映射：key -> 中文标签
+//  table title
 const getColumnLabel = (key) => {
   const labelMap = {
-    caseId: 'case ID',
-    patientName: 'patient name',
-    mrn: 'mrn',
-    createdAt: 'created at',
-    studyCount: 'study count',
+    caseId: 'Case ID',
+    patientName: 'Name',
+    mrn: 'MRN',
+    createdAt: 'Created At',
+    studyCount: 'Study Count',
     actions: '',
     expandIcon: '', // 展开图标列，不需要标签
     studyIndent: '', // 缩进列，不需要标签
-    studyInfo: 'study info',
-    studyDate: 'study date',
-    description: 'description',
+    studyInfo: 'Study Info',
+    studyDate: 'Study Date',
+    description: 'Description',
     // 可以根据需要添加更多映射
   };
   // 明确检查 key 是否存在于 labelMap 中，如果存在就返回其值（即使是空字符串）

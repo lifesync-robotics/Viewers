@@ -1055,7 +1055,10 @@ function WorkList({
       await caseService.enrollStudy(
         addStudyToCaseId,
         selectedStudy.studyInstanceUID,
-        selectedClinicalPhase
+        selectedClinicalPhase,
+        {
+          enrollAllSeries: true, // 自动注册所有 series
+        }
       );
 
       // Success - refresh both case list and study list
@@ -1381,25 +1384,45 @@ function WorkList({
       try {
         const series = await dataSource.query.series.search(studyInstanceUid);
         seriesInStudiesMap.set(studyInstanceUid, sortBySeriesDate(series));
-        setStudiesWithSeriesData([...studiesWithSeriesData, studyInstanceUid]);
+        setStudiesWithSeriesData(prev => [...prev, studyInstanceUid]);
       } catch (ex) {
         // TODO: UI Notification Service
         console.warn(ex);
       }
     };
 
-    // TODO: WHY WOULD YOU USE AN INDEX OF 1?!
-    // Note: expanded rows index begins at 1
-    for (let z = 0; z < expandedRows.length; z++) {
-      const expandedRowIndex = expandedRows[z] - 1;
-      const study = filteredStudies[expandedRowIndex];
+    // 创建一个映射：studyRowKey -> studyInstanceUID
+    const studyRowKeyToUID = new Map();
+    
+    if (viewMode === 'cases' && cases.length > 0) {
+      // Case-centric view: 遍历所有 cases 和 studies 来建立映射
+      // 注意：这里的逻辑必须与 createTableDataSource 中的 rowIndex 分配逻辑完全一致
+      let rowIndex = 1;
+      cases.forEach(caseItem => {
+        rowIndex++; // case row
+        // 只有当 case 展开时，才会创建 study 行并分配 rowIndex
+        if (expandedCases.includes(caseItem.caseId) && caseStudies.has(caseItem.caseId)) {
+          const studies = caseStudies.get(caseItem.caseId) || [];
+          studies.forEach(study => {
+            studyRowKeyToUID.set(rowIndex++, study.studyInstanceUID);
+          });
+        }
+      });
+    } else {
+      // Study-centric view: 直接使用索引
+      filteredStudies.forEach((study, index) => {
+        studyRowKeyToUID.set(index + 1, study.studyInstanceUid);
+      });
+    }
 
-      // Safety check: study might not exist in hierarchical view
-      if (!study || !study.studyInstanceUid) {
+    // 根据 expandedRows 获取对应的 studyInstanceUID
+    for (let z = 0; z < expandedRows.length; z++) {
+      const studyRowKey = expandedRows[z];
+      const studyInstanceUid = studyRowKeyToUID.get(studyRowKey);
+
+      if (!studyInstanceUid) {
         continue;
       }
-
-      const studyInstanceUid = study.studyInstanceUid;
 
       if (studiesWithSeriesData.includes(studyInstanceUid)) {
         continue;
@@ -1409,7 +1432,7 @@ function WorkList({
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expandedRows, studies]);
+  }, [expandedRows, studies, viewMode, cases, expandedCases, caseStudies, filteredStudies]);
 
   const isFiltering = (filterValues, defaultFilterValues) => {
     return !isEqual(filterValues, defaultFilterValues);
@@ -2177,7 +2200,9 @@ function WorkList({
                           console.log(`📋 Clinical phase: ${clinicalPhase}`);
 
                           caseService
-                            .enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase)
+                            .enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase, {
+                              enrollAllSeries: true, // 自动注册所有 series
+                            })
                             .then(() => {
                               console.log(`✅ Study added to case ${activeCaseId}`);
                               window.location.reload();
@@ -2664,7 +2689,8 @@ function WorkList({
                                 {
                                   studyDate: study.studyDate,
                                   modalities: study.modalities,
-                                  description: study.studyDescription
+                                  description: study.studyDescription,
+                                  enrollAllSeries: true, // 自动注册所有 series
                                 }
                               );
                               console.log(`✅ Study added to case ${addStudyToCaseId}`);
