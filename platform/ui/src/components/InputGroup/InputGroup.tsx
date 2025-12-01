@@ -119,15 +119,14 @@ const InputGroup = ({
   };
   return (
     <div className="container relative m-auto flex flex-col">
-      <div className="flex w-full flex-row">
+      <div className="flex w-full flex-row"> 
         {inputMeta.map((inputMeta, index) => {
           const isDescription = inputMeta.name === 'description';
           return (
             <div
               key={inputMeta.name}
               className={classnames(
-                'pl-4 first:pl-12',
-                isDescription && 'ml-6',
+                index === 0 ? 'pl-12' : '', // 只有第一列有左边距
                 getGridWidthClass(inputMeta.gridCol)
               )}
             >

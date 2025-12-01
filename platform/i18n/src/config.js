@@ -2,7 +2,8 @@ const debugMode = !!(process.env.NODE_ENV !== 'production' && process.env.REACT_
 
 const detectionOptions = {
   // order and from where user language should be detected
-  order: ['querystring', 'cookie', 'localStorage', 'navigator', 'htmlTag', 'path', 'subdomain'],
+  // order: ['querystring', 'cookie', 'localStorage', 'navigator', 'htmlTag', 'path', 'subdomain'],
+  order:[],
 
   // keys or params to lookup language from
   lookupQuerystring: 'lng',

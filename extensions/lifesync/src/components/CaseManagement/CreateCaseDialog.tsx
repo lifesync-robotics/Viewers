@@ -38,6 +38,7 @@ const CreateCaseDialog: React.FC<CreateCaseDialogProps> = ({
   const [isCreating, setIsCreating] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
+  const autoCloseTimerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Reset form when dialog opens/closes
   React.useEffect(() => {
@@ -49,8 +50,43 @@ const CreateCaseDialog: React.FC<CreateCaseDialogProps> = ({
       });
       setError(null);
       setSuccess(null);
+      // Clear auto-close timer if dialog is closed
+      if (autoCloseTimerRef.current) {
+        clearTimeout(autoCloseTimerRef.current);
+        autoCloseTimerRef.current = null;
+      }
     }
   }, [isOpen]);
+
+  // Auto-close dialog after successful case creation
+  React.useEffect(() => {
+    if (success) {
+      // Clear any existing timer
+      if (autoCloseTimerRef.current) {
+        clearTimeout(autoCloseTimerRef.current);
+      }
+      
+      // Set new timer to auto-close after 200ms
+      autoCloseTimerRef.current = setTimeout(() => {
+        setFormData({
+          patientName: '',
+          patientMRN: '',
+          dateOfBirth: '',
+        });
+        setSuccess(null);
+        onClose();
+        autoCloseTimerRef.current = null;
+      }, 200);
+    }
+
+    // Cleanup timer on unmount or when success changes
+    return () => {
+      if (autoCloseTimerRef.current) {
+        clearTimeout(autoCloseTimerRef.current);
+        autoCloseTimerRef.current = null;
+      }
+    };
+  }, [success, onClose]);
 
   const handleCreate = async () => {
     // All fields are optional with new API!
@@ -173,6 +209,11 @@ const CreateCaseDialog: React.FC<CreateCaseDialogProps> = ({
           {success ? (
             <ButtonNext
               onClick={() => {
+                // Clear auto-close timer if user manually closes
+                if (autoCloseTimerRef.current) {
+                  clearTimeout(autoCloseTimerRef.current);
+                  autoCloseTimerRef.current = null;
+                }
                 setFormData({
                   patientName: '',
                   patientMRN: '',

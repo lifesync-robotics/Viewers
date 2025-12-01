@@ -540,6 +540,7 @@ function WorkList({
   const [expandedCases, setExpandedCases] = useState([]);
   const [caseStudies, setCaseStudies] = useState(new Map()); // caseId -> studies
   const [loadingCases, setLoadingCases] = useState(false);
+  const [casePagination, setCasePagination] = useState(null); // Pagination info from API
 
   // ~ Create Case Dialog State
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -740,16 +741,12 @@ function WorkList({
 
       const { cases: caseData, pagination } = await caseService.searchCases(searchParams);
 
-      console.log('✅ Cases loaded:', {
-        count: caseData?.length || 0,
-        cases: caseData,
-        pagination,
-      });
-
       setCases(caseData || []);
+      setCasePagination(pagination || null); // 保存 pagination 信息
     } catch (error) {
       console.error('❌ Failed to load cases:', error);
       setCases([]);
+      setCasePagination(null); // 出错时清空 pagination
     } finally {
       setLoadingCases(false);
     }
@@ -838,8 +835,10 @@ function WorkList({
   const [seriesDataForCases, setSeriesDataForCases] = useState(new Map()); // Map<studyUID, seriesData>
   const numOfStudies = studiesTotal;
   const caseCount = cases?.length || 0;
+  // 在 cases 视图模式下，使用 pagination.totalCount 显示总数；如果没有 pagination，fallback 到当前页数量
+  const totalCaseCount = casePagination?.totalCount ?? caseCount;
   const displayedCount =
-    viewMode === 'cases' ? caseCount : pageNumber * resultsPerPage > 100 ? 101 : numOfStudies;
+    viewMode === 'cases' ? totalCaseCount : pageNumber * resultsPerPage > 100 ? 101 : numOfStudies;
 
   // ~ Add Study Modal
   const [showAddStudyModal, setShowAddStudyModal] = useState(false);
@@ -858,10 +857,29 @@ function WorkList({
   // TODO: 搜索功能暂时注释，后续实现
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFilter, setSearchFilter] = useState('studyUID'); // 'studyUID' | 'patientName' | 'mrn' | 'studyDate'
+  
   // Filter studies based on search query (placeholder - will implement later)
   const filteredOrthancStudies = useMemo(() => {
-    // TODO: 实现搜索过滤逻辑
-    return orthancStudies;
+    if (!searchQuery.trim()) {
+      return orthancStudies;
+    }
+    
+    const query = searchQuery.toLowerCase().trim();
+    
+    return orthancStudies.filter(study => {
+      switch (searchFilter) {
+        case 'studyUID':
+          return study.studyInstanceUID?.toLowerCase().includes(query);
+        case 'patientName':
+          return study.patientName?.toLowerCase().includes(query);
+        case 'mrn':
+          return study.patientId?.toLowerCase().includes(query);
+        case 'studyDate':
+          return study.studyDate?.includes(query);
+        default:
+          return true;
+      }
+    });
   }, [orthancStudies, searchQuery, searchFilter]);
 
   // Select Study dialog state
@@ -1030,7 +1048,10 @@ function WorkList({
       await caseService.enrollStudy(
         addStudyToCaseId,
         selectedStudy.studyInstanceUID,
-        selectedClinicalPhase
+        selectedClinicalPhase,
+        {
+          enrollAllSeries: true, // 自动注册所有 series
+        }
       );
 
       // Success - refresh both case list and study list
@@ -1038,7 +1059,7 @@ function WorkList({
       setShowAddStudyModal(false);
       setSelectedStudy(null);
 
-      // Reload cases to update studyCount
+      // 重新加载以确保数据同步（依赖服务器返回的真实数据，不要手动增加计数）
       await loadCases();
 
       // Reload studies for this case if it's already expanded
@@ -1087,13 +1108,31 @@ function WorkList({
 
   const onPageNumberChange = newPageNumber => {
     const oldPageNumber = filterValues.pageNumber;
-    const rollingPageNumberMod = Math.floor(101 / filterValues.resultsPerPage);
-    const rollingPageNumber = oldPageNumber % rollingPageNumberMod;
     const isNextPage = newPageNumber > oldPageNumber;
-    const hasNextPage = Math.max(rollingPageNumber, 1) * resultsPerPage < numOfStudies;
+    const isPrevPage = newPageNumber < oldPageNumber;
 
-    if (isNextPage && !hasNextPage) {
-      return;
+    // 在 cases 视图模式下，使用后端返回的 pagination 信息来判断
+    if (viewMode === 'cases') {
+      if (casePagination) {
+        // 使用后端返回的 hasNext/hasPrev 来判断
+        if (isNextPage && !casePagination.hasNext) {
+          return; // 没有下一页，直接返回
+        }
+        if (isPrevPage && !casePagination.hasPrev) {
+          return; // 没有上一页，直接返回
+        }
+      } else {
+        console.warn('⚠️ No pagination info available in cases view mode');
+      }
+    } else {
+      // 在 studies 视图模式下，使用原来的逻辑
+      const rollingPageNumberMod = Math.floor(101 / filterValues.resultsPerPage);
+      const rollingPageNumber = oldPageNumber % rollingPageNumberMod;
+      const hasNextPage = Math.max(rollingPageNumber, 1) * resultsPerPage < numOfStudies;
+
+      if (isNextPage && !hasNextPage) {
+        return;
+      }
     }
 
     setFilterValues({ ...filterValues, pageNumber: newPageNumber });
@@ -1122,8 +1161,21 @@ function WorkList({
     }
 
     try {
-      await caseService.updateCase(selectedCase.caseId, updates);
+      const updatedCase = await caseService.updateCase(selectedCase.caseId, updates);
       await loadCases(); // Reload cases list
+      
+      // Update selectedCase with the latest data from server
+      // This ensures the edit dialog shows updated data if reopened
+      setSelectedCase({
+        caseId: updatedCase.caseId,
+        patientInfo: updatedCase.patientInfo || {
+          mrn: updatedCase.patientInfo?.mrn || selectedCase.patientInfo?.mrn || '',
+          name: updatedCase.patientInfo?.name || selectedCase.patientInfo?.name || '',
+          dateOfBirth: updatedCase.patientInfo?.dateOfBirth || selectedCase.patientInfo?.dateOfBirth || '',
+        },
+        status: updatedCase.status || selectedCase.status || 'created',
+      });
+      
       console.log(`✅ Case ${selectedCase.caseId} updated successfully`);
     } catch (err) {
       console.error('Failed to update case:', err);
@@ -1295,25 +1347,45 @@ function WorkList({
       try {
         const series = await dataSource.query.series.search(studyInstanceUid);
         seriesInStudiesMap.set(studyInstanceUid, sortBySeriesDate(series));
-        setStudiesWithSeriesData([...studiesWithSeriesData, studyInstanceUid]);
+        setStudiesWithSeriesData(prev => [...prev, studyInstanceUid]);
       } catch (ex) {
         // TODO: UI Notification Service
         console.warn(ex);
       }
     };
 
-    // TODO: WHY WOULD YOU USE AN INDEX OF 1?!
-    // Note: expanded rows index begins at 1
-    for (let z = 0; z < expandedRows.length; z++) {
-      const expandedRowIndex = expandedRows[z] - 1;
-      const study = filteredStudies[expandedRowIndex];
+    // 创建一个映射：studyRowKey -> studyInstanceUID
+    const studyRowKeyToUID = new Map();
+    
+    if (viewMode === 'cases' && cases.length > 0) {
+      // Case-centric view: 遍历所有 cases 和 studies 来建立映射
+      // 注意：这里的逻辑必须与 createTableDataSource 中的 rowIndex 分配逻辑完全一致
+      let rowIndex = 1;
+      cases.forEach(caseItem => {
+        rowIndex++; // case row
+        // 只有当 case 展开时，才会创建 study 行并分配 rowIndex
+        if (expandedCases.includes(caseItem.caseId) && caseStudies.has(caseItem.caseId)) {
+          const studies = caseStudies.get(caseItem.caseId) || [];
+          studies.forEach(study => {
+            studyRowKeyToUID.set(rowIndex++, study.studyInstanceUID);
+          });
+        }
+      });
+    } else {
+      // Study-centric view: 直接使用索引
+      filteredStudies.forEach((study, index) => {
+        studyRowKeyToUID.set(index + 1, study.studyInstanceUid);
+      });
+    }
 
-      // Safety check: study might not exist in hierarchical view
-      if (!study || !study.studyInstanceUid) {
+    // 根据 expandedRows 获取对应的 studyInstanceUID
+    for (let z = 0; z < expandedRows.length; z++) {
+      const studyRowKey = expandedRows[z];
+      const studyInstanceUid = studyRowKeyToUID.get(studyRowKey);
+
+      if (!studyInstanceUid) {
         continue;
       }
-
-      const studyInstanceUid = study.studyInstanceUid;
 
       if (studiesWithSeriesData.includes(studyInstanceUid)) {
         continue;
@@ -1323,7 +1395,7 @@ function WorkList({
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expandedRows, studies]);
+  }, [expandedRows, studies, viewMode, cases, expandedCases, caseStudies, filteredStudies]);
 
   const isFiltering = (filterValues, defaultFilterValues) => {
     return !isEqual(filterValues, defaultFilterValues);
@@ -1354,16 +1426,16 @@ function WorkList({
                 </div>
               ),
               // title: caseItem.caseId,
-              gridCol: 6,
+              gridCol: 6, // 恢复为 6，不调整
             },
             {
               key: 'patientName',
               content: (
-                <span className="font-semibold text-white">
+                <span className="font-semibold text-white whitespace-nowrap">
                   {caseItem.patientName || 'Unknown Patient'}
                 </span>
               ),
-              gridCol: 5,
+              gridCol: 3, // 从 2 增大到 3，避免长名字被截断
             },
             {
               key: 'mrn',
@@ -1372,27 +1444,27 @@ function WorkList({
                   {caseItem.patientMRN || caseItem.patientInfo?.mrn || caseItem.mrn || 'N/A'}
                 </span>
               ),
-              gridCol: 3,
+              gridCol: 5, // 保持不变
             },
             {
               key: 'createdAt',
               content: moment(caseItem.createdAt).format('MMM-DD-YYYY'),
-              gridCol: 3,
+              gridCol: 3, // 保持不变，日期格式固定
             },
             {
               key: 'studyCount',
               content: (
-                <div className="flex items-center gap-2">
-                  <Icons.GroupLayers className="h-4 w-4 text-gray-400" />
+                <div className="flex items-center gap-2 whitespace-nowrap">
+                  <Icons.GroupLayers className="h-4 w-4 text-gray-400 flex-shrink-0" />
                   <span>{caseItem.studyCount} studies</span>
                 </div>
               ),
-              gridCol: 3,
+              gridCol: 3, // 保持不变，确保 "0 studies" 在一行显示
             },
             {
               key: 'actions',
               content: (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-0.5"> {/* 从 gap-1 改为 gap-0.5 */}
                   <button
                     onClick={async e => {
                       e.stopPropagation();
@@ -1421,33 +1493,48 @@ function WorkList({
                         setLoadingOrthancStudies(false);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-2 py-1 transition-colors hover:bg-green-900/50"
+                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-1 py-1 transition-colors hover:bg-green-900/50 whitespace-nowrap" // px-1.5 改为 px-1
                     title="Add Study to Case"
                   >
-                    <Icons.Add className="h-4 w-4 text-green-400" />
+                    <Icons.Add className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
                     <span className="text-xs text-green-300">Add Study</span>
                   </button>
                   <button
                     onClick={e => {
                       e.stopPropagation();
+                      // 🔍 DEBUG: 检查原始 caseItem 数据
+                      console.log('🔍 WorkList: ========== DEBUG INFO ==========');
+                      console.log('🔍 Original caseItem:', JSON.stringify(caseItem, null, 2));
+                      console.log('🔍 caseItem.patientInfo:', caseItem.patientInfo);
+                      console.log('🔍 caseItem.patientInfo?.dateOfBirth:', caseItem.patientInfo?.dateOfBirth);
+                      console.log('🔍 caseItem.patientMRN:', caseItem.patientMRN);
+                      console.log('🔍 caseItem.patientName:', caseItem.patientName);
+                      console.log('🔍 ===========================================');
+                      
                       // Transform case data to match EditCaseDialog's expected structure
+                      // Use patientInfo as primary source, fallback to case-level fields for backward compatibility
                       const caseDataForDialog = {
                         caseId: caseItem.caseId,
                         patientInfo: {
                           mrn:
-                            caseItem.patientMRN || caseItem.patientInfo?.mrn || caseItem.mrn || '',
-                          name: caseItem.patientName || '',
-                          dateOfBirth: caseItem.dateOfBirth || '',
+                            caseItem.patientInfo?.mrn || caseItem.patientMRN || caseItem.mrn || '',
+                          name: caseItem.patientInfo?.name || caseItem.patientName || '',
+                          dateOfBirth: caseItem.patientInfo?.dateOfBirth || '',
                         },
                         status: caseItem.status || 'created',
                       };
+                      
+                      // 🔍 DEBUG: 检查转换后的数据
+                      console.log('🔍 WorkList: caseDataForDialog:', JSON.stringify(caseDataForDialog, null, 2));
+                      console.log('🔍 WorkList: caseDataForDialog.patientInfo?.dateOfBirth:', caseDataForDialog.patientInfo?.dateOfBirth);
+                      
                       setSelectedCase(caseDataForDialog);
                       setIsEditDialogOpen(true);
                     }}
-                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors hover:bg-blue-900/50"
+                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-1 py-1 transition-colors hover:bg-blue-900/50 whitespace-nowrap" // px-1.5 改为 px-1
                     title="Edit Case"
                   >
-                    <Icons.Settings className="h-4 w-4 text-blue-400" />
+                    <Icons.Settings className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
                     <span className="text-xs text-blue-300">Edit</span>
                   </button>
                   <button
@@ -1473,15 +1560,15 @@ function WorkList({
                         alert(`Failed to delete case: ${err.message}`);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-2 py-1 transition-colors hover:bg-red-900/50"
+                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-1 py-1 transition-colors hover:bg-red-900/50 whitespace-nowrap" // px-1.5 改为 px-1
                     title="Delete Case"
                   >
-                    <Icons.Cancel className="h-4 w-4 text-red-400" />
-                    <span className="text-xs text-red-300">Delete</span>
+                    <Icons.Cancel className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+                    <span className="text-xs text-red-300">Del</span>
                   </button>
                 </div>
               ),
-              gridCol: 4,
+              gridCol: 7, // 从 8 减小到 7，因为移除了 expandIcon 列，可以重新分配空间
             },
             {
               key: 'expandIcon',
@@ -2076,7 +2163,9 @@ function WorkList({
                           console.log(`📋 Clinical phase: ${clinicalPhase}`);
 
                           caseService
-                            .enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase)
+                            .enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase, {
+                              enrollAllSeries: true, // 自动注册所有 series
+                            })
                             .then(() => {
                               console.log(`✅ Study added to case ${activeCaseId}`);
                               window.location.reload();
@@ -2087,10 +2176,10 @@ function WorkList({
                             });
                         }
                       }}
-                      className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-2 py-1 transition-colors hover:bg-blue-900/50"
+                      className="flex items-center gap-1.5 rounded border border-blue-500/30 bg-blue-900/20 px-1.5 py-1 transition-colors hover:bg-blue-900/50"
                       title="Add to Case"
                     >
-                      <Icons.Add className="h-4 w-4 text-blue-400" />
+                      <Icons.Add className="h-3.5 w-3.5 text-blue-400" />
                       <span className="text-xs text-blue-300">Add</span>
                     </button>
                   ) : (
@@ -2563,7 +2652,8 @@ function WorkList({
                                 {
                                   studyDate: study.studyDate,
                                   modalities: study.modalities,
-                                  description: study.studyDescription
+                                  description: study.studyDescription,
+                                  enrollAllSeries: true, // 自动注册所有 series
                                 }
                               );
                               console.log(`✅ Study added to case ${addStudyToCaseId}`);
@@ -2784,7 +2874,7 @@ function WorkList({
               {activeTab === 'select' && (
                 <div>
                   {/* Search Bar - TODO: 搜索功能暂时注释，后续实现 */}
-                  {/* <div className="border-secondary-light bg-secondary-main flex items-center gap-3 border-b p-4">
+                  <div className="border-secondary-light bg-secondary-main flex items-center gap-3 border-b p-4">
                     <select
                       value={searchFilter}
                       onChange={e => setSearchFilter(e.target.value)}
@@ -2802,7 +2892,7 @@ function WorkList({
                       placeholder="Enter search term..."
                       className="flex-1 rounded border border-gray-600 bg-black px-3 py-2 text-white placeholder-gray-500"
                     />
-                    <button
+                    {/* <button
                       onClick={() => {
                         // TODO: 实现搜索功能
                         console.log('Search clicked:', searchQuery, searchFilter);
@@ -2810,8 +2900,8 @@ function WorkList({
                       className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
                     >
                       Search
-                    </button>
-                  </div> */}
+                    </button> */}
+                  </div> 
 
                   {/* Study List */}
                   <div className="p-6">
@@ -2824,10 +2914,9 @@ function WorkList({
                       </div>
                     ) : filteredOrthancStudies.length === 0 ? (
                       <div className="py-12 text-center text-gray-400">
-                        No studies found in Orthanc
-                        {/* {searchQuery
-                          ? 'No studies found matching your search'
-                          : 'No studies found in Orthanc'} */}
+                        {searchQuery
+                          ? `No studies found matching "${searchQuery}"`
+                          : 'No studies found in Orthanc'}
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -2977,15 +3066,11 @@ function WorkList({
             <div className="border-secondary-light border-t px-6 py-4">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-400">
-                  {/* {orthancStudies.length} studies available */}
                   {activeTab === 'select'
-                    ? `${orthancStudies.length} studies available`
+                    ? searchQuery
+                      ? `${filteredOrthancStudies.length} of ${orthancStudies.length} studies`
+                      : `${orthancStudies.length} studies available`
                     : `${orthancStudies.length} studies available`}
-                  {/* TODO: 搜索功能暂时注释
-                  {activeTab === 'select'
-                    ? `${filteredOrthancStudies.length} of ${orthancStudies.length} studies`
-                    : `${orthancStudies.length} studies available`}
-                  */}
                   {orthancStudies.filter(s => s.hasCaseId).length > 0 && (
                     <span className="ml-2 text-yellow-400">
                       ({orthancStudies.filter(s => s.hasCaseId).length} already assigned)
