@@ -76,6 +76,9 @@
       "packageName": "@ohif/mode-longitudinal"
     },
     {
+      "packageName": "@ohif/mode-navigation"
+    },
+    {
       "packageName": "@ohif/mode-planner"
     },
     {

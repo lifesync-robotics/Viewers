@@ -15,6 +15,7 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
       name: 'screw-management',
       label: 'Screw Management',
       iconName: 'tool-more-menu',
+      iconLabel: 'Screw',
       component: (props) => (
         <ScrewManagementPanel
           servicesManager={servicesManager}

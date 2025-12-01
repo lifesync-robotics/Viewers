@@ -410,6 +410,11 @@ const SidePanel = ({
                             },
                           })}
                         </div>
+                        {(tab.iconLabel || (!Icons[tab.iconName] && tab.label)) && (
+                          <div className="text-[10px] text-primary text-center mt-0.5 leading-tight truncate">
+                            {tab.iconLabel || tab.label}
+                          </div>
+                        )}
                       </div>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">

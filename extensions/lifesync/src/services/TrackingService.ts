@@ -48,6 +48,11 @@ class TrackingService extends PubSubService {
   };
   private lastConnectionMode: string | null = null;
   private selectedToolId: string | null = null; // Selected tool for visualization
+  private coordinateSystem: 'tracker' | 'patient_reference' = 'patient_reference'; // Coordinate system for navigation
+  
+  // 📍 [PR-DEBUG] Time-based PR logging
+  private lastPrDebugLog: number = 0;
+  private prDebugInterval: number = 5000; // 5 seconds in milliseconds
 
   constructor(servicesManager, config: any = {}) {
     super(EVENTS);
@@ -484,6 +489,21 @@ class TrackingService extends PubSubService {
           }
           break;
         }
+        
+        // 📍 [PR-DEBUG] Log PR data every 5 seconds
+        const now = Date.now();
+        if (now - this.lastPrDebugLog >= this.prDebugInterval) {
+          const messageData = message.data || message;
+          const pr = messageData.patient_reference;
+          const prIcon = pr?.visible ? '✅' : '❌';
+          console.log(`\n📍 [PR-DEBUG-SERVICE] Frame ${messageData.frame_number} @ ${(now/1000).toFixed(2)}s`);
+          console.log(`   ${prIcon} PR ID: ${pr?.id}`);
+          console.log(`   ${prIcon} PR Name: ${pr?.name}`);
+          console.log(`   ${prIcon} PR Visible: ${pr?.visible}`);
+          console.log(`   ${prIcon} PR Quality: ${pr?.quality?.toFixed(2)}`);
+          console.log(`   📦 Tools in message: ${Object.keys(tools).length}`);
+          this.lastPrDebugLog = now;
+        }
 
         // Find the primary tracked tool (not patient reference)
         let primaryTool: any = null;
@@ -543,15 +563,23 @@ class TrackingService extends PubSubService {
         }
 
         if (primaryTool) {
-          // Extract position, orientation, and matrix
-          const position = primaryTool.coordinates?.register?.position_mm;
-          const rotation = primaryTool.coordinates?.register?.rotation_deg || [0, 0, 0];
+          // Extract position, orientation, and matrix from selected coordinate system
+          // coordinateSystem can be 'tracker' or 'patient_reference' (register)
+          // For backward compatibility, 'register' maps to 'patient_reference'
+          const coordSysKey = this.coordinateSystem === 'tracker' ? 'tracker' : 'register';
+          const coords = primaryTool.coordinates?.[coordSysKey];
+          
+          const position = coords?.position_mm;
+          const rotation = coords?.rotation_deg || [0, 0, 0];
 
-          // Construct matrix key dynamically (rM + toolId, e.g., rMEE, rMDR-VR06-A33)
-          const matrixKey = `rM${primaryToolId}`;
-          const matrix = primaryTool.coordinates?.register?.[matrixKey] ||
-                        primaryTool.coordinates?.register?.rMEE ||
-                        primaryTool.coordinates?.register?.rMcrosshair;
+          // Construct matrix key dynamically (rM + toolId for register, matrix for tracker)
+          let matrix;
+          if (this.coordinateSystem === 'tracker') {
+            matrix = coords?.matrix;
+          } else {
+            const matrixKey = `rM${primaryToolId}`;
+            matrix = coords?.[matrixKey] || coords?.rMEE || coords?.rMcrosshair;
+          }
 
           // Use data wrapper if present (new format) or direct message (old format)
           const messageData = message.data || message;
@@ -560,8 +588,10 @@ class TrackingService extends PubSubService {
             console.log('🎯 [TrackingService] Using primary tool:', {
               toolId: primaryToolId,
               toolName: primaryTool.tool_name,
+              coordinateSystem: this.coordinateSystem,
+              coordSysKey: coordSysKey,
               hasPosition: !!position,
-              matrixKey: matrixKey,
+              position: position,
               hasMatrix: !!matrix,
               matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null',
               matrixSample: matrix ? (Array.isArray(matrix) && matrix.length > 0 ? `First element: ${Array.isArray(matrix[0]) ? `Array[${matrix[0].length}]` : matrix[0]}` : 'Not array') : 'null'
@@ -666,11 +696,19 @@ class TrackingService extends PubSubService {
       orientation,
       timestamp,
       frame_id,
+      frame_number: data.frame_id,  // Alias for TrackingPanel compatibility
       matrix: data.matrix,
       quality: data.quality,
       quality_score: data.quality_score,
       visible: data.visible,
       tools: data.tools,
+      // Patient reference data (needed by TrackingPanel)
+      patient_reference_id: data.patient_reference_id,
+      patient_reference_name: data.patient_reference_name,
+      patient_reference_visible: data.patient_reference_visible,
+      patient_reference_quality: data.patient_reference_quality,
+      patient_reference_moved: data.patient_reference_moved,
+      patient_reference_movement: data.patient_reference_movement,
     });
   }
 
@@ -681,6 +719,22 @@ class TrackingService extends PubSubService {
   public setSelectedTool(toolId: string | null): void {
     this.selectedToolId = toolId;
     console.log(`🎯 Selected tool for visualization: ${toolId || 'none'}`);
+  }
+
+  /**
+   * Set the coordinate system for navigation (tracker or patient_reference)
+   * This determines which coordinate space is used for position extraction
+   */
+  public setCoordinateSystem(system: 'tracker' | 'patient_reference'): void {
+    this.coordinateSystem = system;
+    console.log(`🧭 Coordinate system for navigation: ${system}`);
+  }
+
+  /**
+   * Get the currently selected coordinate system
+   */
+  public getCoordinateSystem(): 'tracker' | 'patient_reference' {
+    return this.coordinateSystem;
   }
 
   /**

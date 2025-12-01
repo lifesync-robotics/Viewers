@@ -184,9 +184,21 @@ function PanelTracking() {
   // Update rate tracking (Hz)
   const [updateHz, setUpdateHz] = React.useState<number>(0);
   const frameTimestampsRef = React.useRef<number[]>([]);
+  
+  // 📍 [PR-DEBUG] Time-based PR logging
+  const lastPrDebugLogRef = React.useRef<number>(0);
+  const prDebugInterval = 5000; // 5 seconds
 
   // Get TrackingService
   const trackingService = servicesManager?.services?.trackingService;
+
+  // Sync coordinate system with TrackingService
+  React.useEffect(() => {
+    if (trackingService) {
+      trackingService.setCoordinateSystem(coordinateSystem);
+      console.log(`🧭 TrackingPanel: Coordinate system changed to ${coordinateSystem}`);
+    }
+  }, [coordinateSystem, trackingService]);
 
   // Load tracking configuration
   const loadConfig = React.useCallback(async () => {
@@ -196,6 +208,15 @@ function PanelTracking() {
 
       // Phase 4: Always use relative API paths (webpack proxy handles routing)
       const response = await fetch('/api/tracking/config');
+      
+      // Check if response is OK before parsing JSON
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Server error response:', response.status, errorText);
+        throw new Error(`Server returned ${response.status}: ${errorText.substring(0, 100)}`);
+      }
+      
+      // Parse JSON response
       const result = await response.json();
 
       if (result.success) {
@@ -205,11 +226,21 @@ function PanelTracking() {
         if (result.config.tracking_mode?.current) {
           setSelectedMode(result.config.tracking_mode.current as 'simulation' | 'hardware');
         }
+        
+        // Log the source of configuration (database or file)
+        if (result.source) {
+          console.log(`✅ Configuration loaded from: ${result.source}`);
+          if (result.message) {
+            console.log(`   ${result.message}`);
+          }
+        }
       } else {
-        setError('Failed to load tracking configuration');
+        setError(result.error || 'Failed to load tracking configuration');
+        console.error('Configuration load failed:', result.error);
       }
     } catch (err) {
-      setError('Failed to connect to tracking service');
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to load tracking configuration: ${errorMessage}`);
       console.error('Error loading tracking config:', err);
     } finally {
       setLoading(false);
@@ -430,6 +461,21 @@ function PanelTracking() {
           timestamp: data.timestamp || new Date().toISOString(),
           frame_number: data.frame_number || 0
         });
+        
+        // 📍 [PR-DEBUG] Log PR data every 5 seconds
+        const nowPrDebug = Date.now();
+        if (nowPrDebug - lastPrDebugLogRef.current >= prDebugInterval) {
+          const pr = data.patient_reference || {};
+          const prIcon = pr.visible ? '✅' : '❌';
+          console.log(`\n📍 [PR-DEBUG-PANEL] Frame ${data.frame_number} @ ${(nowPrDebug/1000).toFixed(2)}s`);
+          console.log(`   ${prIcon} PR ID: ${data.patient_reference_id}`);
+          console.log(`   ${prIcon} PR Name: ${data.patient_reference_name}`);
+          console.log(`   ${prIcon} PR Visible: ${data.patient_reference_visible}`);
+          console.log(`   ${prIcon} PR Quality: ${data.patient_reference_quality?.toFixed(2)}`);
+          console.log(`   📦 UI State - trackingFrame.patient_reference:`, pr);
+          console.log(`   📦 Tools in frame: ${Object.keys(data.tools || {}).length}`);
+          lastPrDebugLogRef.current = nowPrDebug;
+        }
 
         // Auto-select first tool if no selection and tools are available
         if (!selectedToolId && data.tools) {
