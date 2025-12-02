@@ -819,15 +819,16 @@ function WorkList({
     return newCase;
   };
 
-  // Filter studies by active case
+  // 🔧 FIX: Show ALL studies, not just those in active case
+  // The active case is just for context/highlighting, not for filtering
   const filteredStudies = useMemo(() => {
-    if (!activeCaseId || !activeCase) {
-      return sortedStudies;
+    console.log(`📋 [WorkList] Showing ALL studies (${sortedStudies.length} total)`);
+    if (activeCaseId) {
+      console.log(`   ℹ️ Active case: ${activeCaseId} (for context only, not filtering)`);
     }
-
-    const caseStudyUIDs = (activeCase.studies || []).map(s => s.studyInstanceUID);
-    return sortedStudies.filter(study => caseStudyUIDs.includes(study.studyInstanceUid));
-  }, [sortedStudies, activeCaseId, activeCase]);
+    // Always return all studies - don't filter by active case
+    return sortedStudies;
+  }, [sortedStudies, activeCaseId]);
 
   // ~ Rows & Studies
   const [expandedRows, setExpandedRows] = useState([]);
@@ -1412,17 +1413,24 @@ function WorkList({
         const caseRowKey = rowIndex++;
         const isCaseExpanded = expandedCases.includes(caseItem.caseId);
 
-        // Add case row
+        // Add case row with active case highlighting
+        const isActiveCase = activeCaseId && caseItem.caseId === activeCaseId;
+        
         rows.push({
           dataCY: `caseRow-${caseItem.caseId}`,
           clickableCY: caseItem.caseId,
+          className: isActiveCase 
+            ? 'bg-blue-900/20 border-l-4 border-blue-500 hover:bg-blue-900/30' 
+            : 'hover:bg-primary-dark',
           row: [
             {
               key: 'caseId',
               content: (
-                <div className="flex items-center gap-2 rounded bg-blue-900/20 px-2 py-1">
+                <div className={`flex items-center gap-2 rounded px-2 py-1 ${isActiveCase ? 'bg-blue-800/40' : 'bg-blue-900/20'}`}>
+                  {isActiveCase && <span className="text-blue-400 text-lg">★</span>}
                   <Icons.Database className="h-5 w-5 text-blue-400" />
                   <span className="text-base font-bold text-blue-200">📁 {caseItem.caseId}</span>
+                  {isActiveCase && <span className="ml-2 text-xs bg-blue-600/60 px-2 py-0.5 rounded text-blue-200">ACTIVE</span>}
                 </div>
               ),
               // title: caseItem.caseId,
@@ -1604,13 +1612,23 @@ function WorkList({
 
             if (!fullStudy) {
               // Study not loaded yet - show placeholder with remove button
+              const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
+              
               rows.push({
                 dataCY: `studyPlaceholder-${study.studyInstanceUID}`,
                 clickableCY: study.studyInstanceUID,
+                className: isActiveCaseStudy 
+                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40' 
+                  : 'hover:bg-primary-dark',
                 row: [
                   {
                     key: 'studyIndent',
-                    content: <div className="ml-6 text-gray-500">└─</div>,
+                    content: (
+                      <div className="ml-6 text-gray-500 flex items-center gap-1">
+                        {isActiveCaseStudy && <span className="text-blue-400 text-xs">●</span>}
+                        └─
+                      </div>
+                    ),
                     gridCol: 1,
                   },
                   {
@@ -1726,13 +1744,24 @@ function WorkList({
                 );
               };
 
+              // 🎨 Highlight active case studies with different background color
+              const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
+              
               rows.push({
                 dataCY: `studyRow-${studyInstanceUid}`,
                 clickableCY: studyInstanceUid,
+                className: isActiveCaseStudy 
+                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40' 
+                  : 'hover:bg-primary-dark',
                 row: [
                   {
                     key: 'studyIndent',
-                    content: <div className="ml-6 text-gray-500">└─</div>,
+                    content: (
+                      <div className="ml-6 text-gray-500 flex items-center gap-1">
+                        {isActiveCaseStudy && <span className="text-blue-400 text-xs">●</span>}
+                        └─
+                      </div>
+                    ),
                     gridCol: 1,
                   },
                   {

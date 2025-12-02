@@ -1,21 +1,32 @@
 /**
- * PanelTracking - Panel for tracking system control and monitoring (Phase 4: Enhanced)
+ * PanelTracking - Panel for tracking system control and monitoring (Phase 4: Enhanced, Simplified UI)
  *
  * This panel provides controls for:
- * - Switching between simulation/hardware tracking modes
+ * - Selecting pre-configured tracking configurations (simplified workflow)
  * - Viewing tracking status and quality metrics
  * - Starting/stopping tracking sessions
  * - Patient reference status monitoring (Phase 4)
  * - Real-time tool coordinates display (Phase 4)
  * - Coordinate system toggle (tracker vs PR) (Phase 4)
  * - Navigation control (start/stop)
+ * - Navigation mode switching (camera-follow vs instrument-projection)
  *
- * Note: Tool configuration is managed via TrackingConfigDialog
+ * SIMPLIFIED UI:
+ * - Tracking mode (simulation/hardware) is now controlled by the selected configuration
+ * - Users can only select from pre-saved configurations (no manual mode switching)
+ * - Configuration management is done through the TrackingConfigDialog
  */
 
 import React from 'react';
 import { useSystem } from '@ohif/core';
 import TrackingConfigDialog from './TrackingConfigDialog';
+
+// Extend Window interface for NavigationController
+declare global {
+  interface Window {
+    __navigationController?: any;
+  }
+}
 
 interface TrackingConfig {
   version: string;
@@ -72,10 +83,22 @@ interface PatientReferenceStatus {
 
 // Phase 4: Tool Tracking Data
 interface ToolTrackingData {
+  tool_name?: string;
   visible: boolean;
   quality: string;
   quality_score: number;
   is_patient_reference: boolean;
+  
+  // Quaternion (w, x, y, z) - Better for tracking rotation
+  quaternion?: [number, number, number, number];
+  
+  // Delta (frame-to-frame changes)
+  delta_position_mm?: number;
+  delta_rotation_deg?: number;
+  
+  // ROM file information
+  rom_file?: string;
+  
   coordinates: {
     tracker: {
       position_mm: [number, number, number];
@@ -293,7 +316,7 @@ function PanelTracking() {
       console.log('🚀 Starting navigation from TrackingPanel...');
       console.log('  - TrackingService available:', !!trackingService);
       console.log('  - CommandsManager available:', !!commandsManager);
-      console.log('  - Selected Mode:', selectedMode);
+      console.log('  - Current Configuration:', currentTrackingConfig);
 
       if (!trackingService) {
         setError('TrackingService not available');
@@ -304,6 +327,15 @@ function PanelTracking() {
         setError('CommandsManager not available');
         return;
       }
+
+      if (!currentTrackingConfig) {
+        setError('No configuration loaded. Please select a configuration first.');
+        return;
+      }
+
+      // Get tracking mode from current configuration
+      const trackingMode = currentTrackingConfig.tracking_mode || selectedMode;
+      console.log('  - Tracking Mode (from config):', trackingMode);
 
       // Clear UI data buffers before starting navigation
       console.log('  - Clearing UI data buffers');
@@ -318,13 +350,14 @@ function PanelTracking() {
       // 3. Wait for cleanup
       // 4. Connect with the new mode
 
-      console.log(`🚀 Starting navigation in ${selectedMode} mode...`);
+      console.log(`🚀 Starting navigation in ${trackingMode} mode...`);
+      console.log(`   Configuration: ${currentTrackingConfig.name}`);
       console.log(`   Navigation mode: ${navigationMode}`);
       console.log(`   Orientation tracking: ${enableOrientation ? '6-DOF ✅' : '3-DOF ❌'}`);
 
       await commandsManager.runCommand('startNavigation', {
         mode: 'circular',
-        trackingMode: selectedMode,
+        trackingMode: trackingMode,
         enableOrientation: enableOrientation,
         navigationMode: navigationMode
       });
@@ -349,7 +382,7 @@ function PanelTracking() {
       console.error('❌ Failed to start navigation:', error);
       setError(`Failed to start navigation: ${error.message}`);
     }
-  }, [commandsManager, trackingService, selectedMode]);
+  }, [commandsManager, trackingService, currentTrackingConfig, selectedMode, navigationMode, enableOrientation]);
 
   const handleStopNavigation = React.useCallback(() => {
     try {
@@ -395,6 +428,12 @@ function PanelTracking() {
     setCurrentTrackingConfig(savedConfig);
     setConfigDialogOpen(false);
 
+    // Sync tracking mode from saved configuration
+    if (savedConfig.tracking_mode) {
+      setSelectedMode(savedConfig.tracking_mode as 'simulation' | 'hardware');
+      console.log(`  - Tracking mode set to: ${savedConfig.tracking_mode}`);
+    }
+
     // Reload the tracking configuration to apply changes
     await loadConfig();
 
@@ -405,6 +444,12 @@ function PanelTracking() {
   const handleConfigApplied = React.useCallback(async (appliedConfig: any) => {
     console.log('✅ Configuration applied:', appliedConfig);
     setCurrentTrackingConfig(appliedConfig);
+
+    // Sync tracking mode from applied configuration
+    if (appliedConfig.tracking_mode) {
+      setSelectedMode(appliedConfig.tracking_mode as 'simulation' | 'hardware');
+      console.log(`  - Tracking mode set to: ${appliedConfig.tracking_mode}`);
+    }
 
     // Reload the tracking configuration
     await loadConfig();
@@ -549,6 +594,22 @@ function PanelTracking() {
         {loading && (
           <div className="mb-4 text-center text-secondary-light">
             Loading...
+          </div>
+        )}
+
+        {/* Simplified Workflow Info */}
+        {!currentTrackingConfig && !loading && (
+          <div className="mb-4 p-3 bg-blue-900 border border-blue-700 rounded">
+            <div className="flex items-start gap-2">
+              <span className="text-lg">💡</span>
+              <div className="flex-1">
+                <div className="text-blue-200 text-sm font-medium mb-1">Simplified Workflow</div>
+                <div className="text-xs text-blue-300">
+                  Select a pre-configured tracking setup using the "Select Configuration" button below. 
+                  The tracking mode (simulation/hardware) and all tool settings are included in each configuration.
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -703,8 +764,8 @@ function PanelTracking() {
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                      <div className="text-white font-medium">
-                        {toolId.toUpperCase()}
+                        <div className="text-white font-medium font-mono">
+                          {toolData.visible ? (toolData.is_patient_reference ? '✅' : '🎯') : '❌'} {toolId.toUpperCase()}
                         </div>
                         {isSelected && (
                           <div className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">
@@ -712,7 +773,7 @@ function PanelTracking() {
                           </div>
                         )}
                       </div>
-                      <div className={`text-xs ${
+                      <div className={`text-xs font-mono ${
                         toolData.visible ? 'text-green-400' : 'text-red-400'
                       }`}>
                         {toolData.visible ? '● Visible' : '● Hidden'}
@@ -721,27 +782,54 @@ function PanelTracking() {
 
                     {toolData.visible && coords && (
                       <div className="space-y-1 text-xs font-mono">
+                        {/* Position */}
                         <div className="flex justify-between text-gray-300">
-                          <span>Position (mm):</span>
+                          <span>Pos (mm):</span>
                           <span className="text-blue-300">
-                            [{coords.position_mm[0].toFixed(1)}, {coords.position_mm[1].toFixed(1)}, {coords.position_mm[2].toFixed(1)}]
+                            [{coords.position_mm[0].toFixed(1).padStart(7)}, {coords.position_mm[1].toFixed(1).padStart(7)}, {coords.position_mm[2].toFixed(1).padStart(7)}]
                           </span>
                         </div>
+                        
+                        {/* Quaternion (w, x, y, z) */}
+                        {toolData.quaternion && (
+                          <div className="flex justify-between text-gray-300">
+                            <span>Quat:</span>
+                            <span className="text-purple-300">
+                              [{toolData.quaternion[0] >= 0 ? '+' : ''}{toolData.quaternion[0].toFixed(3)}, 
+                              {toolData.quaternion[1] >= 0 ? '+' : ''}{toolData.quaternion[1].toFixed(3)}, 
+                              {toolData.quaternion[2] >= 0 ? '+' : ''}{toolData.quaternion[2].toFixed(3)}, 
+                              {toolData.quaternion[3] >= 0 ? '+' : ''}{toolData.quaternion[3].toFixed(3)}]
+                            </span>
+                          </div>
+                        )}
+                        
+                        {/* Quality */}
                         <div className="flex justify-between text-gray-300">
-                          <span>Rotation (°):</span>
-                          <span className="text-green-300">
-                            [{coords.rotation_deg[0].toFixed(1)}, {coords.rotation_deg[1].toFixed(1)}, {coords.rotation_deg[2].toFixed(1)}]
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-gray-300">
-                          <span>Quality:</span>
+                          <span>Q:</span>
                           <span className={
                             toolData.quality_score > 0.8 ? 'text-green-400' :
                             toolData.quality_score > 0.5 ? 'text-yellow-400' : 'text-red-400'
                           }>
-                            {(toolData.quality_score * 100).toFixed(0)}% ({toolData.quality})
+                            {toolData.quality_score.toFixed(3)}
                           </span>
                         </div>
+                        
+                        {/* Delta (frame-to-frame changes) */}
+                        {(toolData.delta_position_mm !== undefined || toolData.delta_rotation_deg !== undefined) && (
+                          <div className="flex justify-between text-gray-300">
+                            <span>Δ:</span>
+                            <span className="text-orange-300">
+                              {(toolData.delta_position_mm || 0).toFixed(2)}mm, {(toolData.delta_rotation_deg || 0).toFixed(2)}°
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Not Found - Show ROM file */}
+                    {!toolData.visible && toolData.rom_file && (
+                      <div className="text-xs text-red-400 font-mono mt-2">
+                        ❌ NOT FOUND (ROM: {toolData.rom_file})
                       </div>
                     )}
                   </div>
@@ -749,87 +837,24 @@ function PanelTracking() {
               })}
             </div>
 
-            <div className="mt-2 text-xs text-gray-500 text-center">
-              Frame #{trackingFrame.frame_number} • {wsConnected ? '🟢 Live' : '🔴 Disconnected'}
+            <div className="mt-2 p-2 bg-gray-900 border border-gray-700 rounded">
+              <div className="text-xs text-gray-400 text-center font-mono">
+                📡 TRACKING FRAME {trackingFrame.frame_number} - {Object.keys(trackingFrame.tools).filter(id => !trackingFrame.tools[id].is_patient_reference).length} handles detected
+              </div>
+              <div className="text-xs text-center mt-1">
+                {wsConnected ? '🟢 Live' : '🔴 Disconnected'}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Mode Selection */}
-        {config && config.tracking_mode && config.tracking_mode.options && (
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-3">Tracking Mode</h3>
-            <div className="space-y-2">
-              {config.tracking_mode.options.map(mode => (
-                <button
-                  key={mode}
-                  onClick={() => switchMode(mode)}
-                  disabled={loading}
-                  className={`w-full p-3 rounded border transition-colors ${
-                    config.tracking_mode.current === mode
-                      ? 'bg-blue-600 border-blue-500 text-white'
-                      : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="capitalize">{mode}</span>
-                    {config.tracking_mode.current === mode && (
-                      <span className="text-green-400">● Active</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    {mode === 'simulation' ? 'Use simulated tracking data' : 'Connect to NDI hardware'}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Mode Selection - REMOVED: Now controlled by configuration only */}
 
         {/* Navigation Controls */}
         <div className="mb-6">
           <h3 className="text-lg font-semibold text-white mb-3">🧭 Navigation Control</h3>
 
-          {/* Tracking Mode Selection (Radio Buttons) */}
-          <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
-            <div className="text-sm text-gray-300 mb-2 font-medium">Tracking Mode</div>
-            <div className="flex space-x-4">
-              <label className={`flex items-center space-x-2 cursor-pointer ${isNavigating ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                <input
-                  type="radio"
-                  name="trackingMode"
-                  value="simulation"
-                  checked={selectedMode === 'simulation'}
-                  onChange={(e) => setSelectedMode(e.target.value as 'simulation' | 'hardware')}
-                  disabled={isNavigating}
-                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
-                />
-                <span className="text-sm text-gray-300">
-                  🖥️ Simulation
-                </span>
-              </label>
-
-              <label className={`flex items-center space-x-2 cursor-pointer ${isNavigating ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                <input
-                  type="radio"
-                  name="trackingMode"
-                  value="hardware"
-                  checked={selectedMode === 'hardware'}
-                  onChange={(e) => setSelectedMode(e.target.value as 'simulation' | 'hardware')}
-                  disabled={isNavigating}
-                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
-                />
-                <span className="text-sm text-gray-300">
-                  🔧 Hardware
-                </span>
-              </label>
-            </div>
-            <div className="text-xs text-gray-500 mt-2">
-              {isNavigating
-                ? '⚠️ Mode locked during navigation'
-                : '💡 Select mode before starting navigation'}
-            </div>
-          </div>
+          {/* Tracking Mode - DISABLED: Now controlled by loaded configuration */}
 
           {/* Navigation Mode Selection */}
           <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
@@ -1103,17 +1128,25 @@ function PanelTracking() {
             {!isNavigating ? (
               <button
                 onClick={handleStartNavigation}
-                disabled={!trackingService || !commandsManager}
-                className="w-full p-3 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:opacity-50 text-white rounded font-medium transition-colors"
+                disabled={!trackingService || !commandsManager || !currentTrackingConfig}
+                className="w-full p-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors flex items-center justify-center gap-2"
+                title={!currentTrackingConfig ? 'Please select a configuration first' : 'Start navigation with current configuration'}
               >
-                ▶️ Start Navigation ({selectedMode === 'simulation' ? 'Simulation' : 'Hardware'})
+                <span className="text-lg">▶️</span>
+                <span>Start</span>
+                {currentTrackingConfig && (
+                  <span className="text-xs opacity-75">
+                    ({currentTrackingConfig.tracking_mode === 'simulation' ? 'SIM' : 'HW'})
+                  </span>
+                )}
               </button>
             ) : (
               <button
                 onClick={handleStopNavigation}
-                className="w-full p-3 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition-colors"
+                className="w-full p-3 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition-colors flex items-center justify-center gap-2"
               >
-                ⏹️ Stop Navigation
+                <span className="text-lg">⏹️</span>
+                <span>Stop</span>
               </button>
             )}
 
@@ -1129,31 +1162,45 @@ function PanelTracking() {
         </div>
 
         {/* Actions */}
-        <div className="space-y-2">
+        <div className="space-y-3">
           {/* Current Configuration Display */}
-          {currentTrackingConfig && (
+          {currentTrackingConfig ? (
             <div className="p-3 bg-gray-800 border border-gray-600 rounded">
               <div className="flex items-center justify-between">
-                <div>
+                <div className="flex-1">
                   <div className="text-xs text-gray-400">Active Configuration</div>
                   <div className="text-white font-medium">{currentTrackingConfig.name}</div>
+                  {currentTrackingConfig.description && (
+                    <div className="text-xs text-gray-500 mt-1">{currentTrackingConfig.description}</div>
+                  )}
                 </div>
                 <div className={`text-xs px-2 py-1 rounded ${
                   currentTrackingConfig.tracking_mode === 'simulation'
                     ? 'bg-blue-900 text-blue-300'
                     : 'bg-green-900 text-green-300'
                 }`}>
-                  {currentTrackingConfig.tracking_mode === 'simulation' ? '🖥️ Simulation' : '🔧 Hardware'}
+                  {currentTrackingConfig.tracking_mode === 'simulation' ? '🖥️ SIM' : '🔧 HW'}
                 </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 bg-yellow-900 border border-yellow-700 rounded">
+              <div className="text-yellow-200 text-sm">
+                ⚠️ No configuration loaded
+              </div>
+              <div className="text-xs text-yellow-300 mt-1">
+                Please select a configuration below
               </div>
             </div>
           )}
 
+          {/* Select Configuration Button */}
           <button
             onClick={handleOpenConfigDialog}
-            className="w-full p-3 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition-colors"
+            className="w-full p-3 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors flex items-center justify-center gap-2"
           >
-            ⚙️ Configure Tracking
+            <span className="text-lg">⚙️</span>
+            <span>Select Configuration</span>
           </button>
 
           {/* Refresh Configuration button - Hidden */}

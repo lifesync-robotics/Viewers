@@ -118,17 +118,52 @@ function LifeSyncWorklist({
 
     try {
       setLoadingCases(true);
+      console.log('📋 [Worklist] Loading all cases...');
+      
+      // Clear fetched studies cache to force fresh data from Orthanc
+      fetchedStudiesRef.current.clear();
+      console.log('🔄 [Worklist] Cleared study cache for fresh data');
+      
       const cases = await caseService.getCases();
       setCaseList(cases);
+      
+      console.log(`📋 [Worklist] Found ${cases.length} total cases`);
 
-      // Load active case if set
+      // Get active case ID
       const activeCaseId = caseService.getActiveCaseId();
-      if (activeCaseId) {
-        setActiveCaseId(activeCaseId);
-        await loadCaseStudies(activeCaseId);
-      }
+      setActiveCaseId(activeCaseId);
+
+      // Log active vs inactive cases
+      const activeCases = cases.filter(c => c.caseId === activeCaseId);
+      const inactiveCases = cases.filter(c => c.caseId !== activeCaseId);
+      
+      console.log(`✅ [Worklist] ACTIVE CASES (${activeCases.length}):`);
+      activeCases.forEach(c => {
+        console.log(`   - ${c.caseId}: ${c.patientInfo?.name || 'N/A'} (MRN: ${c.patientInfo?.mrn || 'N/A'})`);
+      });
+      
+      console.log(`⚪ [Worklist] INACTIVE CASES (${inactiveCases.length}):`);
+      inactiveCases.forEach(c => {
+        console.log(`   - ${c.caseId}: ${c.patientInfo?.name || 'N/A'} (MRN: ${c.patientInfo?.mrn || 'N/A'})`);
+      });
+
+      // 🔧 FIX: Load studies for ALL cases, not just active one
+      console.log('🔄 [Worklist] Loading studies for ALL cases...');
+      const studyLoadPromises = cases.map(async (caseItem) => {
+        try {
+          await loadCaseStudies(caseItem.caseId);
+          console.log(`   ✓ Loaded studies for case: ${caseItem.caseId}`);
+        } catch (error) {
+          console.error(`   ✗ Failed to load studies for case ${caseItem.caseId}:`, error);
+        }
+      });
+
+      // Wait for all study loads to complete
+      await Promise.all(studyLoadPromises);
+      console.log('✅ [Worklist] All case studies loaded successfully');
+      
     } catch (error) {
-      console.error('Failed to load cases:', error);
+      console.error('❌ [Worklist] Failed to load cases:', error);
     } finally {
       setLoadingCases(false);
     }
@@ -217,6 +252,9 @@ function LifeSyncWorklist({
 
       const mappedStudies = _mapDataSourceStudies(qidoStudiesForPatient);
       const actuallyMappedStudies = mappedStudies.map(qidoStudy => {
+        // 🔧 FIX: Find the actual case this study belongs to, not just the active case
+        const studyCaseId = findCaseForStudy(qidoStudy.StudyInstanceUID);
+        
         return {
           studyInstanceUid: qidoStudy.StudyInstanceUID,
           date: formatDate(qidoStudy.StudyDate) || '',
@@ -224,7 +262,7 @@ function LifeSyncWorklist({
           modalities: qidoStudy.ModalitiesInStudy,
           numInstances: Number(qidoStudy.NumInstances),
           // LifeSync additions
-          caseId: activeCaseId,
+          caseId: studyCaseId,  // Use the study's actual case, not the active case
           clinicalPhase: getStudyClinicalPhase(qidoStudy.StudyInstanceUID),
         };
       });
@@ -243,12 +281,32 @@ function LifeSyncWorklist({
     StudyInstanceUIDs.forEach(sid => fetchStudiesForPatient(sid));
   }, [StudyInstanceUIDs, dataSource, getStudiesForPatientByMRN, navigate, activeCaseId]);
 
-  const getStudyClinicalPhase = (studyInstanceUID) => {
-    if (!activeCaseId || !caseStudies[activeCaseId]) return null;
+  // Helper function to find which case a study belongs to
+  const findCaseForStudy = (studyInstanceUID) => {
+    // Search through all cases to find which one contains this study
+    for (const [caseId, studies] of Object.entries(caseStudies)) {
+      if (Array.isArray(studies) && studies.some(s => s?.studyInstanceUID === studyInstanceUID)) {
+        console.log(`🔍 [Worklist] Study ${studyInstanceUID} belongs to case: ${caseId}`);
+        return caseId;
+      }
+    }
+    
+    // If not found in any case, return null (study not enrolled in any case)
+    console.log(`⚠️ [Worklist] Study ${studyInstanceUID} not enrolled in any case`);
+    return null;
+  };
 
-    const studies = caseStudies[activeCaseId] || [];
-    const study = studies.find(s => s?.studyInstanceUID === studyInstanceUID);
-    return study?.clinicalPhase || null;
+  const getStudyClinicalPhase = (studyInstanceUID) => {
+    // 🔧 FIX: Search across ALL cases, not just active case
+    for (const [caseId, studies] of Object.entries(caseStudies)) {
+      if (Array.isArray(studies)) {
+        const study = studies.find(s => s?.studyInstanceUID === studyInstanceUID);
+        if (study) {
+          return study.clinicalPhase || null;
+        }
+      }
+    }
+    return null;
   };
 
   // ~~ Initial Thumbnails
@@ -505,32 +563,54 @@ function LifeSyncWorklist({
         />
       </>
 
-      <StudyBrowser
-        tabs={tabs}
-        servicesManager={servicesManager}
-        activeTabName={activeTabName}
-        expandedStudyInstanceUIDs={expandedStudyInstanceUIDs}
-        onClickStudy={_handleStudyClick}
-        onClickTab={clickedTabName => {
-          setActiveTabName(clickedTabName);
-        }}
-        onClickUntrack={onClickUntrack}
-        onClickThumbnail={() => {}}
-        onDoubleClickThumbnail={onDoubleClickThumbnailHandler}
-        activeDisplaySetInstanceUIDs={activeDisplaySetInstanceUIDs}
-        showSettings={actionIcons.find(icon => icon.id === 'settings')?.value}
-        viewPresets={viewPresets}
-        ThumbnailMenuItems={MoreDropdownMenu({
-          commandsManager,
-          servicesManager,
-          menuItemsKey: 'studyBrowser.thumbnailMenuItems',
-        })}
-        StudyMenuItems={MoreDropdownMenu({
-          commandsManager,
-          servicesManager,
-          menuItemsKey: 'studyBrowser.studyMenuItems',
-        })}
-      />
+      {/* Loading Banner - Prevent race conditions */}
+      {loadingCases && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75">
+          <div className="bg-secondary-dark border-primary-light rounded-lg border-2 p-6 shadow-2xl">
+            <div className="flex flex-col items-center gap-4">
+              <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"></div>
+              <div className="text-center">
+                <div className="text-primary-light text-lg font-semibold">
+                  Loading Cases & Studies
+                </div>
+                <div className="text-primary-light mt-2 text-sm opacity-75">
+                  Please wait while we fetch all case data from the server...
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Only display StudyBrowser after loading completes */}
+      {!loadingCases && (
+        <StudyBrowser
+          tabs={tabs}
+          servicesManager={servicesManager}
+          activeTabName={activeTabName}
+          expandedStudyInstanceUIDs={expandedStudyInstanceUIDs}
+          onClickStudy={_handleStudyClick}
+          onClickTab={clickedTabName => {
+            setActiveTabName(clickedTabName);
+          }}
+          onClickUntrack={onClickUntrack}
+          onClickThumbnail={() => {}}
+          onDoubleClickThumbnail={onDoubleClickThumbnailHandler}
+          activeDisplaySetInstanceUIDs={activeDisplaySetInstanceUIDs}
+          showSettings={actionIcons.find(icon => icon.id === 'settings')?.value}
+          viewPresets={viewPresets}
+          ThumbnailMenuItems={MoreDropdownMenu({
+            commandsManager,
+            servicesManager,
+            menuItemsKey: 'studyBrowser.thumbnailMenuItems',
+          })}
+          StudyMenuItems={MoreDropdownMenu({
+            commandsManager,
+            servicesManager,
+            menuItemsKey: 'studyBrowser.studyMenuItems',
+          })}
+        />
+      )}
     </>
   );
 }

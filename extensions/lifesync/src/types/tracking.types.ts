@@ -20,6 +20,16 @@ export interface ToolTransform {
   quality_score: number;              // Numeric quality score (0.0 - 1.0)
   is_patient_reference: boolean;      // True if this tool IS the patient reference
   
+  // Quaternion (w, x, y, z) - Better for tracking rotation
+  quaternion?: [number, number, number, number];  // [w, x, y, z]
+  
+  // Delta (frame-to-frame changes)
+  delta_position_mm?: number;         // Position change in mm
+  delta_rotation_deg?: number;        // Rotation change in degrees
+  
+  // ROM file information
+  rom_file?: string;                  // ROM filename being used
+  
   // Coordinate data (structured by protobuf_bridge.js)
   coordinates: {
     // TRACKER-SPACE COORDINATES (absolute, from NDI tracker)
