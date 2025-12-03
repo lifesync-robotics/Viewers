@@ -285,6 +285,102 @@ export default function ScrewManagementPanel({ servicesManager }) {
   };
 
   /**
+   * Load and display cap model using the planning API
+   */
+  const loadCapModel = async (transform, length, screwLabel = null, screwId = null) => {
+    try {
+      console.log(`🔍 Loading cap model for screw: "${screwLabel}" (length: ${length}mm)`);
+      console.log(`🔍 Transform:`, transform);
+      
+      // Use the same color as the screw body
+      const capColor = screwLabel ? getScrewColor(screwLabel) : [1.0, 0.84, 0.0];
+      console.log(`🎨 Using color [${capColor}] for cap "${screwLabel || 'default'}"`);
+
+      // Query cap model (returns fixed information)
+      const queryResponse = await planningBackendService.queryCapModel();
+
+      if (!queryResponse.success || !queryResponse.model) {
+        throw new Error('Cap model query failed');
+      }
+
+      const modelInfo = queryResponse.model;
+      console.log(`📦 Cap model: ${modelInfo.filename}`);
+
+      // Get cap model OBJ file URL
+      const modelUrl = planningBackendService.getCapModelUrl();
+
+      // Load model
+      await modelStateService.loadModelFromServer(modelUrl, {
+        viewportId: getCurrentViewportId(),
+        color: capColor,
+        opacity: 0.9,
+        modelId: screwId ? `${screwId}-cap` : null,
+        modelName: screwLabel ? `${screwLabel}-Cap` : 'Screw Cap'
+      });
+
+      // Apply transform matrix (cap needs to be placed at the top of the screw)
+      if (transform && transform.length === 16 && length && length > 0) {
+        console.log('🔧 Applying transform to loaded cap model...');
+        console.log(`   Translation: (${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)})`);
+
+        // Extract coronal direction (same as screw, used for offset calculation)
+        const coronalX = transform[1];  // Row 0, Col 1
+        const coronalY = transform[5];  // Row 1, Col 1
+        const coronalZ = transform[9];  // Row 2, Col 1
+
+        // Cap height (fixed value, unit: millimeters)
+        const capHeight = 15.0;
+        
+        // Cap should be placed at the top of the screw
+        // Screw body already has length/2 offset to center-align to entry point
+        // Cap needs offset: length/2 (reach screw top) + capHeight/2 (if origin is at center, align bottom)
+        const capOffset = (length / 2) + (capHeight / 2); // Total offset = half screw length + half cap height
+
+        console.log(`📏 Screw length: ${length}mm`);
+        console.log(`📏 Cap height: ${capHeight}mm`);
+        console.log(`📏 Applying cap offset: +${capOffset}mm (${length/2}mm screw + ${capHeight/2}mm cap) along coronal direction`);
+
+        // Create offset transform
+        const capTransform = [...transform];
+        const originalTransX = transform[3];
+        const originalTransY = transform[7];
+        const originalTransZ = transform[11];
+
+        console.log(`📍 Original translation: [${originalTransX}, ${originalTransY}, ${originalTransZ}]`);
+
+        // Adjust translation: offset forward by length/2 + capHeight/2, so cap bottom is at screw top
+        capTransform[3] = originalTransX + (coronalX * capOffset);
+        capTransform[7] = originalTransY + (coronalY * capOffset);
+        capTransform[11] = originalTransZ + (coronalZ * capOffset);
+
+        console.log(`📍 Adjusted translation: [${capTransform[3]}, ${capTransform[7]}, ${capTransform[11]}]`);
+        console.log(`📐 Offset vector: [${coronalX * capOffset}, ${coronalY * capOffset}, ${coronalZ * capOffset}]`);
+
+        const loadedModels = modelStateService.getAllModels();
+        const latestModel = loadedModels[loadedModels.length - 1];
+
+        if (latestModel) {
+          // Apply offset transform (don't pass length parameter, as OBJ model won't auto-offset)
+          await modelStateService.setModelTransform(
+            latestModel.metadata.id,
+            capTransform
+            // Note: OBJ model doesn't apply length offset in setModelTransform, so manual calculation is needed
+          );
+          console.log(`✅ Applied transform to cap model: ${latestModel.metadata.id} with offset: ${capOffset}mm`);
+        } else {
+          console.error('❌ No cap model found to apply transform to!');
+        }
+      } else {
+        console.warn(`⚠️ No valid transform or length to apply to cap (transform length: ${transform?.length || 0}, length: ${length})`);
+      }
+
+    } catch (error) {
+      console.error('❌ Failed to load cap model:', error);
+      console.warn('⚠️ Continuing without cap model visualization');
+    }
+  };
+
+  /**
    * Get the current 3D viewport ID
    */
   const getCurrentViewportId = () => {
@@ -437,6 +533,18 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
+  /**
+   * Get only screw body models, excluding cap models
+   * Cap models are identified by modelName ending with "-Cap" or being "Screw Cap"
+   */
+  const getScrewBodyModels = () => {
+    const allModels = modelStateService.getAllModels();
+    return allModels.filter(model => {
+      const modelName = model.metadata.name || '';
+      return !modelName.endsWith('-Cap') && modelName !== 'Screw Cap';
+    });
+  };
+
   const saveScrew = async (screwData: {
     name: string;
     radius: number;
@@ -532,6 +640,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log(`⚙️ Using custom screw variant: ${screwVariantId}`);
       }
 
+      let savedScrewId = null;
       try {
         const response = await planningBackendService.addScrew({
           sessionId: sessionId,
@@ -561,12 +670,32 @@ export default function ScrewManagementPanel({ servicesManager }) {
           throw new Error(response.error || 'Failed to save screw');
         }
 
+        savedScrewId = response.screw_id;
+
         console.log(`✅ Screw saved to planning API: ${response.screw_id}`);
 
       } catch (apiError) {
         console.error('❌ Failed to save screw to API:', apiError);
-        // TODO: Could fallback to localStorage here, but for now just show error
-        alert('Failed to save screw. Please check the console for details.');
+        
+        // Check if error is about maximum limit reached
+        const errorMessage = apiError?.message || apiError?.error || String(apiError);
+        console.log('🔍 Error message for limit check:', errorMessage);
+        
+        const isLimitError = errorMessage.toLowerCase().includes('maximum limit') || 
+                            errorMessage.toLowerCase().includes('capacity') ||
+                            errorMessage.toLowerCase().includes('maximum of') ||
+                            errorMessage.toLowerCase().includes('screws reached') ||
+                            errorMessage.toLowerCase().includes('cannot add screw');
+        
+        console.log('🔍 Is limit error?', isLimitError);
+        
+        if (isLimitError) {
+          // Show the proper limit error message
+          alert(`Maximum of 10 screws reached. Please delete some screws before adding more.`);
+        } else {
+          // Show generic error for other issues
+          alert('Failed to save screw. Please check the console for details.');
+        }
         return;
       }
 
@@ -577,22 +706,39 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('🔧 [ScrewManagement] LOADING 3D MODEL');
       console.log('═══════════════════════════════════════════════════════');
 
-      // Check model limit
-      const existingModels = modelStateService.getAllModels();
-      const maxModels = 10; // Match Python backend MAX_SCREWS limit
-
-      if (existingModels.length >= maxModels) {
-        console.warn(`⚠️ Maximum number of models (${maxModels}) reached.`);
-        alert(`Maximum of ${maxModels} screws reached. Please delete some screws before adding more.`);
-        return;
-      }
-
-      console.log(`📊 Current models: ${existingModels.length}/${maxModels}`);
+       // Check model limit - only count screw body models, exclude cap models
+       const screwBodyModels = getScrewBodyModels();
+       const maxModels = 10; // Match Python backend MAX_SCREWS limit
+ 
+       if (screwBodyModels.length >= maxModels) {
+         console.warn(`⚠️ Maximum number of screws (${maxModels}) reached.`);
+         alert(`Maximum of ${maxModels} screws reached. Please delete some screws before adding more.`);
+         return;
+       }
+ 
+       const allModels = modelStateService.getAllModels();
+       console.log(`📊 Current screw bodies: ${screwBodyModels.length}/${maxModels} (total models: ${allModels.length})`);
 
       // Load the 3D model using the new API
       try {
         await loadScrewModel(radiusValue, lengthValue, transform, screwLabel);
         console.log(`✅ Model loaded successfully - Total: ${modelStateService.getAllModels().length}/${maxModels}`);
+
+        // ═════════════════════════════════════════════════════════
+        // Load cap model after loading screw body (cap doesn't count toward model limit)
+        // ═════════════════════════════════════════════════════════
+        if (transform && transform.length === 16) {
+          try {
+            await loadCapModel(transform, lengthValue, screwLabel, savedScrewId);
+            console.log(`✅ Cap model loaded successfully for screw "${screwLabel}"`);
+          } catch (capError) {
+            console.warn('⚠️ Could not load cap model:', capError.message);
+            console.warn('⚠️ Cap model failed but screw model loaded successfully');
+            // Don't throw - cap is optional, continue execution
+          }
+        } else {
+          console.warn('⚠️ Skipping cap model load - no valid transform available');
+        }
       } catch (modelError) {
         console.warn('⚠️ Could not load model:', modelError.message);
         console.warn('⚠️ Screw saved but model may not be visible');
@@ -619,16 +765,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       setIsRestoring(true);
 
-      // Check if we've reached the maximum number of models
-      const existingModels = modelStateService.getAllModels();
+      // Check if we've reached the maximum number of models - only count screw body models
+      const screwBodyModels = getScrewBodyModels();
       const maxModels = 10; // Match Python backend MAX_SCREWS limit
 
-      if (existingModels.length >= maxModels) {
-        console.warn(`⚠️ Maximum number of models (${maxModels}) reached. Cannot restore more screws.`);
+      if (screwBodyModels.length >= maxModels) {
+        console.warn(`⚠️ Maximum number of screws (${maxModels}) reached. Cannot restore more screws.`);
         alert(`Maximum of ${maxModels} screws reached. Please delete some screws before restoring more.`);
         setIsRestoring(false);
         return;
       }
+
+      const allModels = modelStateService.getAllModels();
+      
 
       let displayInfo;
       try {
@@ -640,7 +789,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         return;
       }
 
-      console.log(`🔄 Restoring screw: "${displayInfo.label}" (${existingModels.length + 1}/${maxModels} models)`);
+      console.log(`🔄 Restoring screw: "${displayInfo.label}" (${screwBodyModels.length + 1}/${maxModels} screw bodies, total models: ${allModels.length})`);
       console.log(`   Source: ${displayInfo.source}`);
       console.log(`   Dimensions: R=${displayInfo.radius}mm, L=${displayInfo.length}mm`);
 
@@ -699,6 +848,21 @@ export default function ScrewManagementPanel({ servicesManager }) {
         // Load and display the 3D model
         const screwId = screwData.screw_id || screwData.id || null;
         await loadScrewModel(displayInfo.radius, displayInfo.length, transformArray, displayInfo.label, screwId);
+        
+        // ═════════════════════════════════════════════════════════
+        // Load cap model after loading screw body (cap doesn't count toward model limit)
+        // ═════════════════════════════════════════════════════════
+        if (transformArray && transformArray.length === 16) {
+          try {
+            await loadCapModel(transformArray, displayInfo.length, displayInfo.label, screwId);
+            console.log(`✅ Cap model loaded successfully for screw "${displayInfo.label}"`);
+          } catch (capError) {
+            console.warn('⚠️ Could not load cap model:', capError.message);
+            // Don't throw - cap is optional, continue execution
+          }
+        } else {
+          console.warn(`⚠️ Skipping cap model load for "${displayInfo.label}" - no valid transform available`);
+        }
       } else {
         console.log(`✅ Skipped loading duplicate model for "${displayInfo.label}"`);
       }
@@ -806,6 +970,51 @@ export default function ScrewManagementPanel({ servicesManager }) {
             modelStateService.removeModel(model.metadata.id);
             modelsRemoved++;
             break; // Remove only one model
+          }
+        }
+      }
+
+      // Step 2: Remove associated cap model (screw and cap are a pair)
+      const updatedModels = modelStateService.getAllModels(); // Get updated list after removing screw body
+      let capRemoved = false;
+
+      // Try matching cap by modelId (format: `${screwId}-cap`)
+      if (screwId) {
+        const capModelId = `${screwId}-cap`;
+        for (const model of updatedModels) {
+          if (model.metadata.id === capModelId) {
+            console.log(`🗑️ Removing cap model: ${model.metadata.id} (${model.metadata.name}) - matched by modelId`);
+            modelStateService.removeModel(model.metadata.id);
+            modelsRemoved++;
+            capRemoved = true;
+            break;
+          }
+        }
+      }
+
+      // Try matching cap by modelName (format: `${screwLabel}-Cap`)
+      if (!capRemoved && displayInfo.label) {
+        const capModelName = `${displayInfo.label}-Cap`;
+        for (const model of updatedModels) {
+          if (model.metadata.name === capModelName) {
+            console.log(`🗑️ Removing cap model: ${model.metadata.id} (${model.metadata.name}) - matched by modelName`);
+            modelStateService.removeModel(model.metadata.id);
+            modelsRemoved++;
+            capRemoved = true;
+            break;
+          }
+        }
+      }
+
+      // FALLBACK: Try matching cap by name pattern (contains "-Cap" suffix)
+      if (!capRemoved && displayInfo.label) {
+        for (const model of updatedModels) {
+          const modelName = model.metadata.name || '';
+          if (modelName.includes('-Cap') && modelName.includes(displayInfo.label)) {
+            console.log(`🗑️ Removing cap model: ${model.metadata.id} (${model.metadata.name}) - matched by name pattern`);
+            modelStateService.removeModel(model.metadata.id);
+            modelsRemoved++;
+            break;
           }
         }
       }
@@ -1257,6 +1466,22 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
           const screwId = screw.screw_id || screw.id || null;
           await loadScrewModel(displayInfo.radius, displayInfo.length, transform, displayInfo.label, screwId);
+          
+          // ═════════════════════════════════════════════════════════
+          // Load cap model after loading screw body (cap doesn't count toward model limit)
+          // ═════════════════════════════════════════════════════════
+          if (transform && transform.length === 16) {
+            try {
+              await loadCapModel(transform, displayInfo.length, displayInfo.label, screwId);
+              console.log(`   ✅ Cap model loaded for ${displayInfo.label}`);
+            } catch (capError) {
+              console.warn(`   ⚠️ Could not load cap model for ${displayInfo.label}:`, capError.message);
+              // Don't throw - cap is optional, continue with next screw
+            }
+          } else {
+            console.warn(`   ⚠️ Skipping cap model load for ${displayInfo.label} - no valid transform`);
+          }
+          
           modelsLoaded++;
         } catch (modelError) {
           modelsFailed++;

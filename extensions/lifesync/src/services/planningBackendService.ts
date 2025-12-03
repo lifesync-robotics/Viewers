@@ -336,11 +336,13 @@ class PlanningBackendService {
         body: JSON.stringify(request),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
       const data = await response.json();
+
+      if (!response.ok) {
+        // Try to extract error message from response body
+        const errorMessage = data?.error || data?.message || `HTTP ${response.status}: ${response.statusText}`;
+        throw new Error(errorMessage);
+      }
 
       if (data.success) {
         console.log(`✅ [PlanningBackend] Screw added: ${data.screw_id}`);
@@ -607,10 +609,43 @@ class PlanningBackendService {
   }
 
   /**
+   * Query a cap model
+   * Cap model is a fixed file, doesn't have dimensions
+   */
+  async queryCapModel(): Promise<CapModelQueryResponse> {
+    try {
+      console.log(`🔍 [PlanningBackend] Querying cap model ...`);
+      return {
+        success: true,
+        model: {
+          model_id: 'cap',
+          filename: '7300-T10_Top.obj',
+          type: 'cap',
+          description: 'Screw cap'
+        }
+      };
+      
+    } catch (error) {
+      console.error('❌ [PlanningBackend] Error querying model:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to query model',
+      };
+    }
+  }
+
+  /**
    * Get model OBJ file URL
    */
   getModelUrl(modelId: string): string {
     return `${this.baseUrl}/models/${modelId}/obj`;
+  }
+
+  /**
+   * Get cap model OBJ file URL
+   */
+  getCapModelUrl(): string {
+    return `${this.baseUrl}/models/cap/obj`;
   }
 
   /**
