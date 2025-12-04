@@ -793,7 +793,7 @@ function WorkList({
       } else if (!s2Prop && s1Prop) {
         return 1 * sortModifier;
       } else if (sortBy === 'studyDate') {
-        return _sortStringDates(s1, s2, sortModifier);
+        return _sortStringDates(s1, s2, sortModifier);create
       }
 
       return 0;

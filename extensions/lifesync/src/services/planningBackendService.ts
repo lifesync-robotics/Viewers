@@ -51,6 +51,7 @@ export interface ScrewData {
   transformMatrix: number[];
   viewportStatesJson?: string;
   placedAt: string;
+  autoLabel?: boolean;  // ✅ added autoLabel field
 }
 
 export interface AddScrewRequest {

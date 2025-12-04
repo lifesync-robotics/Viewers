@@ -120,21 +120,46 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('🔄 Initializing planning session...');
       console.log(`   Case ID: ${newCaseId || 'none (session without case)'}`);
 
+      // Check for old session_id before creating new session
+      const CACHED_SESSION_KEY = 'ohif_planning_session_id';
+      const oldSessionId = localStorage.getItem(CACHED_SESSION_KEY);
+
       // Start planning session using backend service
       const response = await planningBackendService.startSession({
         studyInstanceUID: newStudyUID,
         seriesInstanceUID: newSeriesUID,
         surgeon: newSurgeon,
-        ...(newCaseId && { caseId: newCaseId }) // Include caseId only if not null
+        ...(newCaseId && { caseId: newCaseId })
       });
 
       if (response.success && response.session_id) {
-        setSessionId(response.session_id);
+        const newSessionId = response.session_id;
+        
+        // If new session_id is different from old one, clear old models
+        if (oldSessionId && oldSessionId !== newSessionId) {
+          console.log('🔄 New session detected - clearing old session data');
+          console.log(`   Old session: ${oldSessionId.substring(0, 8)}...`);
+          console.log(`   New session: ${newSessionId.substring(0, 8)}...`);
+          
+          // Clear old 3D models
+          modelStateService.clearAllModels();
+          // Clear old viewport snapshots
+          viewportStateService.clearAll();
+          // Clear old screws state
+          setScrews([]);
+          console.log('🧹 Cleared old session data (models, snapshots, screws)');
+        }
+        
+        setSessionId(newSessionId);
         setSessionStatus('ready');
-        console.log('✅ Planning session started:', response.session_id);
+        console.log('✅ Planning session started:', newSessionId);
+
+        // Save new session_id to localStorage
+        localStorage.setItem(CACHED_SESSION_KEY, newSessionId);
+        console.log(`💾 Saved session_id to localStorage: ${newSessionId.substring(0, 8)}...`);
 
         // Load existing screws for this session
-        await loadScrews(response.session_id);
+        await loadScrews(newSessionId);
       } else {
         throw new Error(response.error || 'Session creation failed');
       }
@@ -186,12 +211,37 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
   /**
    * Load screws from localStorage (fallback)
+   * Only loads if cached session_id matches current session_id
    */
   const loadScrewsLocal = () => {
-    console.log('📁 Falling back to localStorage...');
-    const allScrews = viewportStateService.getAllSnapshots();
-    setScrews(allScrews);
-    console.log(`✅ Loaded ${allScrews.length} screws from localStorage`);
+    console.log('📁 Checking localStorage for cached screws...');
+    
+    // Get cached session_id from localStorage
+    const CACHED_SESSION_KEY = 'ohif_planning_session_id';
+    const cachedSessionId = localStorage.getItem(CACHED_SESSION_KEY);
+    
+    // Check if cached session_id matches current session_id
+    if (cachedSessionId && sessionId && cachedSessionId === sessionId) {
+      console.log('✅ Cached session_id matches current session_id');
+      console.log(`   Cached: ${cachedSessionId.substring(0, 8)}...`);
+      console.log(`   Current: ${sessionId.substring(0, 8)}...`);
+      
+      const allScrews = viewportStateService.getAllSnapshots();
+      setScrews(allScrews);
+      console.log(`✅ Loaded ${allScrews.length} screws from localStorage`);
+    } else {
+      console.log('⚠️ Session ID mismatch or missing - clearing cached screws and 3D models');
+      console.log(`   Cached session_id: ${cachedSessionId || 'none'}`);
+      console.log(`   Current session_id: ${sessionId || 'none'}`);
+      
+      // Clear cached screws if session_id doesn't match
+      viewportStateService.clearAll();
+      setScrews([]);
+      
+      // Clear all rendered 3D models (this is critical!)
+      modelStateService.clearAllModels();
+      console.log('🧹 Cleared cached screws and 3D models due to session mismatch');
+    }
   };
 
   /**
@@ -199,7 +249,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
    */
   const loadScrewModel = async (radius, length, transform, screwLabel = null, screwId = null) => {
     try {
-      console.log(`🔍 Querying model for radius=${radius}, length=${length}`);
+      console.log(`�� Querying model for radius=${radius}, length=${length}`);
       console.log(`🔍 Screw label: ${screwLabel}, Screw ID: ${screwId}`);
       console.log(`🔍 transform:`, transform);
       console.log(`🔍 transform.length:`, transform?.length);
@@ -546,6 +596,31 @@ export default function ScrewManagementPanel({ servicesManager }) {
     });
   };
 
+  /**
+   * Parse vertebral level and side from screw label
+   * Format: "L3L" -> { level: "L3", side: "left" }
+   *         "L3R" -> { level: "L3", side: "right" }
+   *         "T5L" -> { level: "T5", side: "left" }
+   *         "C7R" -> { level: "C7", side: "right" }
+   */
+  const parseLevelAndSideFromLabel = (label: string): { level: string; side: string } => {
+    // Match format: L3L, L3R, T5L, C7R, etc.
+    // Pattern: {level}{side_abbr}, where level = L/T/C/S + number, side_abbr = L or R
+    const pattern = /^([LTCS]\d+)([LR])$/i;
+    const match = label.trim().match(pattern);
+    
+    if (match) {
+      const level = match[1].toUpperCase(); // L3, T5, C7, S1, etc.
+      const sideAbbr = match[2].toUpperCase(); // L or R
+      const side = sideAbbr === 'L' ? 'left' : 'right';
+      return { level, side };
+    }
+    
+    // If parsing fails, return default values
+    console.warn(`⚠️ Cannot parse vertebral level and side from label "${label}", using default values`);
+    return { level: 'Unknown', side: 'unknown' };
+  };
+
   const saveScrew = async (screwData: {
     name: string;
     radius: number;
@@ -641,6 +716,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log(`⚙️ Using custom screw variant: ${screwVariantId}`);
       }
 
+      const { level, side } = parseLevelAndSideFromLabel(screwLabel);
+      console.log(`🏷️ Parsed from label "${screwLabel}": level=${level}, side=${side}`);
+
       let savedScrewId = null;
       try {
         const response = await planningBackendService.addScrew({
@@ -651,8 +729,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
             length: lengthValue,
             screwLabel: screwLabel,  // Send user's label
             screwVariantId: screwVariantId,
-            vertebralLevel: 'unknown',  // Could be auto-detected later
-            side: 'unknown',           // Could be auto-detected later
+            // vertebralLevel: 'unknown',  // Could be auto-detected later
+            // side: 'unknown',           // Could be auto-detected later
+            vertebralLevel: level,
+            side: side,
             entryPoint: entryPoint,    // Now extracted from crosshair position
             trajectory: {
               direction: direction,    // Now extracted from transform matrix
@@ -663,7 +743,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
             notes: notes,
             transformMatrix: transform,
             viewportStatesJson: JSON.stringify(viewportStates),
-            placedAt: new Date().toISOString()
+            placedAt: new Date().toISOString(),
+            autoLabel: false
           }
         });
 
