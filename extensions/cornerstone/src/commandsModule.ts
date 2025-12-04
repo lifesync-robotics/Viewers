@@ -2722,6 +2722,76 @@ function commandsModule({
         planeCutterService.disable();
       }
     },
+    setOrientationMarkerType: ({ markerType }) => {
+      console.log('🔄 [setOrientationMarkerType] Setting orientation marker type to:', markerType);
+      
+      const toolGroupIds = toolGroupService.getToolGroupIds();
+      const { OrientationMarkerTool } = cornerstoneTools;
+      
+      // AXIS = 2, CUBE = 1 (from OrientationMarkerTool constants)
+      const validTypes = {
+        'axis': 2,
+        'cube': 1,
+        'axes': 2, // alias for axis
+      };
+      
+      const overlayMarkerType = validTypes[markerType?.toLowerCase()] ?? 2; // default to AXIS
+      
+      toolGroupIds.forEach(toolGroupId => {
+        const toolGroup = ToolGroupManager.getToolGroup(toolGroupId);
+        if (toolGroup) {
+          try {
+            // Get current configuration
+            const currentConfig = toolGroup.getToolConfiguration(toolNames.OrientationMarker);
+            
+            // Update the configuration with new marker type
+            toolGroup.setToolConfiguration(toolNames.OrientationMarker, {
+              ...currentConfig,
+              overlayMarkerType,
+            });
+            
+            console.log(`✅ Updated orientation marker for tool group: ${toolGroupId}`);
+          } catch (error) {
+            console.warn(`Tool ${toolNames.OrientationMarker} not found in group ${toolGroupId}`);
+          }
+        }
+      });
+      
+      // Trigger re-render
+      const renderingEngine = cornerstoneViewportService.getRenderingEngine();
+      if (renderingEngine) {
+        renderingEngine.render();
+      }
+      
+      uiNotificationService.show({
+        title: 'Orientation Marker',
+        message: `Orientation marker style set to: ${markerType.toUpperCase()}`,
+        type: 'info',
+        duration: 2000,
+      });
+    },
+    toggleOrientationMarkerType: () => {
+      console.log('🔄 [toggleOrientationMarkerType] Toggling orientation marker type');
+      
+      const toolGroup = ToolGroupManager.getToolGroup('default');
+      if (!toolGroup) {
+        console.warn('Default tool group not found');
+        return;
+      }
+      
+      try {
+        const currentConfig = toolGroup.getToolConfiguration(toolNames.OrientationMarker);
+        const currentType = currentConfig?.overlayMarkerType ?? 2;
+        
+        // Toggle between AXIS (2) and CUBE (1)
+        const newType = currentType === 2 ? 1 : 2;
+        const typeName = newType === 2 ? 'axis' : 'cube';
+        
+        actions.setOrientationMarkerType({ markerType: typeName });
+      } catch (error) {
+        console.error('Error toggling orientation marker:', error);
+      }
+    },
     activateSelectedSegmentationOfType: ({ segmentationRepresentationType }) => {
       const { segmentationService, viewportGridService } = servicesManager.services;
       const activeViewportId = viewportGridService.getActiveViewportId();
@@ -3287,6 +3357,16 @@ function commandsModule({
     },
     disablePlaneCutters: {
       commandFn: actions.disablePlaneCutters,
+      storeContexts: [],
+      options: {},
+    },
+    setOrientationMarkerType: {
+      commandFn: actions.setOrientationMarkerType,
+      storeContexts: [],
+      options: {},
+    },
+    toggleOrientationMarkerType: {
+      commandFn: actions.toggleOrientationMarkerType,
       storeContexts: [],
       options: {},
     },

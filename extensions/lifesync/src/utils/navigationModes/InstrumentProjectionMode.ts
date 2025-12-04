@@ -143,17 +143,70 @@ export class InstrumentProjectionMode extends NavigationMode {
     // Default z-axis (pointing forward in tool space)
     let zAxis: number[] = [0, 0, 1];
 
+    // Debug logging (first 20 frames only)
+    const shouldLog = this.updateCount <= 20;
+
     // Extract Z-axis from transformation matrix
     if (matrix) {
       const rotationMatrix = this._extractRotationMatrix(matrix);
 
+      if (shouldLog) {
+        console.log(`\n🔧 ====== TOOL MATRIX DEBUG (Frame ${this.updateCount}) ======`);
+        console.log(`📍 Position: [${position.map(v => v.toFixed(3)).join(', ')}]`);
+        
+        // Log raw matrix
+        if (Array.isArray(matrix[0])) {
+          console.log('📐 Raw Matrix (4x4 2D array):');
+          (matrix as number[][]).forEach((row, i) => {
+            console.log(`   Row ${i}: [${row.map(v => v.toFixed(3)).join(', ')}]`);
+          });
+        } else {
+          console.log('📐 Raw Matrix (flat 16-element array):');
+          console.log(`   [${(matrix as number[]).slice(0, 4).map(v => v.toFixed(3)).join(', ')}]`);
+          console.log(`   [${(matrix as number[]).slice(4, 8).map(v => v.toFixed(3)).join(', ')}]`);
+          console.log(`   [${(matrix as number[]).slice(8, 12).map(v => v.toFixed(3)).join(', ')}]`);
+          console.log(`   [${(matrix as number[]).slice(12, 16).map(v => v.toFixed(3)).join(', ')}]`);
+        }
+        
+        console.log('🔄 Extracted Rotation Matrix (3x3):');
+        rotationMatrix.forEach((row, i) => {
+          const axisName = i === 0 ? 'X-axis' : i === 1 ? 'Y-axis' : 'Z-axis';
+          console.log(`   ${axisName}: [${row.map(v => v.toFixed(3)).join(', ')}]`);
+        });
+      }
+
       // Z-axis is the third column of the rotation matrix
       // In transformation matrices, the Z-axis represents the forward direction
-      zAxis = [
+      // CURRENT IMPLEMENTATION: Extracting ROW 2 (row-major interpretation)
+      const zAxisRowMajor = [
         rotationMatrix[2][0], // Z-axis X component
         rotationMatrix[2][1], // Z-axis Y component
         rotationMatrix[2][2]  // Z-axis Z component
       ];
+
+      // ALTERNATIVE: Extract COLUMN 2 (column-major interpretation - standard OpenGL/graphics)
+      const zAxisColumnMajor = [
+        rotationMatrix[0][2], // Z-axis X component
+        rotationMatrix[1][2], // Z-axis Y component
+        rotationMatrix[2][2]  // Z-axis Z component (same for both)
+      ];
+
+      if (shouldLog) {
+        console.log('🎯 Z-Axis Extraction Comparison:');
+        console.log(`   Row-major (current): [${zAxisRowMajor.map(v => v.toFixed(3)).join(', ')}]`);
+        console.log(`   Column-major (OpenGL): [${zAxisColumnMajor.map(v => v.toFixed(3)).join(', ')}]`);
+        
+        // Check if they're the same (symmetric matrix)
+        const areSame = zAxisRowMajor.every((v, i) => Math.abs(v - zAxisColumnMajor[i]) < 0.001);
+        if (areSame) {
+          console.log('   ✓ Both conventions agree (symmetric matrix or aligned)');
+        } else {
+          console.log('   ⚠️ CONVENTIONS DIFFER - This indicates the bug!');
+        }
+      }
+
+      // Use row-major for now (current implementation)
+      zAxis = zAxisRowMajor;
 
       // Normalize z-axis
       const length = Math.sqrt(
@@ -163,14 +216,34 @@ export class InstrumentProjectionMode extends NavigationMode {
       );
 
       if (length > 0.001) {
-        zAxis = [
+        const normalizedZAxis = [
           zAxis[0] / length,
           zAxis[1] / length,
           zAxis[2] / length
         ];
+        
+        if (shouldLog) {
+          console.log(`📏 Normalization:`);
+          console.log(`   Length: ${length.toFixed(3)}`);
+          console.log(`   Normalized: [${normalizedZAxis.map(v => v.toFixed(3)).join(', ')}]`);
+        }
+        
+        zAxis = normalizedZAxis;
       } else {
         // Fallback to default if matrix is invalid
+        if (shouldLog) {
+          console.log('⚠️ Invalid Z-axis length, using default [0, 0, 1]');
+        }
         zAxis = [0, 0, 1];
+      }
+
+      if (shouldLog) {
+        console.log(`✓ Final Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
+        console.log('====== END MATRIX DEBUG ======\n');
+      }
+    } else {
+      if (shouldLog) {
+        console.log('⚠️ No matrix provided, using default Z-axis [0, 0, 1]');
       }
     }
 

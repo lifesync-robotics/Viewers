@@ -158,6 +158,42 @@ function PanelTracking() {
   // Selected tool for visualization
   const [selectedToolId, setSelectedToolId] = React.useState<string | null>(null);
 
+  // Registration matrices state
+  const identityMatrix = [
+    [1, 0, 0, 0],
+    [0, 1, 0, 0],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1]
+  ];
+  const [prToDicomMatrix, setPrToDicomMatrix] = React.useState<number[][]>(identityMatrix);
+  const [markerToTooltipMatrix, setMarkerToTooltipMatrix] = React.useState<number[][]>([
+    [-1, 0, 0, -17.08],
+    [0, 1, 0, 0.10],
+    [0, 0, -1, -157.82],
+    [0, 0, 0, 1]
+  ]); // DR-VR06-A32 calibration matrix
+  // String representation for input fields to allow intermediate typing states
+  const [prToDicomMatrixInput, setPrToDicomMatrixInput] = React.useState<string[][]>(
+    identityMatrix.map(row => row.map(val => val.toString()))
+  );
+  const [markerToTooltipMatrixInput, setMarkerToTooltipMatrixInput] = React.useState<string[][]>([
+    ["-1", "0", "0", "-17.08"],
+    ["0", "1", "0", "0.10"],
+    ["0", "0", "-1", "-157.82"],
+    ["0", "0", "0", "1"]
+  ]); // DR-VR06-A32 calibration matrix
+  const [matricesExpanded, setMatricesExpanded] = React.useState(false);
+  const [matricesApplied, setMatricesApplied] = React.useState(false);
+  
+  // Debug panel state
+  const [debugExpanded, setDebugExpanded] = React.useState(false);
+  const [debugData, setDebugData] = React.useState<{
+    prRelativeMatrix?: number[][];
+    rMatrix?: number[][];
+    dicomMatrix?: number[][];
+    rToDicomMatrix?: number[][];
+  } | null>(null);
+
   // Initialize NavigationController early so mode switching works even when navigation is not started
   React.useEffect(() => {
     const initNavigationController = async () => {
@@ -222,6 +258,23 @@ function PanelTracking() {
       console.log(`🧭 TrackingPanel: Coordinate system changed to ${coordinateSystem}`);
     }
   }, [coordinateSystem, trackingService]);
+
+  // Auto-refresh debug data when debug panel is expanded
+  React.useEffect(() => {
+    if (!debugExpanded || !trackingService || !trackingFrame) return;
+
+    // Refresh debug data every 2 seconds
+    const interval = setInterval(() => {
+      const debug = trackingService.getTransformDebugInfo();
+      setDebugData(debug);
+    }, 2000);
+
+    // Initial refresh
+    const debug = trackingService.getTransformDebugInfo();
+    setDebugData(debug);
+
+    return () => clearInterval(interval);
+  }, [debugExpanded, trackingService, trackingFrame]);
 
   // Load tracking configuration
   const loadConfig = React.useCallback(async () => {
@@ -706,6 +759,320 @@ function PanelTracking() {
                 </span>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Registration Matrices */}
+        <div className="mb-6">
+          <div
+            className="flex items-center justify-between mb-3 cursor-pointer p-2 rounded hover:bg-gray-800 transition-colors"
+            onClick={() => setMatricesExpanded(!matricesExpanded)}
+          >
+            <h3 className="text-lg font-semibold text-white">🔧 Registration Matrices</h3>
+            <div className="flex items-center gap-2">
+              {matricesApplied && (
+                <span className="text-xs text-green-400 font-medium">✅ Applied</span>
+              )}
+              <span className="text-gray-400 text-sm">{matricesExpanded ? '▼' : '▶'}</span>
+            </div>
+          </div>
+
+          {matricesExpanded && (
+            <div className="p-4 bg-gray-900 border border-gray-700 rounded space-y-4">
+              <div className="text-xs text-gray-400 mb-3">
+                Configure the transformation pipeline: Marker Array → Tooltip → DICOM Space
+              </div>
+
+              {/* PR to DICOM Matrix */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-gray-300 font-medium">PR to DICOM Matrix (Registration)</label>
+                  <button
+                    onClick={() => {
+                      const identity = identityMatrix.map(row => [...row]);
+                      setPrToDicomMatrix(identity);
+                      setPrToDicomMatrixInput(identity.map(row => row.map(val => val.toString())));
+                      setMatricesApplied(false);
+                    }}
+                    className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+                  >
+                    Reset to Identity
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {prToDicomMatrixInput.map((row, i) =>
+                    row.map((val, j) => (
+                      <input
+                        key={`prdicom-${i}-${j}`}
+                        type="text"
+                        value={val}
+                        onChange={(e) => {
+                          const inputValue = e.target.value;
+                          // Update input state immediately to allow intermediate states
+                          const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
+                          newInputMatrix[i][j] = inputValue;
+                          setPrToDicomMatrixInput(newInputMatrix);
+                          
+                          // Try to parse as number for the actual matrix
+                          const parsed = parseFloat(inputValue);
+                          if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
+                            const newMatrix = prToDicomMatrix.map(r => [...r]);
+                            newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
+                            setPrToDicomMatrix(newMatrix);
+                          }
+                          setMatricesApplied(false);
+                        }}
+                        onBlur={(e) => {
+                          // On blur, clean up the input to show valid number
+                          const parsed = parseFloat(e.target.value);
+                          const finalValue = isNaN(parsed) ? 0 : parsed;
+                          const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
+                          newInputMatrix[i][j] = finalValue.toString();
+                          setPrToDicomMatrixInput(newInputMatrix);
+                          
+                          const newMatrix = prToDicomMatrix.map(r => [...r]);
+                          newMatrix[i][j] = finalValue;
+                          setPrToDicomMatrix(newMatrix);
+                        }}
+                        className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Marker to Tooltip Matrix (Calibration) */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-gray-300 font-medium">Marker to Tooltip Matrix (Calibration)</label>
+                  <button
+                    onClick={() => {
+                      const dr06cal = [
+                        [-1, 0, 0, -17.08],
+                        [0, 1, 0, 0.10],
+                        [0, 0, -1, -157.82],
+                        [0, 0, 0, 1]
+                      ];
+                      setMarkerToTooltipMatrix(dr06cal);
+                      setMarkerToTooltipMatrixInput(dr06cal.map(row => row.map(val => val.toString())));
+                      setMatricesApplied(false);
+                    }}
+                    className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+                  >
+                    Reset to DR-VR06-A32
+                  </button>
+                </div>
+                <div className="text-xs text-gray-500 mb-2">
+                  📏 DR-VR06-A32: Tooltip is ~157.8mm from marker array
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {markerToTooltipMatrixInput.map((row, i) =>
+                    row.map((val, j) => (
+                      <input
+                        key={`marker-${i}-${j}`}
+                        type="text"
+                        value={val}
+                        onChange={(e) => {
+                          const inputValue = e.target.value;
+                          // Update input state immediately to allow intermediate states
+                          const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
+                          newInputMatrix[i][j] = inputValue;
+                          setMarkerToTooltipMatrixInput(newInputMatrix);
+                          
+                          // Try to parse as number for the actual matrix
+                          const parsed = parseFloat(inputValue);
+                          if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
+                            const newMatrix = markerToTooltipMatrix.map(r => [...r]);
+                            newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
+                            setMarkerToTooltipMatrix(newMatrix);
+                          }
+                          setMatricesApplied(false);
+                        }}
+                        onBlur={(e) => {
+                          // On blur, clean up the input to show valid number
+                          const parsed = parseFloat(e.target.value);
+                          const finalValue = isNaN(parsed) ? 0 : parsed;
+                          const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
+                          newInputMatrix[i][j] = finalValue.toString();
+                          setMarkerToTooltipMatrixInput(newInputMatrix);
+                          
+                          const newMatrix = markerToTooltipMatrix.map(r => [...r]);
+                          newMatrix[i][j] = finalValue;
+                          setMarkerToTooltipMatrix(newMatrix);
+                        }}
+                        className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Apply Button */}
+              <button
+                onClick={() => {
+                  if (trackingService) {
+                    trackingService.setPrToDicomMatrix(prToDicomMatrix);
+                    trackingService.setMarkerToTooltipMatrix(markerToTooltipMatrix);
+                    setMatricesApplied(true);
+                    console.log('✅ Transformation matrices applied to TrackingService:', {
+                      prToDicom: prToDicomMatrix,
+                      markerToTooltip: markerToTooltipMatrix
+                    });
+                  }
+                }}
+                disabled={!trackingService}
+                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
+              >
+                Apply Matrices
+              </button>
+
+              {!matricesApplied && (
+                <div className="text-xs text-yellow-400 text-center">
+                  ⚠️ Changes not applied yet - click "Apply Matrices"
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Transformation Debug Panel */}
+        {trackingFrame && (
+          <div className="mb-6">
+            <div
+              className="flex items-center justify-between mb-3 cursor-pointer p-2 rounded hover:bg-gray-800 transition-colors"
+              onClick={() => setDebugExpanded(!debugExpanded)}
+            >
+              <h3 className="text-lg font-semibold text-white">🐛 Transformation Debug</h3>
+              <span className="text-gray-400 text-sm">{debugExpanded ? '▼' : '▶'}</span>
+            </div>
+
+            {debugExpanded && (
+              <div className="p-4 bg-gray-900 border border-gray-700 rounded space-y-4">
+                <div className="text-xs text-gray-400 mb-3">
+                  Pipeline: Marker Array (PR-relative) → Tooltip (PR-relative) → DICOM Space
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (trackingService) {
+                      const debug = trackingService.getTransformDebugInfo();
+                      setDebugData(debug);
+                      console.log('🐛 Debug Info:', debug);
+                    }
+                  }}
+                  disabled={!trackingService}
+                  className="w-full py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
+                >
+                  Refresh Debug Data
+                </button>
+
+                {debugData && (
+                  <div className="space-y-3 text-xs">
+                    {/* Configuration Matrices */}
+                    <div className="p-3 bg-gray-800 rounded">
+                      <div className="font-semibold text-blue-400 mb-2">Transformation Matrices (Configuration)</div>
+                      
+                      <div className="mb-3">
+                        <div className="text-gray-400 mb-1">PR to DICOM (Registration):</div>
+                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
+                          {debugData.currentPrToDicom?.map((row, i) => (
+                            <div key={i}>
+                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-gray-400 mb-1">Marker to Tooltip (Calibration):</div>
+                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
+                          {debugData.currentMarkerToTooltip?.map((row, i) => (
+                            <div key={i}>
+                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          📏 Tooltip offset: ~157.8mm from marker array
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Step 1: Marker Array Position (PR-relative) */}
+                    {debugData.prRelativeMatrix_marker && (
+                      <div className="p-3 bg-gray-800 rounded">
+                        <div className="font-semibold text-green-400 mb-2">
+                          Step 1: Marker Array Position (PR-relative)
+                        </div>
+                        <div className="text-xs text-gray-400 mb-1">
+                          Input from NDI tracking system
+                        </div>
+                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
+                          {debugData.prRelativeMatrix_marker.map((row, i) => (
+                            <div key={i}>
+                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-gray-400 mt-2">
+                          Marker Position: [{debugData.prRelativeMatrix_marker[0][3].toFixed(2)}, {debugData.prRelativeMatrix_marker[1][3].toFixed(2)}, {debugData.prRelativeMatrix_marker[2][3].toFixed(2)}] mm
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Step 2: Tooltip Position (PR-relative) */}
+                    {debugData.prRelativeMatrix_tooltip && (
+                      <div className="p-3 bg-gray-800 rounded">
+                        <div className="font-semibold text-orange-400 mb-2">
+                          Step 2: Tooltip Position (PR-relative)
+                        </div>
+                        <div className="text-xs text-gray-400 mb-1">
+                          = markerMatrix × markerToTooltipMatrix
+                        </div>
+                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
+                          {debugData.prRelativeMatrix_tooltip.map((row, i) => (
+                            <div key={i}>
+                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-gray-400 mt-2">
+                          Tooltip Position: [{debugData.prRelativeMatrix_tooltip[0][3].toFixed(2)}, {debugData.prRelativeMatrix_tooltip[1][3].toFixed(2)}, {debugData.prRelativeMatrix_tooltip[2][3].toFixed(2)}] mm
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Step 3: Tooltip Position (DICOM Space) */}
+                    {debugData.dicomMatrix && (
+                      <div className="p-3 bg-gray-800 rounded">
+                        <div className="font-semibold text-red-400 mb-2">
+                          Step 3: Tooltip Position (DICOM Space)
+                        </div>
+                        <div className="text-xs text-gray-400 mb-1">
+                          = prToDicomMatrix × tooltipMatrix_PR
+                        </div>
+                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
+                          {debugData.dicomMatrix.map((row, i) => (
+                            <div key={i}>
+                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-gray-400 mt-2">
+                          Final Tooltip Position: [{debugData.dicomMatrix[0][3].toFixed(2)}, {debugData.dicomMatrix[1][3].toFixed(2)}, {debugData.dicomMatrix[2][3].toFixed(2)}] mm
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!debugData && (
+                  <div className="text-center text-gray-400 text-sm py-4">
+                    Click "Refresh Debug Data" to see transformation steps
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

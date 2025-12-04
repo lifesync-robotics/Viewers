@@ -8,7 +8,7 @@
  *           Uses relative API paths with webpack proxy
  */
 
-import { PubSubService, servicesManager } from '@ohif/core';
+import { PubSubService } from '@ohif/core';
 import type { TrackingFrame, TrackingUpdateEvent } from '../types/tracking.types';
 import { getApiBaseUrl } from '../utils/apiConfig';
 
@@ -50,9 +50,41 @@ class TrackingService extends PubSubService {
   private selectedToolId: string | null = null; // Selected tool for visualization
   private coordinateSystem: 'tracker' | 'patient_reference' = 'patient_reference'; // Coordinate system for navigation
   
-  // 📍 [PR-DEBUG] Time-based PR logging
-  private lastPrDebugLog: number = 0;
-  private prDebugInterval: number = 5000; // 5 seconds in milliseconds
+  // 📍 [PR-DEBUG] Time-based PR logging (commented out - PR working)
+  // private lastPrDebugLog: number = 0;
+  // private prDebugInterval: number = 5000; // 5 seconds in milliseconds
+
+  // Registration transformation matrix (4x4 row-major)
+  // Direct transformation: PR space → DICOM space
+  // dicomMatrix = prToDicomMatrix * markerToTooltipMatrix * prRelativeMatrix_marker
+  private prToDicomMatrix: number[][] = [
+    [1, 0, 0, 0],
+    [0, 1, 0, 0],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1]
+  ]; // PR space to DICOM image space (identity by default, set via registration)
+  
+  // Instrument calibration matrix (marker array → stylus tooltip)
+  // Hardcoded from DR-VR06-A32.cal file
+  // This represents the transformation from the NDI marker array to the stylus tooltip
+  // Translation: [-17.08mm, +0.10mm, -157.82mm] (tooltip is ~157.8mm away from markers)
+  private markerToTooltipMatrix: number[][] = [
+    [-1, 0, 0, -17.08],
+    [0, 1, 0, 0.10],
+    [0, 0, -1, -157.82],
+    [0, 0, 0, 1]
+  ]; // From DR-VR06-A32.cal
+  
+  private applyPr2DicomTransform: boolean = true; // Enable/disable transformation
+  
+  // Debug info for transformation pipeline
+  private lastDebugInfo: {
+    prRelativeMatrix_marker?: number[][];
+    prRelativeMatrix_tooltip?: number[][];
+    dicomMatrix?: number[][];
+    markerToTooltipMatrix?: number[][];
+    prToDicomMatrix?: number[][];
+  } = {};
 
   constructor(servicesManager, config: any = {}) {
     super(EVENTS);
@@ -490,20 +522,20 @@ class TrackingService extends PubSubService {
           break;
         }
         
-        // 📍 [PR-DEBUG] Log PR data every 5 seconds
-        const now = Date.now();
-        if (now - this.lastPrDebugLog >= this.prDebugInterval) {
-          const messageData = message.data || message;
-          const pr = messageData.patient_reference;
-          const prIcon = pr?.visible ? '✅' : '❌';
-          console.log(`\n📍 [PR-DEBUG-SERVICE] Frame ${messageData.frame_number} @ ${(now/1000).toFixed(2)}s`);
-          console.log(`   ${prIcon} PR ID: ${pr?.id}`);
-          console.log(`   ${prIcon} PR Name: ${pr?.name}`);
-          console.log(`   ${prIcon} PR Visible: ${pr?.visible}`);
-          console.log(`   ${prIcon} PR Quality: ${pr?.quality?.toFixed(2)}`);
-          console.log(`   📦 Tools in message: ${Object.keys(tools).length}`);
-          this.lastPrDebugLog = now;
-        }
+        // 📍 [PR-DEBUG] Log PR data every 5 seconds (commented out - PR working)
+        // const now = Date.now();
+        // if (now - this.lastPrDebugLog >= this.prDebugInterval) {
+        //   const messageData = message.data || message;
+        //   const pr = messageData.patient_reference;
+        //   const prIcon = pr?.visible ? '✅' : '❌';
+        //   console.log(`\n📍 [PR-DEBUG-SERVICE] Frame ${messageData.frame_number} @ ${(now/1000).toFixed(2)}s`);
+        //   console.log(`   ${prIcon} PR ID: ${pr?.id}`);
+        //   console.log(`   ${prIcon} PR Name: ${pr?.name}`);
+        //   console.log(`   ${prIcon} PR Visible: ${pr?.visible}`);
+        //   console.log(`   ${prIcon} PR Quality: ${pr?.quality?.toFixed(2)}`);
+        //   console.log(`   📦 Tools in message: ${Object.keys(tools).length}`);
+        //   this.lastPrDebugLog = now;
+        // }
 
         // Find the primary tracked tool (not patient reference)
         let primaryTool: any = null;
@@ -607,11 +639,49 @@ class TrackingService extends PubSubService {
             }
           }
 
+          // Apply PR to DICOM transformation with instrument calibration if enabled
+          // IMPORTANT: This transform should ONLY be applied to PR-relative matrices!
+          // If coordinateSystem === 'tracker', the matrix is in tracker space (NOT PR-relative)
+          // If coordinateSystem === 'patient_reference', the matrix is in PR-relative space (marker array)
+          let finalMatrix = matrix;
+          let finalPosition = position;
+
+          // Only apply pr2dicom when using PR-relative coordinate system
+          const isUsingPrRelativeCoords = this.coordinateSystem === 'patient_reference';
+          
+          if (this.applyPr2DicomTransform && matrix && isUsingPrRelativeCoords) {
+            // Transform matrix from PR-relative marker array to DICOM space
+            // Pipeline: marker array → stylus tooltip → DICOM space
+            // dicomMatrix = prToDicomMatrix × markerToTooltipMatrix × prRelativeMatrix_marker
+            finalMatrix = this._applyPr2DicomTransform(matrix);
+            
+            // Extract position from transformed matrix
+            finalPosition = this._extractPositionFromMatrix(finalMatrix);
+
+            // Debug log for first few frames
+            if (this.statsData.framesReceived < 3) {
+              console.log('🔄 [TrackingService] Applied calibration + PR to DICOM transform:', {
+                inputCoordinateSystem: 'patient_reference (PR-relative marker)',
+                originalPosition_marker: position,
+                transformedPosition_tooltip: finalPosition,
+                pr2dicomEnabled: this.applyPr2DicomTransform
+              });
+            }
+          } else if (this.applyPr2DicomTransform && matrix && !isUsingPrRelativeCoords) {
+            // User has pr2dicom enabled but is using tracker coordinates
+            // Log warning for first few frames only
+            if (this.statsData.framesReceived < 3) {
+              console.warn('⚠️ [TrackingService] pr2dicom transform is enabled but coordinate system is "tracker"');
+              console.warn('   pr2dicom is ONLY valid for PR-relative matrices. Skipping transform.');
+              console.warn('   To apply pr2dicom, switch to "patient_reference" coordinate system.');
+            }
+          }
+
           // Pass to tracking update handler
           this._handleTrackingUpdate({
-            position: position,
+            position: finalPosition,
             orientation: rotation,
-            matrix: matrix,
+            matrix: finalMatrix,
             timestamp: messageData.timestamp,
             frame_id: messageData.frame_number,
             quality: primaryTool.quality,
@@ -801,6 +871,320 @@ class TrackingService extends PubSubService {
       .catch(error => {
         console.error('Could not get server status:', error);
       });
+  }
+
+  /**
+   * Multiply two 4x4 matrices (row-major order)
+   * Result = A * B
+   */
+  private _multiplyMatrix4x4(A: number[][], B: number[][]): number[][] {
+    const result: number[][] = [
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0]
+    ];
+
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        for (let k = 0; k < 4; k++) {
+          result[i][j] += A[i][k] * B[k][j];
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Invert a 4x4 matrix using Gaussian elimination
+   * Returns identity matrix if the matrix is singular or near-singular
+   * @param matrix - 4x4 matrix to invert
+   * @returns Inverted 4x4 matrix
+   */
+  private _invertMatrix4x4(matrix: number[][]): number[][] {
+    // Create augmented matrix [A | I]
+    const augmented: number[][] = [];
+    for (let i = 0; i < 4; i++) {
+      augmented[i] = [...matrix[i], 0, 0, 0, 0];
+      augmented[i][4 + i] = 1; // Identity matrix on the right
+    }
+
+    // Forward elimination with partial pivoting
+    for (let col = 0; col < 4; col++) {
+      // Find pivot
+      let maxRow = col;
+      for (let row = col + 1; row < 4; row++) {
+        if (Math.abs(augmented[row][col]) > Math.abs(augmented[maxRow][col])) {
+          maxRow = row;
+        }
+      }
+
+      // Check for singular matrix
+      if (Math.abs(augmented[maxRow][col]) < 1e-10) {
+        console.warn('⚠️ Matrix is singular or near-singular, returning identity matrix');
+        return [
+          [1, 0, 0, 0],
+          [0, 1, 0, 0],
+          [0, 0, 1, 0],
+          [0, 0, 0, 1]
+        ];
+      }
+
+      // Swap rows if needed
+      if (maxRow !== col) {
+        [augmented[col], augmented[maxRow]] = [augmented[maxRow], augmented[col]];
+      }
+
+      // Scale pivot row
+      const pivot = augmented[col][col];
+      for (let j = 0; j < 8; j++) {
+        augmented[col][j] /= pivot;
+      }
+
+      // Eliminate column
+      for (let row = 0; row < 4; row++) {
+        if (row !== col) {
+          const factor = augmented[row][col];
+          for (let j = 0; j < 8; j++) {
+            augmented[row][j] -= factor * augmented[col][j];
+          }
+        }
+      }
+    }
+
+    // Extract inverse matrix from right side of augmented matrix
+    const inverse: number[][] = [
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0]
+    ];
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        inverse[i][j] = augmented[i][4 + j];
+      }
+    }
+
+    return inverse;
+  }
+
+  /**
+   * Convert flat array (16 elements) to 4x4 matrix (row-major)
+   */
+  private _flatToMatrix4x4(flat: number[]): number[][] {
+    if (!flat || flat.length < 16) {
+      return [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+      ];
+    }
+    return [
+      [flat[0], flat[1], flat[2], flat[3]],
+      [flat[4], flat[5], flat[6], flat[7]],
+      [flat[8], flat[9], flat[10], flat[11]],
+      [flat[12], flat[13], flat[14], flat[15]]
+    ];
+  }
+
+  /**
+   * Convert 4x4 matrix to flat array (16 elements, row-major)
+   */
+  private _matrix4x4ToFlat(matrix: number[][]): number[] {
+    return [
+      matrix[0][0], matrix[0][1], matrix[0][2], matrix[0][3],
+      matrix[1][0], matrix[1][1], matrix[1][2], matrix[1][3],
+      matrix[2][0], matrix[2][1], matrix[2][2], matrix[2][3],
+      matrix[3][0], matrix[3][1], matrix[3][2], matrix[3][3]
+    ];
+  }
+
+  /**
+   * Apply PR to DICOM transformation with instrument calibration
+   * Transforms coordinates from Patient Reference space to DICOM image space
+   * Pipeline: PR-relative marker → instrument tooltip → DICOM space
+   * Formula: dicomMatrix = prToDicomMatrix × markerToTooltipMatrix × prRelativeMatrix_marker
+   * 
+   * @param prRelativeMatrix_marker - 4x4 matrix for marker array in PR-relative space (can be 2D array or flat array)
+   * @returns Transformed 4x4 matrix in DICOM space (same format as input)
+   */
+  private _applyPr2DicomTransform(prRelativeMatrix_marker: number[][] | number[]): number[][] | number[] {
+    if (!prRelativeMatrix_marker) return prRelativeMatrix_marker;
+
+    // Detect if input is flat array or 2D array
+    const isFlat = !Array.isArray(prRelativeMatrix_marker[0]);
+
+    // Convert to 4x4 if needed
+    let markerMatrix4x4: number[][];
+    if (isFlat) {
+      markerMatrix4x4 = this._flatToMatrix4x4(prRelativeMatrix_marker as number[]);
+    } else {
+      markerMatrix4x4 = prRelativeMatrix_marker as number[][];
+    }
+
+    // Step 1: Transform from marker array to stylus tooltip
+    // prRelativeMatrix_tooltip = markerToTooltipMatrix × prRelativeMatrix_marker
+    const tooltipMatrix = this._multiplyMatrix4x4(markerMatrix4x4, this.markerToTooltipMatrix);
+
+    // Step 2: Transform from PR-relative tooltip to DICOM space
+    // dicomMatrix = prToDicomMatrix × prRelativeMatrix_tooltip
+    const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
+
+    // Store debug info (deep copy to avoid reference issues)
+    this.lastDebugInfo = {
+      prRelativeMatrix_marker: markerMatrix4x4.map(row => [...row]),
+      prRelativeMatrix_tooltip: tooltipMatrix.map(row => [...row]),
+      dicomMatrix: dicomMatrix.map(row => [...row]),
+      markerToTooltipMatrix: this.markerToTooltipMatrix.map(row => [...row]),
+      prToDicomMatrix: this.prToDicomMatrix.map(row => [...row])
+    };
+
+    // Return in same format as input
+    if (isFlat) {
+      return this._matrix4x4ToFlat(dicomMatrix);
+    }
+    return dicomMatrix;
+  }
+
+  /**
+   * Extract position from 4x4 transformation matrix
+   * @param matrix - 4x4 matrix (2D array or flat array)
+   * @returns [x, y, z] position in mm
+   */
+  private _extractPositionFromMatrix(matrix: number[][] | number[]): number[] {
+    if (!matrix) return [0, 0, 0];
+
+    // Handle flat array
+    if (!Array.isArray(matrix[0])) {
+      const flat = matrix as number[];
+      return [flat[3], flat[7], flat[11]]; // Translation is in column 4 (indices 3, 7, 11)
+    }
+
+    // Handle 2D array
+    const m = matrix as number[][];
+    return [m[0][3], m[1][3], m[2][3]];
+  }
+
+  /**
+   * Set the PR to DICOM registration matrix
+   * This matrix transforms coordinates from Patient Reference space to DICOM image space
+   * @param matrix - 4x4 transformation matrix (row-major)
+   */
+  public setPrToDicomMatrix(matrix: number[][]): void {
+    this.prToDicomMatrix = matrix;
+    console.log('🔄 PR to DICOM matrix updated');
+  }
+
+  /**
+   * Get the PR to DICOM registration matrix
+   * @returns 4x4 transformation matrix (row-major)
+   */
+  public getPrToDicomMatrix(): number[][] {
+    return this.prToDicomMatrix;
+  }
+
+  /**
+   * Set the instrument calibration matrix (marker array to stylus tooltip)
+   * This matrix is loaded from the .cal file for the tracked instrument
+   * @param matrix - 4x4 transformation matrix (row-major)
+   */
+  public setMarkerToTooltipMatrix(matrix: number[][]): void {
+    this.markerToTooltipMatrix = matrix;
+    console.log('🔄 Marker-to-Tooltip calibration matrix updated');
+  }
+
+  /**
+   * Get the instrument calibration matrix (marker array to stylus tooltip)
+   * @returns 4x4 transformation matrix (row-major)
+   */
+  public getMarkerToTooltipMatrix(): number[][] {
+    return this.markerToTooltipMatrix;
+  }
+
+  /**
+   * Load instrument calibration from .cal file content
+   * .cal file format: 4 lines of 4 values each (4x4 transformation matrix)
+   * @param calFileContent - String content of the .cal file
+   */
+  public loadCalibrationFromFile(calFileContent: string): void {
+    try {
+      const lines = calFileContent.trim().split('\n');
+      if (lines.length !== 4) {
+        throw new Error(`Expected 4 lines in .cal file, got ${lines.length}`);
+      }
+
+      const matrix: number[][] = [];
+      for (const line of lines) {
+        const values = line.trim().split(/\s+/).map(v => parseFloat(v));
+        if (values.length !== 4) {
+          throw new Error(`Expected 4 values per line, got ${values.length}`);
+        }
+        matrix.push(values);
+      }
+
+      this.setMarkerToTooltipMatrix(matrix);
+      console.log('✅ Calibration matrix loaded from .cal file:', matrix);
+    } catch (error) {
+      console.error('❌ Failed to load calibration from .cal file:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * @deprecated Use setPrToDicomMatrix instead
+   * Set the PR to DICOM transformation matrix
+   * @param matrix - 4x4 transformation matrix (row-major)
+   */
+  public setPr2DicomMatrix(matrix: number[][]): void {
+    console.warn('⚠️ setPr2DicomMatrix is deprecated. Use setPrToDicomMatrix instead.');
+    this.setPrToDicomMatrix(matrix);
+  }
+
+  /**
+   * @deprecated Use setPrToDicomMatrix instead
+   */
+  public setDicomToRMatrix(matrix: number[][]): void {
+    console.warn('⚠️ setDicomToRMatrix is deprecated. Use setPrToDicomMatrix instead.');
+    this.setPrToDicomMatrix(matrix);
+  }
+
+  /**
+   * @deprecated Use setPrToDicomMatrix instead
+   */
+  public setPrToRMatrix(matrix: number[][]): void {
+    console.warn('⚠️ setPrToRMatrix is deprecated. Use setPrToDicomMatrix instead.');
+    this.setPrToDicomMatrix(matrix);
+  }
+
+  /**
+   * Enable or disable the PR to DICOM transformation
+   */
+  public setApplyPr2DicomTransform(enabled: boolean): void {
+    this.applyPr2DicomTransform = enabled;
+    console.log(`🔄 PR to DICOM transform: ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Get debug information about the last transformation
+   * Returns intermediate matrices from the transformation pipeline
+   */
+  public getTransformDebugInfo(): {
+    prRelativeMatrix_marker?: number[][];
+    prRelativeMatrix_tooltip?: number[][];
+    dicomMatrix?: number[][];
+    markerToTooltipMatrix?: number[][];
+    prToDicomMatrix?: number[][];
+    // Current configuration matrices
+    currentPrToDicom: number[][];
+    currentMarkerToTooltip: number[][];
+  } {
+    return {
+      ...this.lastDebugInfo,
+      currentPrToDicom: this.prToDicomMatrix,
+      currentMarkerToTooltip: this.markerToTooltipMatrix
+    };
   }
 }
 
