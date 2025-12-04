@@ -235,6 +235,7 @@ interface ScrewTableProps {
   onView: (screw: any) => void;
   onEdit: (screw: any) => void;
   onDelete: (screw: any) => void;
+  showEditButton: boolean; // default is true
 }
 
 export const ScrewTable: React.FC<ScrewTableProps> = ({
@@ -244,6 +245,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
   onView,
   onEdit,
   onDelete,
+  showEditButton = false, 
 }) => {
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-700">
@@ -252,7 +254,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
         <thead className="text-xs uppercase bg-gray-800 text-gray-300 border-b border-gray-700">
           <tr>
             <th scope="col" className="px-4 py-3 font-semibold">Name</th>
-            <th scope="col" className="px-4 py-3 font-semibold text-center">Radius (mm)</th>
+            <th scope="col" className="px-4 py-3 font-semibold text-center">Diameter (mm)</th>
             <th scope="col" className="px-4 py-3 font-semibold text-center">Length (mm)</th>
             <th scope="col" className="px-4 py-3 font-semibold text-center">Actions</th>
           </tr>
@@ -351,13 +353,15 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                     >
                       {isRestoring ? '⏳' : '👁️ View'}
                     </button>
-                    <button
-                      onClick={() => onEdit(screw)}
-                      className="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition font-medium"
-                      title={`Edit "${displayInfo.label}"`}
-                    >
-                      ✏️ Edit
-                    </button>
+                    {showEditButton && (
+                      <button
+                        onClick={() => onEdit(screw)}
+                        className="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition font-medium"
+                        title={`Edit "${displayInfo.label}"`}
+                      >
+                        ✏️ Edit
+                      </button>
+                    )}
                     <button
                       onClick={() => onDelete(screw)}
                       className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition font-medium"

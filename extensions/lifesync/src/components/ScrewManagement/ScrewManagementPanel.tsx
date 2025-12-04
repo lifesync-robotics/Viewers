@@ -334,7 +334,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
         // Cap should be placed at the top of the screw
         // Screw body already has length/2 offset to center-align to entry point
         // Cap needs offset: length/2 (reach screw top) + capHeight/2 (if origin is at center, align bottom)
-        const capOffset = (length / 2) + (capHeight / 2); // Total offset = half screw length + half cap height
+        const otherOffset = 2.5;
+        const capOffset = (length / 2) + (capHeight / 2) + otherOffset; // Total offset = half screw length + half cap height + offset
 
         console.log(`📏 Screw length: ${length}mm`);
         console.log(`📏 Cap height: ${capHeight}mm`);

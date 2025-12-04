@@ -11,7 +11,7 @@ const getColumnLabel = (key) => {
     caseId: 'Case ID',
     patientName: 'Name',
     mrn: 'MRN',
-    createdAt: 'Created At',
+    createdAt: 'Created Date',
     studyCount: 'Study Count',
     actions: '',
     expandIcon: '', // 展开图标列，不需要标签
