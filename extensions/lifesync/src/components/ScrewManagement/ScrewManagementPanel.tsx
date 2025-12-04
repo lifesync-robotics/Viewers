@@ -847,17 +847,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       setIsRestoring(true);
 
-      // Check if we've reached the maximum number of models - only count screw body models
-      const screwBodyModels = getScrewBodyModels();
-      const maxModels = 10; // Match Python backend MAX_SCREWS limit
-
-      if (screwBodyModels.length >= maxModels) {
-        console.warn(`⚠️ Maximum number of screws (${maxModels}) reached. Cannot restore more screws.`);
-        alert(`Maximum of ${maxModels} screws reached. Please delete some screws before restoring more.`);
-        setIsRestoring(false);
-        return;
-      }
-
       const allModels = modelStateService.getAllModels();
       
 
@@ -871,7 +860,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         return;
       }
 
-      console.log(`🔄 Restoring screw: "${displayInfo.label}" (${screwBodyModels.length + 1}/${maxModels} screw bodies, total models: ${allModels.length})`);
+      console.log(`🔄 Restoring screw: "${displayInfo.label}"`);
       console.log(`   Source: ${displayInfo.source}`);
       console.log(`   Dimensions: R=${displayInfo.radius}mm, L=${displayInfo.length}mm`);
 
@@ -925,8 +914,22 @@ export default function ScrewManagementPanel({ servicesManager }) {
         }
       }
 
-      // Only load model if it doesn't already exist
+      // Define maxModels outside the if block so it's available for the final log statement
+      const maxModels = 10; // Match Python backend MAX_SCREWS limit
+
+      // Only check limit if we need to load a new model
+      // If model already exists, we can just restore viewport state (view/locate operation)
       if (!modelExists) {
+        // Check if we've reached the maximum number of models - only count screw body models
+        const screwBodyModels = getScrewBodyModels();
+
+        if (screwBodyModels.length >= maxModels) {
+          console.warn(`⚠️ Maximum number of screws (${maxModels}) reached. Cannot restore more screws.`);
+          alert(`Maximum of ${maxModels} screws reached. Please delete some screws before restoring more.`);
+          setIsRestoring(false);
+          return;
+        }
+
         // Load and display the 3D model
         const screwId = screwData.screw_id || screwData.id || null;
         await loadScrewModel(displayInfo.radius, displayInfo.length, transformArray, displayInfo.label, screwId);
