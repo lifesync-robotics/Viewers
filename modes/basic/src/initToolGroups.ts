@@ -244,7 +244,7 @@ function initMPRToolGroup(extensionManager, toolGroupService, commandsManager) {
         configuration: {
           viewportIndicators: true,
           viewportIndicatorsConfig: {
-            circleRadius: 10,
+            circleRadius: 5,
             xOffset: 0.95,
             yOffset: 0.05,
           },
@@ -252,9 +252,6 @@ function initMPRToolGroup(extensionManager, toolGroupService, commandsManager) {
           autoPan: {
             enabled: false,
             panSize: 10,
-          },
-          getReferenceLineRadius: (viewportId) => {
-            return 8;
           },
           getReferenceLineColor: viewportId => {
             const viewportInfo = cornerstoneViewportService.getViewportInfo(viewportId);
