@@ -91,6 +91,7 @@ const CreateCaseDialog: React.FC<CreateCaseDialogProps> = ({
     };
   }, [success, onClose]);
 
+
   const handleCreate = async () => {
     // All fields are optional with new API!
     setIsCreating(true);
@@ -199,27 +200,26 @@ const CreateCaseDialog: React.FC<CreateCaseDialogProps> = ({
               Date of Birth <span className="text-xs text-gray-400">(Optional)</span>
             </label>
             <div className="flex gap-2">
-              {/* 手动输入框 */}
+              {/* Manual input field */}
               <input
                 type="date"
+                lang="en"
                 value={formData.dateOfBirth}
                 onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
                 className="bg-primary-dark text-primary-light border-primary-light flex-1 rounded border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isCreating}
-                placeholder="年/月/日"
               />
-              {/* 明显的日历选择器按钮 */}
+              {/* Calendar picker button */}
               <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
                 <PopoverTrigger asChild>
                   <button
                     type="button"
                     onClick={() => setIsDatePickerOpen(!isDatePickerOpen)}
                     disabled={isCreating}
-                    className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 border border-blue-500 rounded px-4 py-2 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-secondary-dark disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
+                    className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 border border-blue-500 rounded px-2 py-2 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-secondary-dark disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-lg hover:shadow-xl w-8 h-8"
                     title="Select Date"
                   >
-                    <CalendarIcon className="h-5 w-5" />
-                    <span className="hidden sm:inline">Select Date</span>
+                    <CalendarIcon className="h-4 w-4" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent 
@@ -244,6 +244,11 @@ const CreateCaseDialog: React.FC<CreateCaseDialogProps> = ({
                       ? parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date())
                       : new Date()}
                     className="rounded-md border-0"
+                    formatters={{
+                      formatMonthCaption: (month, options) => {
+                        return String(month.getMonth() + 1).padStart(2, '0');
+                      }
+                    }}
                   />
                 </PopoverContent>
               </Popover>
