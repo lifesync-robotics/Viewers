@@ -32,7 +32,7 @@ interface CrosshairGlobalCache {
  */
 class CrosshairsHandler {
   private globalCache: CrosshairGlobalCache | null = null;
-  private readonly CACHE_TTL = 50; // 50ms cache validity (20Hz refresh rate)
+  private readonly CACHE_TTL = Infinity; // ✨ Set to infinite - cache never expires automatically (for surgical navigation stability)
 
   /**
    * Get the shared crosshair center (world coordinate)

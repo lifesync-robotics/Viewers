@@ -72,6 +72,12 @@ export default function initCornerstoneTools(configuration = {}) {
         enabled: false,
       },
     },
+    // ✨ Extended interaction delays for better user experience
+    interactionDelay: {
+      mouseClickDelay: 300, // Delay before click is considered complete (increased for stability)
+      mouseHoverDelay: 200,  // Delay before hover state changes
+      touchDelay: 300,       // Delay for touch interactions
+    },
   });
   addTool(PanTool);
   addTool(SegmentBidirectionalTool);

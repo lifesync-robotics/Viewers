@@ -265,6 +265,9 @@ function initMPRToolGroup(extensionManager, toolGroupService, commandsManager) {
               return '#0c0';
             }
           },
+          // ✨ Increased crosshair line width to 3x (from ~1.5px to 4.5px)
+          getReferenceLineWidth: () => 4.5,
+          getReferenceLineDashed: () => false,
         },
       },
       {

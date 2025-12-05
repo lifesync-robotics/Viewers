@@ -293,7 +293,10 @@ export default async function init({
       }
       const { viewportId } = enabledElement;
 
-      // Debounce to avoid excessive updates during continuous pan/zoom
+      // ✨ DISABLED: Auto-reset on camera modification
+      // In surgical navigation, crosshairs should remain stable during long operations
+      // Users can manually reset crosshairs if needed via toolbar or keyboard shortcut
+      /*
       clearTimeout(cameraModifiedTimeout);
       cameraModifiedTimeout = setTimeout(() => {
         const toolGroup = toolGroupService.getToolGroupForViewport(viewportId);
@@ -305,7 +308,8 @@ export default async function init({
         if (toolGroup.getActivePrimaryMouseButtonTool() === 'Crosshairs') {
           commandsManager.runCommand('resetCrosshairs', { viewportId });
         }
-      }, 100); // 100ms debounce
+      }, 500);
+      */
     });
 
     // limitation: currently supporting only volume viewports with fusion
@@ -316,7 +320,11 @@ export default async function init({
 
   eventTarget.addEventListener(EVENTS.ELEMENT_ENABLED, elementEnabledHandler.bind(null));
 
-  // Listen for viewport data changes and reset crosshairs
+  // ✨ DISABLED: Auto-reset on viewport data change
+  // In surgical navigation, crosshairs must remain stable even when viewport data changes
+  // This allows surgeons to maintain their reference point during long procedures
+  // Users can manually reset crosshairs via toolbar button or keyboard shortcut if needed
+  /*
   const { unsubscribe: unsubscribeViewportDataChanged } =
     cornerstoneViewportService.subscribe(
       cornerstoneViewportService.EVENTS.VIEWPORT_DATA_CHANGED,
@@ -333,6 +341,10 @@ export default async function init({
         }
       }
     );
+  */
+
+  // Create a no-op unsubscribe function since we disabled the subscription
+  const unsubscribeViewportDataChanged = () => {};
 
   // Clean up on mode exit
   unsubscriptions.push(unsubscribeViewportDataChanged);
