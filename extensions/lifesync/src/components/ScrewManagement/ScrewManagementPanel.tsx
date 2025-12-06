@@ -308,8 +308,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
    */
   const loadScrewModel = async (radius, length, transform, screwLabel = null, screwId = null) => {
     try {
-      console.log(`�� Querying model for radius=${radius}, length=${length}`);
-      console.log(`🔍 Screw label: ${screwLabel}, Screw ID: ${screwId}`);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('📦 [loadScrewModel] CALLED');
+      console.log(`   radius: ${radius}, length: ${length}`);
+      console.log(`   screwLabel: ${screwLabel}`);
+      console.log(`   screwId: ${screwId} (type: ${typeof screwId})`);
+      console.log(`   screwId is null/undefined: ${screwId === null || screwId === undefined}`);
+      console.log('═══════════════════════════════════════════════════════');
       console.log(`🔍 transform:`, transform);
       console.log(`🔍 transform.length:`, transform?.length);
 
@@ -346,7 +351,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Load model using modelStateService
       // Use screwId as modelId (unique identifier) and screwLabel as modelName (human-readable)
-      await modelStateService.loadModelFromServer(modelUrl, {
+      console.log(`📦 Loading model with modelId: ${screwId}, modelName: ${screwLabel}`);
+
+      const loadedModel = await modelStateService.loadModelFromServer(modelUrl, {
         viewportId: getCurrentViewportId(),
         color: screwColor,  // Color based on screw name/label
         opacity: 0.9,
@@ -360,20 +367,20 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log(`   Transform type: ${transform.constructor.name}`);
         console.log(`   Translation: (${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)})`);
 
-        // Find the loaded model and apply transform
-        const loadedModels = modelStateService.getAllModels();
-        const latestModel = loadedModels[loadedModels.length - 1];
+        // Use the returned model directly instead of searching for the latest one
+        if (loadedModel) {
+          const actualModelId = loadedModel.metadata.id;
+          console.log(`   Loaded model ID: ${actualModelId}`);
 
-        if (latestModel) {
           // CRITICAL: Pass length as 3rd parameter for proper offset
           await modelStateService.setModelTransform(
-            latestModel.metadata.id,
+            actualModelId,
             transform,
             length
           );
-          console.log(`✅ Applied transform to model: ${latestModel.metadata.id} with length offset: ${length}mm`);
+          console.log(`✅ Applied transform to model: ${actualModelId} with length offset: ${length}mm`);
         } else {
-          console.error('❌ No model found to apply transform to!');
+          console.error('❌ Model loading returned null!');
         }
       } else {
         console.warn(`⚠️ No valid transform to apply (length: ${transform?.length || 0})`);
@@ -861,6 +868,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
        console.log(`📊 Current screw bodies: ${screwBodyModels.length}/${maxModels} (total models: ${allModels.length})`);
 
       // Load the 3D model using the new API
+      // IMPORTANT: Pass savedScrewId so the model can be updated in backend session
       try {
         await loadScrewModel(radiusValue, lengthValue, transform, screwLabel, savedScrewId);
         console.log(`✅ Model loaded successfully - Total: ${modelStateService.getAllModels().length}/${maxModels}`);
@@ -991,6 +999,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
         // Load and display the 3D model
         const screwId = screwData.screw_id || screwData.id || null;
+        console.log(`🔍 [loadScrews] Extracted screwId: ${screwId} from screwData:`, {
+          'screw_id': screwData.screw_id,
+          'id': screwData.id,
+          'label': displayInfo.label
+        });
         await loadScrewModel(displayInfo.radius, displayInfo.length, transformArray, displayInfo.label, screwId);
 
         // ═════════════════════════════════════════════════════════
@@ -1255,6 +1268,32 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`      viewports: ${viewportIds.join(', ')}`);
     });
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST INSIDE/OUTSIDE DETECTION using crosshair position
+    // ═══════════════════════════════════════════════════════════════════════════
+    console.log('\n🎯 TESTING INSIDE/OUTSIDE DETECTION:');
+    console.log('───────────────────────────────────────────────────────');
+
+    // Get crosshair center position
+    const crosshairCenter = crosshairsHandler.getCrosshairCenter();
+    if (crosshairCenter) {
+      console.log(`📍 Crosshair position: [${crosshairCenter.map(v => v.toFixed(2)).join(', ')}]`);
+
+      // Test if crosshair position is inside any screw
+      if (modelStateService.findScrewAtPoint) {
+        const result = modelStateService.findScrewAtPoint(crosshairCenter as [number, number, number]);
+        if (result) {
+          console.log(`✅ Crosshair is INSIDE screw: ${result.screwLabel} (${result.part})`);
+        } else {
+          console.log(`❌ Crosshair is NOT inside any screw`);
+        }
+      } else {
+        console.log(`⚠️ findScrewAtPoint method not available on modelStateService`);
+      }
+    } else {
+      console.log(`⚠️ Could not get crosshair position`);
+    }
+
     console.log('═══════════════════════════════════════════════════════');
 
     // Show alert with summary
@@ -1354,16 +1393,12 @@ export default function ScrewManagementPanel({ servicesManager }) {
           console.warn('   toolInstance:', toolInstance);
         }
 
-        // Set the planningBackendService on the tool instance (imported directly, not from servicesManager)
-        if (toolInstance && toolInstance.setPlanningBackendService) {
-          toolInstance.setPlanningBackendService(planningBackendService);
-          console.log('✅ [ScrewManagement] PlanningBackendService set on tool instance');
-        }
-
-        // Set the sessionId on the tool instance for backend saving
-        if (toolInstance && toolInstance.setSessionId) {
+        // Set the session ID on the tool instance for backend sync
+        if (toolInstance && toolInstance.setSessionId && sessionId) {
           toolInstance.setSessionId(sessionId);
-          console.log(`✅ [ScrewManagement] SessionId set on tool: ${sessionId}`);
+          console.log('✅ [ScrewManagement] SessionId set on tool instance:', sessionId);
+        } else if (!sessionId) {
+          console.warn('⚠️ [ScrewManagement] No sessionId available to set on tool');
         }
 
         // Log current tool states before activation

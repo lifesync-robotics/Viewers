@@ -21,6 +21,7 @@ import {
   EVENTS as csEvents
 } from '@cornerstonejs/core';
 import type { ScrewPickResult } from '../components/CustomizedModels/modelStateService';
+import { planningBackendService } from '../services';
 
 const { MouseBindings } = csToolsEnums;
 
@@ -31,7 +32,6 @@ interface ScrewInteractionState {
   selectedScrewId: string | null;
   selectedScrewLabel: string | null;
   selectedPart: 'cap' | 'body' | 'tip' | null;
-  /** Interaction mode: translate (75% near tip) or rotate (25% near cap) */
   interactionMode: 'translate' | 'rotate' | null;
   isDragging: boolean;
   dragStartWorld: [number, number, number] | null;
@@ -69,33 +69,42 @@ class ScrewInteractionTool extends BaseTool {
    * Initialize services from ServicesManager
    */
   public setServicesManager(servicesManager: any): void {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔧 [ScrewInteractionTool] setServicesManager CALLED');
+    console.log('   servicesManager:', !!servicesManager);
+    console.log('   servicesManager.services:', servicesManager?.services ? Object.keys(servicesManager.services) : 'undefined');
+    console.log('═══════════════════════════════════════════════════════');
+
     this.modelStateService = servicesManager?.services?.modelStateService;
+    // Use the directly imported planningBackendService singleton
+    // (servicesManager.services.planningBackendService is not registered)
+    this.planningBackendService = planningBackendService;
+
+    console.log('   modelStateService set:', !!this.modelStateService);
+    console.log('   planningBackendService set:', !!this.planningBackendService);
 
     if (this.modelStateService) {
       this._log('✅ ModelStateService connected');
     } else {
       console.warn('⚠️ [ScrewInteractionTool] ModelStateService not available');
     }
-  }
 
-  /**
-   * Set the planning backend service for saving screw updates
-   */
-  public setPlanningBackendService(service: any): void {
-    this.planningBackendService = service;
     if (this.planningBackendService) {
-      this._log('✅ PlanningBackendService connected');
-    } else {
-      console.warn('⚠️ [ScrewInteractionTool] PlanningBackendService not available');
+      this._log('✅ PlanningBackendService connected (singleton)');
     }
   }
 
   /**
-   * Set the session ID for saving screw updates
+   * Set the current planning session ID
+   * This is needed to save screw transforms to the backend
    */
-  public setSessionId(sessionId: string | null): void {
+  public setSessionId(sessionId: string): void {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔧 [ScrewInteractionTool] setSessionId CALLED');
+    console.log('   sessionId:', sessionId);
+    console.log('═══════════════════════════════════════════════════════');
     this.sessionId = sessionId;
-    this._log(`Session ID set: ${sessionId}`);
+    this._log(`✅ Session ID set: ${sessionId}`);
   }
 
   private _getInitialState(): ScrewInteractionState {
@@ -187,27 +196,20 @@ class ScrewInteractionTool extends BaseTool {
     );
 
     if (!pickResult) {
-      this._log('❌ Click is NOT inside any screw - cannot interact');
+      this._log('❌ Click is NOT inside any screw - cannot drag');
       return false;
     }
 
-    // Point is inside a screw! Determine interaction mode
-    const interactionMode = pickResult.interactionMode || 'translate';
-
+    // Point is inside a screw! Log confirmation and allow drag
     console.log('═══════════════════════════════════════════════════════');
-    console.log('🎯 SCREW INTERACTION STARTED');
+    console.log('🎯 CHECK INSIDE A SCREW - INTERACTION ENABLED');
     console.log(`   Screw: ${pickResult.screwLabel}`);
-    console.log(`   Part: ${pickResult.part} (${((pickResult.normalizedPosition || 0) * 100).toFixed(0)}% from tip)`);
-    console.log(`   Mode: ${interactionMode.toUpperCase()}`);
-    if (interactionMode === 'translate') {
-      console.log('   → Drag to MOVE the screw');
-    } else {
-      console.log('   → Drag to ROTATE the screw around its center');
-    }
+    console.log(`   Part: ${pickResult.part}`);
+    console.log(`   Mode: ${pickResult.interactionMode.toUpperCase()}`);
     console.log('═══════════════════════════════════════════════════════');
 
     // Found a screw - start interaction
-    this._log(`✅ Selected screw: ${pickResult.screwLabel} (${pickResult.part}) - ${interactionMode} mode`);
+    this._log(`✅ Selected screw: ${pickResult.screwLabel} (${pickResult.part}) - Mode: ${pickResult.interactionMode}`);
 
     // Get viewport plane normal for constraining movement
     const planeNormal = this._getViewportPlaneNormal(element);
@@ -220,7 +222,7 @@ class ScrewInteractionTool extends BaseTool {
       selectedScrewId: pickResult.modelId,
       selectedScrewLabel: pickResult.screwLabel,
       selectedPart: pickResult.part,
-      interactionMode,
+      interactionMode: pickResult.interactionMode,
       isDragging: true,
       dragStartWorld: [worldPoint[0], worldPoint[1], worldPoint[2]],
       lastWorldPosition: [worldPoint[0], worldPoint[1], worldPoint[2]],
@@ -239,10 +241,6 @@ class ScrewInteractionTool extends BaseTool {
 
   /**
    * Called on mouse drag - required by BaseTool
-   *
-   * Based on interactionMode:
-   * - 'translate': Move the screw (75% of body near tip)
-   * - 'rotate': Rotate the screw around its center (25% of body near cap)
    */
   mouseDragCallback = (evt: any): void => {
     if (!this.state.isDragging || !this.state.selectedScrewId) {
@@ -287,9 +285,16 @@ class ScrewInteractionTool extends BaseTool {
     // Update last position
     this.state.lastWorldPosition = [currentWorld[0], currentWorld[1], currentWorld[2]];
 
-    // Apply interaction based on mode
+    // Log drag activity (throttled - only log every 10th drag)
+    if (!this._dragLogCounter) this._dragLogCounter = 0;
+    this._dragLogCounter++;
+    if (this._dragLogCounter % 10 === 1) {
+      console.log(`🔄 [ScrewInteractionTool] ${this.state.interactionMode?.toUpperCase() || 'DRAG'} screw: ${this.state.selectedScrewId?.substring(0, 8)}... delta: [${constrainedDelta[0].toFixed(2)}, ${constrainedDelta[1].toFixed(2)}, ${constrainedDelta[2].toFixed(2)}]`);
+    }
+
+    // Apply transformation based on interaction mode
     if (this.state.interactionMode === 'rotate') {
-      // ROTATE mode: Rotate the screw around its center
+      // Rotate the screw around its origin
       if (this.modelStateService.rotateScrew && this.state.viewportPlaneNormal) {
         this.modelStateService.rotateScrew(
           this.state.selectedScrewId,
@@ -298,33 +303,44 @@ class ScrewInteractionTool extends BaseTool {
         );
       }
     } else {
-      // TRANSLATE mode (default): Move the screw
+      // Translate the screw (default)
       if (this.modelStateService.translateScrew) {
         this.modelStateService.translateScrew(this.state.selectedScrewId, constrainedDelta);
       }
     }
   };
 
+  private _dragLogCounter: number = 0;
+
   /**
    * Called on mouse up - required by BaseTool
    */
   mouseUpCallback = (evt: any): void => {
+    console.log('═══════════════════════════════════════════════════════');
     console.log('🔧 [ScrewInteractionTool] mouseUpCallback CALLED');
-    console.log(`   isDragging: ${this.state.isDragging}`);
-    console.log(`   selectedScrewId: ${this.state.selectedScrewId}`);
+    console.log('   isDragging:', this.state.isDragging);
+    console.log('   selectedScrewId:', this.state.selectedScrewId);
+    console.log('═══════════════════════════════════════════════════════');
 
     if (!this.state.isDragging || !this.state.selectedScrewId) {
-      console.log('   → Early return: not dragging or no screw selected');
+      console.log('   ❌ Skipping - not dragging or no screw selected');
       return;
     }
 
     this._log(`Drag completed for screw: ${this.state.selectedScrewLabel}`);
 
-    // Save the updated transform to backend
-    this._saveTransformToBackend(
-      this.state.selectedScrewId,
-      this.state.selectedScrewLabel || ''
-    );
+    // Save the updated transform to backend session
+    console.log('   📤 Calling _saveTransformToBackend...');
+    console.log('   📤 selectedScrewId:', this.state.selectedScrewId);
+    console.log('   📤 sessionId:', this.sessionId);
+    console.log('   📤 planningBackendService:', !!this.planningBackendService);
+
+    // Call async save and log result
+    this._saveTransformToBackend(this.state.selectedScrewId).then(() => {
+      console.log('   ✅ _saveTransformToBackend completed');
+    }).catch((err) => {
+      console.error('   ❌ _saveTransformToBackend failed:', err);
+    });
 
     // Remove highlight
     this._highlightScrew(this.state.selectedScrewId, false);
@@ -334,100 +350,103 @@ class ScrewInteractionTool extends BaseTool {
   };
 
   /**
-   * Save the updated screw transform to backend
-   * Only saves if:
-   * - planningBackendService is available
-   * - sessionId is set
-   * - modelId appears to be a valid backend screw_id (not auto-generated)
+   * Save the screw's updated transform matrix to the backend session
+   * This ensures changes are persisted when SavePlan is called
    */
-  private async _saveTransformToBackend(modelId: string, screwLabel: string): Promise<void> {
+  private async _saveTransformToBackend(modelId: string): Promise<void> {
     console.log('═══════════════════════════════════════════════════════');
-    console.log('🔍 [ScrewInteractionTool] _saveTransformToBackend called');
-    console.log(`   modelId: "${modelId}"`);
-    console.log(`   screwLabel: "${screwLabel}"`);
-    console.log(`   planningBackendService: ${!!this.planningBackendService}`);
-    console.log(`   sessionId: ${this.sessionId}`);
+    console.log('📤 [ScrewInteractionTool] _saveTransformToBackend CALLED');
+    console.log('   modelId:', modelId);
+    console.log('   modelStateService:', !!this.modelStateService);
+    console.log('   planningBackendService:', !!this.planningBackendService);
+    console.log('   sessionId:', this.sessionId);
     console.log('═══════════════════════════════════════════════════════');
+
+    // Check if modelId is a valid UUID (backend screw_id format)
+    // UUIDs look like: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isValidBackendId = uuidPattern.test(modelId);
+
+    if (!isValidBackendId) {
+      console.log(`⚠️ [ScrewInteractionTool] modelId "${modelId}" is not a valid backend screw_id (UUID)`);
+      console.log('   This screw was likely created locally and not yet saved to backend.');
+      console.log('   Visual changes are preserved. Save the plan to persist changes.');
+      return;
+    }
+
+    if (!this.modelStateService) {
+      console.log('❌ Cannot save: ModelStateService not available');
+      return;
+    }
+
+    if (!this.planningBackendService) {
+      console.log('❌ Cannot save to backend: PlanningBackendService not available');
+      console.log('   This means servicesManager.services.planningBackendService is undefined');
+      // Changes are still in modelStateService, just won't persist to backend session
+      return;
+    }
 
     try {
-      // Check prerequisites
-      if (!this.planningBackendService) {
-        console.warn('⚠️ [ScrewInteractionTool] Cannot save: PlanningBackendService not available');
-        return;
-      }
-
-      if (!this.sessionId) {
-        console.warn('⚠️ [ScrewInteractionTool] Cannot save: sessionId not set');
-        return;
-      }
-
-      // Check if modelId is a valid backend screw_id (UUID format or similar)
-      // Auto-generated IDs typically look like "obj", "obj_1234567890", "cylinder_...", or contain ".obj"
-      // Valid backend IDs are UUIDs like "99fc997b-94f3-4bde-8883-048cfe16969d"
-      const isAutoGeneratedId = modelId === 'obj' ||
-                                 modelId.startsWith('obj_') ||
-                                 modelId.startsWith('cylinder_') ||
-                                 modelId.startsWith('cylinder/') ||
-                                 modelId.includes('.obj') ||
-                                 modelId.includes('/');
-
-      // UUID format check: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-      const isValidUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(modelId);
-
-      console.log(`   modelId: "${modelId}"`);
-      console.log(`   isAutoGeneratedId: ${isAutoGeneratedId}`);
-      console.log(`   isValidUUID: ${isValidUUID}`);
-
-      if (isAutoGeneratedId || !isValidUUID) {
-        console.warn(`⚠️ [ScrewInteractionTool] Cannot save: modelId "${modelId}" is not a valid backend screw_id (UUID)`);
-        console.warn(`   This screw was likely loaded without a backend ID. Changes are only stored in memory.`);
-        return;
-      }
-
-      // Get the current transform matrix (row-major format)
+      // Get the current transform matrix from the model
       const transformMatrix = this.modelStateService.getScrewTransform(modelId);
       if (!transformMatrix) {
-        this._log('⚠️ Cannot save: Could not get transform matrix');
+        this._log('⚠️ No transform matrix available for screw:', modelId);
         return;
       }
 
-      console.log('═══════════════════════════════════════════════════════');
-      console.log('💾 [ScrewInteractionTool] SAVING SCREW TRANSFORM');
-      console.log(`   Screw: ${screwLabel} (ID: ${modelId})`);
-      console.log(`   Session: ${this.sessionId}`);
-      console.log(`   Transform: [${transformMatrix.slice(0, 4).map(v => v.toFixed(2)).join(', ')}...]`);
-      console.log('═══════════════════════════════════════════════════════');
-
-      // Extract entry point and direction from transform matrix (row-major)
-      // Row-major layout:
-      // [ X.x, X.y, X.z, Tx ]  <- Row 0
-      // [ Y.x, Y.y, Y.z, Ty ]  <- Row 1 (screw axis direction)
-      // [ Z.x, Z.y, Z.z, Tz ]  <- Row 2
-      // [  0,   0,   0,   1 ]  <- Row 3
-      const entryPoint = {
-        x: transformMatrix[3],  // Tx
-        y: transformMatrix[7],  // Ty
-        z: transformMatrix[11]  // Tz
+      // Build update data with transform matrix
+      // Transform matrix contains all position/orientation info
+      const updateData: any = {
+        transformMatrix: Array.from(transformMatrix),
       };
 
-      // Call backend to update screw - only send transformMatrix and entryPoint
-      // The backend will derive other values from the transform matrix
-      const response = await this.planningBackendService.updateScrew(
-        modelId,
-        this.sessionId,
-        {
-          transformMatrix: Array.from(transformMatrix),  // Ensure it's a plain array
-          entryPoint
-        }
-      );
+      // Extract entry point from transform matrix (translation is at indices 3, 7, 11 in row-major)
+      // getScrewTransform returns row-major format
+      updateData.entryPoint = {
+        x: transformMatrix[3],
+        y: transformMatrix[7],
+        z: transformMatrix[11],
+      };
 
-      if (response.success) {
-        console.log('✅ [ScrewInteractionTool] Screw transform saved successfully');
+      // Extract trajectory direction from transform matrix
+      // Z-axis direction (third column) indicates screw direction
+      // In row-major: column 2 is at indices 2, 6, 10
+      updateData.trajectory = {
+        direction: [
+          transformMatrix[2],
+          transformMatrix[6],
+          transformMatrix[10],
+        ],
+        insertionDepth: 40, // Default, will be overridden by backend if available
+        convergenceAngle: 0,
+        cephaladAngle: 0,
+      };
+
+      this._log('📤 Saving transform to backend:', { modelId, updateData });
+
+      // Call the backend to update the screw
+      if (!this.sessionId) {
+        this._log('⚠️ No session ID set, cannot save to backend');
+        this._log('   Call setSessionId() before using the tool');
+        return;
+      }
+
+      console.log('   📤 Calling planningBackendService.updateScrew...');
+      console.log('      screwId:', modelId);
+      console.log('      sessionId:', this.sessionId);
+      console.log('      updateData:', JSON.stringify(updateData, null, 2).substring(0, 500));
+
+      const result = await this.planningBackendService.updateScrew(modelId, this.sessionId, updateData);
+
+      console.log('   📤 updateScrew result:', result);
+
+      if (result.success) {
+        console.log('✅ [ScrewInteractionTool] Transform saved to backend session');
       } else {
-        console.error('❌ [ScrewInteractionTool] Failed to save screw transform:', response.error);
+        console.error('❌ [ScrewInteractionTool] Failed to save transform:', result.error);
       }
     } catch (error) {
-      console.error('❌ [ScrewInteractionTool] Error saving screw transform:', error);
+      console.error('❌ [ScrewInteractionTool] Exception in _saveTransformToBackend:', error);
     }
   }
 
@@ -444,21 +463,8 @@ class ScrewInteractionTool extends BaseTool {
       if (!viewport) return [0, 0, 1];
 
       const camera = viewport.getCamera();
-      if (camera) {
-        // viewPlaneNormal points from the scene toward the camera (out of the screen)
-        // For rotation in the viewport plane, we want to rotate around this axis
-        const vpn = camera.viewPlaneNormal as [number, number, number];
-
-        // Also get viewUp for reference
-        const viewUp = camera.viewUp as [number, number, number];
-
-        console.log('📷 [ScrewInteractionTool] Camera info:');
-        console.log(`   viewPlaneNormal: [${vpn?.map(v => v.toFixed(3)).join(', ')}]`);
-        console.log(`   viewUp: [${viewUp?.map(v => v.toFixed(3)).join(', ')}]`);
-
-        if (vpn) {
-          return vpn;
-        }
+      if (camera?.viewPlaneNormal) {
+        return camera.viewPlaneNormal as [number, number, number];
       }
     } catch (error) {
       this._log('Error getting viewport plane normal:', error);

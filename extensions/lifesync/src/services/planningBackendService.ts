@@ -438,8 +438,8 @@ class PlanningBackendService {
       console.log('   Session ID:', sessionId);
       console.log('   Updates:', updates);
 
-      // sessionId must be in query params, not body
-      const response = await fetch(`${this.baseUrl}/screws/${screwId}?sessionId=${sessionId}`, {
+      // sessionId goes as query parameter, updates go directly in body
+      const response = await fetch(`${this.baseUrl}/screws/${screwId}?sessionId=${encodeURIComponent(sessionId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
