@@ -1878,8 +1878,8 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       if (distance < minDistance && distance < maxDistance) {
         minDistance = distance;
 
-        // Determine which part of the screw was clicked
-        const part = this._determineScrewPart(
+        // Determine which part of the screw was clicked and interaction mode
+        const partInfo = this._determineScrewPart(
           worldPoint,
           screwCenter,
           screwAxis,
@@ -1889,17 +1889,19 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
         nearestResult = {
           modelId,
           screwLabel: model.metadata.name || modelId,
-          part,
+          part: partInfo.part,
           worldPosition: worldPoint,
           distance,
           screwLength: dimensions.length,
-          screwRadius: dimensions.radius
+          screwRadius: dimensions.radius,
+          normalizedPosition: partInfo.normalizedPosition,
+          interactionMode: partInfo.interactionMode
         };
       }
     }
 
     if (nearestResult) {
-      console.log(`✅ Found screw: ${nearestResult.screwLabel} (${nearestResult.part}), distance: ${nearestResult.distance.toFixed(2)}mm`);
+      console.log(`✅ Found screw: ${nearestResult.screwLabel} (${nearestResult.part}), distance: ${nearestResult.distance.toFixed(2)}mm, mode: ${nearestResult.interactionMode}`);
     } else {
       console.log(`❌ No screw found within ${maxDistance}mm`);
     }
@@ -2108,8 +2110,8 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       console.log(`│  Axial Position:         ${result.axialPosition.toFixed(2).padStart(8)}mm (must be in [-${(dimensions.length/2).toFixed(1)}, ${(dimensions.length/2).toFixed(1)}]) │`);
 
       if (result.isInside) {
-        // Determine which part of the screw (cap, body, or tip)
-        const part = this._determineScrewPart(
+        // Determine which part of the screw and interaction mode
+        const partInfo = this._determineScrewPart(
           worldPoint,
           screwCenter,
           screwAxis,
@@ -2118,11 +2120,17 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
 
         console.log(`├─────────────────────────────────────────────────────────────────┤`);
         console.log(`│  ✅✅✅ RESULT: INSIDE THE SCREW! ✅✅✅                        │`);
-        console.log(`│  Part clicked: ${part.toUpperCase().padEnd(48)} │`);
+        console.log(`│  Part clicked: ${partInfo.part.toUpperCase().padEnd(48)} │`);
+        console.log(`│  Position: ${(partInfo.normalizedPosition * 100).toFixed(0)}% from tip to cap                              │`);
+        console.log(`│  Mode: ${partInfo.interactionMode.toUpperCase().padEnd(52)} │`);
         console.log(`└─────────────────────────────────────────────────────────────────┘`);
         console.log('');
         console.log('╔═══════════════════════════════════════════════════════════════════╗');
-        console.log('║  ✅ CHECK INSIDE A SCREW - CAN DRAG                               ║');
+        if (partInfo.interactionMode === 'translate') {
+          console.log('║  ✅ TRANSLATE MODE - Drag to move screw                          ║');
+        } else {
+          console.log('║  🔄 ROTATE MODE - Drag to rotate screw around origin              ║');
+        }
         console.log(`║  Screw: ${(model.metadata.name || modelId).padEnd(56)} ║`);
         console.log('╚═══════════════════════════════════════════════════════════════════╝');
         console.log('');
@@ -2130,11 +2138,13 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
         return {
           modelId,
           screwLabel: model.metadata.name || modelId,
-          part,
+          part: partInfo.part,
           worldPosition: worldPoint,
           distance: result.perpDistance,
           screwLength: dimensions.length,
-          screwRadius: dimensions.radius
+          screwRadius: dimensions.radius,
+          normalizedPosition: partInfo.normalizedPosition,
+          interactionMode: partInfo.interactionMode
         };
       } else {
         console.log(`├─────────────────────────────────────────────────────────────────┤`);
@@ -2153,14 +2163,20 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
   }
 
   /**
-   * Determine which part of the screw was clicked (cap, body, or tip)
+   * Determine which part of the screw was clicked and the interaction mode
+   *
+   * Interaction zones:
+   * - 0% to 25% (near tip): ROTATE mode - rotate around the screw origin (center)
+   * - 25% to 100% (body to cap): TRANSLATE mode - move the entire screw
+   *
+   * @returns Object with part, normalizedPosition, and interactionMode
    */
   private _determineScrewPart(
     worldPoint: [number, number, number],
     screwCenter: [number, number, number],
     screwAxis: [number, number, number],
     screwLength: number
-  ): 'cap' | 'body' | 'tip' {
+  ): { part: 'cap' | 'body' | 'tip'; normalizedPosition: number; interactionMode: 'translate' | 'rotate' } {
     // Vector from screw center to click point
     const toPoint = [
       worldPoint[0] - screwCenter[0],
@@ -2175,15 +2191,25 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       toPoint[2] * screwAxis[2];
 
     const halfLength = screwLength / 2;
-    const normalizedPosition = (projection + halfLength) / screwLength; // 0 = tip, 1 = cap
+    // normalizedPosition: 0 = tip (bottom), 1 = cap (top)
+    const normalizedPosition = (projection + halfLength) / screwLength;
 
-    if (normalizedPosition > 0.75) {
-      return 'cap';
-    } else if (normalizedPosition < 0.25) {
-      return 'tip';
+    // Determine part name
+    let part: 'cap' | 'body' | 'tip';
+    if (normalizedPosition > 0.85) {
+      part = 'cap';
+    } else if (normalizedPosition < 0.15) {
+      part = 'tip';
     } else {
-      return 'body';
+      part = 'body';
     }
+
+    // Determine interaction mode:
+    // - 25% near tip (normalizedPosition 0 to 0.25): ROTATE
+    // - 75% near cap (normalizedPosition 0.25 to 1.0): TRANSLATE
+    const interactionMode: 'translate' | 'rotate' = normalizedPosition < 0.25 ? 'rotate' : 'translate';
+
+    return { part, normalizedPosition, interactionMode };
   }
 
   /**
@@ -2253,6 +2279,235 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
   }
 
   /**
+   * Rotate a screw around its origin (center) based on mouse drag
+   * The rotation axis is the viewport's normal (perpendicular to the screen)
+   * Rotation is around the screw's origin point
+   *
+   * @param modelId - Screw model ID
+   * @param dragDelta - Mouse drag delta in world coordinates [dx, dy, dz]
+   * @param viewportNormal - The viewport's view plane normal (rotation axis)
+   * @returns true if successful
+   */
+  public rotateScrew(
+    modelId: string,
+    dragDelta: [number, number, number],
+    viewportNormal: [number, number, number]
+  ): boolean {
+    const model = this.loadedModels.get(modelId);
+    if (!model) {
+      console.error(`❌ Model not found: ${modelId}`);
+      return false;
+    }
+
+    // Get current transform matrix (column-major format from VTK)
+    const currentMatrix = model.actor.getUserMatrix();
+    if (!currentMatrix) {
+      console.error(`❌ No transform matrix for model: ${modelId}`);
+      return false;
+    }
+
+    // Calculate rotation angle based on drag magnitude
+    const dragMagnitude = Math.sqrt(
+      dragDelta[0] ** 2 + dragDelta[1] ** 2 + dragDelta[2] ** 2
+    );
+
+    if (dragMagnitude < 0.01) {
+      return true; // Skip tiny movements
+    }
+
+    // Normalize drag direction
+    const dragDir: [number, number, number] = [
+      dragDelta[0] / dragMagnitude,
+      dragDelta[1] / dragMagnitude,
+      dragDelta[2] / dragMagnitude
+    ];
+
+    // Normalize viewport normal (this is the rotation axis)
+    const axisLength = Math.sqrt(
+      viewportNormal[0] ** 2 + viewportNormal[1] ** 2 + viewportNormal[2] ** 2
+    );
+    const axis: [number, number, number] = [
+      viewportNormal[0] / axisLength,
+      viewportNormal[1] / axisLength,
+      viewportNormal[2] / axisLength
+    ];
+
+    // Calculate "up" and "right" vectors for the viewport plane
+    // viewUp is typically provided, but we can compute a right vector
+    // Right = Up × Normal (cross product)
+    // For determining rotation direction, we use the drag projected onto the plane
+
+    // Create a perpendicular vector to determine rotation direction
+    // Use cross product: right = axis × (0,1,0) or axis × (1,0,0) if parallel
+    let perpVector: [number, number, number];
+    if (Math.abs(axis[1]) < 0.9) {
+      // Cross with Y-up
+      perpVector = [
+        axis[2],
+        0,
+        -axis[0]
+      ];
+    } else {
+      // Cross with X-axis
+      perpVector = [
+        0,
+        axis[2],
+        -axis[1]
+      ];
+    }
+    const perpLen = Math.sqrt(perpVector[0] ** 2 + perpVector[1] ** 2 + perpVector[2] ** 2);
+    if (perpLen > 0.001) {
+      perpVector[0] /= perpLen;
+      perpVector[1] /= perpLen;
+      perpVector[2] /= perpLen;
+    }
+
+    // Determine rotation direction based on which way we're dragging
+    const dotPerp = dragDir[0] * perpVector[0] + dragDir[1] * perpVector[1] + dragDir[2] * perpVector[2];
+    const rotationSign = dotPerp > 0 ? 1 : -1;
+
+    // Rotation sensitivity: degrees per mm of drag
+    const sensitivity = 2.0; // 2 degrees per mm of drag
+    const angleDegrees = rotationSign * dragMagnitude * sensitivity;
+    const angleRadians = (angleDegrees * Math.PI) / 180;
+
+    // Get the current origin (translation) - column-major: [12], [13], [14]
+    const origin: [number, number, number] = [
+      currentMatrix[12],
+      currentMatrix[13],
+      currentMatrix[14]
+    ];
+
+    // Build rotation matrix using Rodrigues' rotation formula
+    // R = I + sin(θ)K + (1-cos(θ))K²
+    // where K is the skew-symmetric matrix of the rotation axis
+    const c = Math.cos(angleRadians);
+    const s = Math.sin(angleRadians);
+    const t = 1 - c;
+    const [ax, ay, az] = axis;
+
+    // Rotation matrix R (row-major for clarity)
+    // R[row][col] = R[row * 3 + col]
+    const R00 = t * ax * ax + c;
+    const R01 = t * ax * ay - s * az;
+    const R02 = t * ax * az + s * ay;
+    const R10 = t * ax * ay + s * az;
+    const R11 = t * ay * ay + c;
+    const R12 = t * ay * az - s * ax;
+    const R20 = t * ax * az - s * ay;
+    const R21 = t * ay * az + s * ax;
+    const R22 = t * az * az + c;
+
+    // Current rotation part of the matrix (column-major from VTK)
+    // Column 0: [0], [1], [2]
+    // Column 1: [4], [5], [6]
+    // Column 2: [8], [9], [10]
+    const C00 = currentMatrix[0], C10 = currentMatrix[1], C20 = currentMatrix[2];
+    const C01 = currentMatrix[4], C11 = currentMatrix[5], C21 = currentMatrix[6];
+    const C02 = currentMatrix[8], C12 = currentMatrix[9], C22 = currentMatrix[10];
+
+    // New rotation = R × Current (matrix multiplication)
+    // Result column 0
+    const N00 = R00 * C00 + R01 * C10 + R02 * C20;
+    const N10 = R10 * C00 + R11 * C10 + R12 * C20;
+    const N20 = R20 * C00 + R21 * C10 + R22 * C20;
+    // Result column 1
+    const N01 = R00 * C01 + R01 * C11 + R02 * C21;
+    const N11 = R10 * C01 + R11 * C11 + R12 * C21;
+    const N21 = R20 * C01 + R21 * C11 + R22 * C21;
+    // Result column 2
+    const N02 = R00 * C02 + R01 * C12 + R02 * C22;
+    const N12 = R10 * C02 + R11 * C12 + R12 * C22;
+    const N22 = R20 * C02 + R21 * C12 + R22 * C22;
+
+    // Build new 4x4 matrix (column-major for VTK)
+    const newMatrix = new Float32Array([
+      N00, N10, N20, 0,  // Column 0
+      N01, N11, N21, 0,  // Column 1
+      N02, N12, N22, 0,  // Column 2
+      origin[0], origin[1], origin[2], 1  // Column 3 (translation unchanged)
+    ]);
+
+    // Apply to actor
+    model.actor.setUserMatrix(newMatrix);
+
+    // Update polyData for plane cutters
+    this._updatePolyDataWithTransform(model, newMatrix);
+
+    // Also rotate the cap if it exists (using same rotation, keeping relative position)
+    const capId = `${modelId}-Cap`;
+    const capModel = this.loadedModels.get(capId);
+    if (capModel) {
+      const capMatrix = capModel.actor.getUserMatrix();
+      if (capMatrix) {
+        // Get cap's relative position to screw origin
+        const capOrigin: [number, number, number] = [
+          capMatrix[12],
+          capMatrix[13],
+          capMatrix[14]
+        ];
+
+        // Rotate cap's position around screw origin
+        const relPos: [number, number, number] = [
+          capOrigin[0] - origin[0],
+          capOrigin[1] - origin[1],
+          capOrigin[2] - origin[2]
+        ];
+
+        // Apply rotation R to relative position
+        const rotatedRelPos: [number, number, number] = [
+          R00 * relPos[0] + R01 * relPos[1] + R02 * relPos[2],
+          R10 * relPos[0] + R11 * relPos[1] + R12 * relPos[2],
+          R20 * relPos[0] + R21 * relPos[1] + R22 * relPos[2]
+        ];
+
+        // Cap's current rotation (column-major)
+        const capC00 = capMatrix[0], capC10 = capMatrix[1], capC20 = capMatrix[2];
+        const capC01 = capMatrix[4], capC11 = capMatrix[5], capC21 = capMatrix[6];
+        const capC02 = capMatrix[8], capC12 = capMatrix[9], capC22 = capMatrix[10];
+
+        // New cap rotation = R × capCurrent
+        const capN00 = R00 * capC00 + R01 * capC10 + R02 * capC20;
+        const capN10 = R10 * capC00 + R11 * capC10 + R12 * capC20;
+        const capN20 = R20 * capC00 + R21 * capC10 + R22 * capC20;
+        const capN01 = R00 * capC01 + R01 * capC11 + R02 * capC21;
+        const capN11 = R10 * capC01 + R11 * capC11 + R12 * capC21;
+        const capN21 = R20 * capC01 + R21 * capC11 + R22 * capC21;
+        const capN02 = R00 * capC02 + R01 * capC12 + R02 * capC22;
+        const capN12 = R10 * capC02 + R11 * capC12 + R12 * capC22;
+        const capN22 = R20 * capC02 + R21 * capC12 + R22 * capC22;
+
+        const newCapMatrix = new Float32Array([
+          capN00, capN10, capN20, 0,
+          capN01, capN11, capN21, 0,
+          capN02, capN12, capN22, 0,
+          origin[0] + rotatedRelPos[0],
+          origin[1] + rotatedRelPos[1],
+          origin[2] + rotatedRelPos[2],
+          1
+        ]);
+
+        capModel.actor.setUserMatrix(newCapMatrix);
+        this._updatePolyDataWithTransform(capModel, newCapMatrix);
+      }
+    }
+
+    // Broadcast update event
+    this._broadcastEvent(this.EVENTS.MODEL_UPDATED, {
+      modelId,
+      property: 'rotation'
+    });
+
+    // Trigger re-render
+    const renderingEngines = getRenderingEngines();
+    for (const engine of renderingEngines) {
+      engine.render();
+    }
+
+    return true;
+  }
+
+  /**
    * Update polyData transform for plane cutters (internal helper)
    */
   private _updatePolyDataWithTransform(model: LoadedModel, newMatrix: Float32Array): void {
@@ -2306,6 +2561,185 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
   }
 
   /**
+   * Debug method: Get detailed screw origin and geometry information
+   * Shows where the origin is located relative to the screw (cap, center, or tip)
+   *
+   * @param modelId - Screw model ID
+   * @returns Object with origin, center, cap, tip positions and analysis
+   */
+  public getScrewOriginInfo(modelId: string): {
+    origin: [number, number, number];
+    center: [number, number, number];
+    cap: [number, number, number];
+    tip: [number, number, number];
+    length: number;
+    radius: number;
+    originLocation: 'cap' | 'center' | 'tip' | 'unknown';
+    analysis: string;
+  } | null {
+    const model = this.loadedModels.get(modelId);
+    if (!model) {
+      console.error(`❌ Model not found: ${modelId}`);
+      return null;
+    }
+
+    const matrix = model.actor.getUserMatrix();
+    if (!matrix) {
+      console.error(`❌ No transform matrix for model: ${modelId}`);
+      return null;
+    }
+
+    // Get model origin from transform matrix (column-major: [12], [13], [14])
+    const origin: [number, number, number] = [matrix[12], matrix[13], matrix[14]];
+
+    // Get screw axis direction (Y-axis in column-major: [4], [5], [6])
+    const yAxisX = matrix[4];
+    const yAxisY = matrix[5];
+    const yAxisZ = matrix[6];
+    const axis: [number, number, number] = [yAxisX, yAxisY, yAxisZ];
+
+    // Get dimensions
+    const dimensions = this._getScrewDimensions(model);
+    const { length, radius } = dimensions;
+
+    // Calculate center, cap, and tip positions
+    const halfLength = length / 2;
+
+    // Center = origin + (length/2) * axis (for cylinders with offset)
+    // OR center = origin (for OBJ models without offset)
+    const modelPath = model.metadata.fileUrl || model.metadata.filePath || '';
+    const isCylinder = modelPath.includes('/cylinder/');
+
+    let center: [number, number, number];
+    let cap: [number, number, number];
+    let tip: [number, number, number];
+    let originLocation: 'cap' | 'center' | 'tip' | 'unknown';
+    let analysis: string;
+
+    if (isCylinder && length > 0) {
+      // For cylinders: origin was offset by -length/2 to align CAP with crosshair
+      // So: origin = crosshair - (length/2) * axis
+      //     center = origin + (length/2) * axis = crosshair
+      //     cap = origin + length * axis = crosshair + (length/2) * axis
+      //     tip = origin = crosshair - (length/2) * axis
+
+      center = [
+        origin[0] + yAxisX * halfLength,
+        origin[1] + yAxisY * halfLength,
+        origin[2] + yAxisZ * halfLength
+      ];
+
+      cap = [
+        origin[0] + yAxisX * length,
+        origin[1] + yAxisY * length,
+        origin[2] + yAxisZ * length
+      ];
+
+      tip = origin; // Origin IS the tip for cylinders
+
+      originLocation = 'tip';
+      analysis = `For CYLINDER models: Origin is at the TIP (bottom). The origin was offset by -length/2 to align the CAP with the crosshair position.`;
+    } else {
+      // For OBJ models: origin is typically at the center (no offset applied)
+      center = origin;
+      cap = [
+        origin[0] + yAxisX * halfLength,
+        origin[1] + yAxisY * halfLength,
+        origin[2] + yAxisZ * halfLength
+      ];
+      tip = [
+        origin[0] - yAxisX * halfLength,
+        origin[1] - yAxisY * halfLength,
+        origin[2] - yAxisZ * halfLength
+      ];
+
+      originLocation = 'center';
+      analysis = `For OBJ models: Origin is at the CENTER (middle of screw). No offset is applied.`;
+    }
+
+    return {
+      origin,
+      center,
+      cap,
+      tip,
+      length,
+      radius,
+      originLocation,
+      analysis
+    };
+  }
+
+  /**
+   * Debug method: Print detailed screw origin information to console
+   */
+  public debugScrewOrigin(modelId: string): void {
+    const info = this.getScrewOriginInfo(modelId);
+    if (!info) return;
+
+    const model = this.loadedModels.get(modelId);
+    const name = model?.metadata?.name || modelId;
+
+    console.log('');
+    console.log('╔═══════════════════════════════════════════════════════════════════╗');
+    console.log('║          🔍 SCREW ORIGIN LOCATION ANALYSIS                         ║');
+    console.log('╠═══════════════════════════════════════════════════════════════════╣');
+    console.log(`║  Screw: ${name.padEnd(60)} ║`);
+    console.log('╚═══════════════════════════════════════════════════════════════════╝');
+    console.log('');
+    console.log('📍 KEY POSITIONS:');
+    console.log('─────────────────────────────────────────────────────────────────────');
+    console.log(`   Origin:  [${info.origin.map(v => v.toFixed(2).padStart(8)).join(', ')}]  ← Transform matrix [12,13,14]`);
+    console.log(`   Center:  [${info.center.map(v => v.toFixed(2).padStart(8)).join(', ')}]  ← Middle of screw`);
+    console.log(`   Cap:     [${info.cap.map(v => v.toFixed(2).padStart(8)).join(', ')}]  ← Top of screw`);
+    console.log(`   Tip:     [${info.tip.map(v => v.toFixed(2).padStart(8)).join(', ')}]  ← Bottom of screw`);
+    console.log('');
+    console.log('📐 DIMENSIONS:');
+    console.log('─────────────────────────────────────────────────────────────────────');
+    console.log(`   Length: ${info.length.toFixed(2).padStart(8)}mm`);
+    console.log(`   Radius: ${info.radius.toFixed(2).padStart(8)}mm`);
+    console.log('');
+    console.log('🎯 ORIGIN LOCATION:');
+    console.log('─────────────────────────────────────────────────────────────────────');
+    console.log(`   ✅ Origin is at the: ${info.originLocation.toUpperCase()}`);
+    console.log(`   ${info.analysis}`);
+    console.log('');
+    console.log('📊 DISTANCES FROM ORIGIN:');
+    console.log('─────────────────────────────────────────────────────────────────────');
+    const distToCenter = Math.sqrt(
+      Math.pow(info.center[0] - info.origin[0], 2) +
+      Math.pow(info.center[1] - info.origin[1], 2) +
+      Math.pow(info.center[2] - info.origin[2], 2)
+    );
+    const distToCap = Math.sqrt(
+      Math.pow(info.cap[0] - info.origin[0], 2) +
+      Math.pow(info.cap[1] - info.origin[1], 2) +
+      Math.pow(info.cap[2] - info.origin[2], 2)
+    );
+    const distToTip = Math.sqrt(
+      Math.pow(info.tip[0] - info.origin[0], 2) +
+      Math.pow(info.tip[1] - info.origin[1], 2) +
+      Math.pow(info.tip[2] - info.origin[2], 2)
+    );
+    console.log(`   To Center: ${distToCenter.toFixed(2).padStart(8)}mm`);
+    console.log(`   To Cap:    ${distToCap.toFixed(2).padStart(8)}mm`);
+    console.log(`   To Tip:    ${distToTip.toFixed(2).padStart(8)}mm`);
+    console.log('');
+    console.log('╔═══════════════════════════════════════════════════════════════════╗');
+    console.log('║  CONCLUSION:                                                       ║');
+    if (info.originLocation === 'tip') {
+      console.log('║  Origin = TIP (bottom of screw)                                ║');
+      console.log('║  Center = Origin + length/2                                    ║');
+      console.log('║  Cap = Origin + length                                          ║');
+    } else if (info.originLocation === 'center') {
+      console.log('║  Origin = CENTER (middle of screw)                            ║');
+      console.log('║  Tip = Origin - length/2                                       ║');
+      console.log('║  Cap = Origin + length/2                                       ║');
+    }
+    console.log('╚═══════════════════════════════════════════════════════════════════╝');
+    console.log('');
+  }
+
+  /**
    * Project a world delta vector onto a viewport plane
    * Removes the component along the plane normal
    * @param delta - World delta vector [dx, dy, dz]
@@ -2341,6 +2775,10 @@ export interface ScrewPickResult {
   distance: number;
   screwLength: number;
   screwRadius: number;
+  /** Normalized position along screw: 0 = tip, 1 = cap */
+  normalizedPosition: number;
+  /** Interaction mode based on click position: translate (75% near tip) or rotate (25% near cap) */
+  interactionMode: 'translate' | 'rotate';
 }
 
 export default ModelStateService;

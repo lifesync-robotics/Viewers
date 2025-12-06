@@ -31,6 +31,8 @@ interface ScrewInteractionState {
   selectedScrewId: string | null;
   selectedScrewLabel: string | null;
   selectedPart: 'cap' | 'body' | 'tip' | null;
+  /** Interaction mode: translate (75% near tip) or rotate (25% near cap) */
+  interactionMode: 'translate' | 'rotate' | null;
   isDragging: boolean;
   dragStartWorld: [number, number, number] | null;
   lastWorldPosition: [number, number, number] | null;
@@ -81,6 +83,7 @@ class ScrewInteractionTool extends BaseTool {
       selectedScrewId: null,
       selectedScrewLabel: null,
       selectedPart: null,
+      interactionMode: null,
       isDragging: false,
       dragStartWorld: null,
       lastWorldPosition: null,
@@ -164,19 +167,27 @@ class ScrewInteractionTool extends BaseTool {
     );
 
     if (!pickResult) {
-      this._log('❌ Click is NOT inside any screw - cannot drag');
+      this._log('❌ Click is NOT inside any screw - cannot interact');
       return false;
     }
 
-    // Point is inside a screw! Log confirmation and allow drag
+    // Point is inside a screw! Determine interaction mode
+    const interactionMode = pickResult.interactionMode || 'translate';
+
     console.log('═══════════════════════════════════════════════════════');
-    console.log('🎯 CHECK INSIDE A SCREW - DRAG ENABLED');
+    console.log('🎯 SCREW INTERACTION STARTED');
     console.log(`   Screw: ${pickResult.screwLabel}`);
-    console.log(`   Part: ${pickResult.part}`);
+    console.log(`   Part: ${pickResult.part} (${((pickResult.normalizedPosition || 0) * 100).toFixed(0)}% from tip)`);
+    console.log(`   Mode: ${interactionMode.toUpperCase()}`);
+    if (interactionMode === 'translate') {
+      console.log('   → Drag to MOVE the screw');
+    } else {
+      console.log('   → Drag to ROTATE the screw around its center');
+    }
     console.log('═══════════════════════════════════════════════════════');
 
     // Found a screw - start interaction
-    this._log(`✅ Selected screw: ${pickResult.screwLabel} (${pickResult.part})`);
+    this._log(`✅ Selected screw: ${pickResult.screwLabel} (${pickResult.part}) - ${interactionMode} mode`);
 
     // Get viewport plane normal for constraining movement
     const planeNormal = this._getViewportPlaneNormal(element);
@@ -189,6 +200,7 @@ class ScrewInteractionTool extends BaseTool {
       selectedScrewId: pickResult.modelId,
       selectedScrewLabel: pickResult.screwLabel,
       selectedPart: pickResult.part,
+      interactionMode,
       isDragging: true,
       dragStartWorld: [worldPoint[0], worldPoint[1], worldPoint[2]],
       lastWorldPosition: [worldPoint[0], worldPoint[1], worldPoint[2]],
@@ -207,6 +219,10 @@ class ScrewInteractionTool extends BaseTool {
 
   /**
    * Called on mouse drag - required by BaseTool
+   *
+   * Based on interactionMode:
+   * - 'translate': Move the screw (75% of body near tip)
+   * - 'rotate': Rotate the screw around its center (25% of body near cap)
    */
   mouseDragCallback = (evt: any): void => {
     if (!this.state.isDragging || !this.state.selectedScrewId) {
@@ -251,9 +267,21 @@ class ScrewInteractionTool extends BaseTool {
     // Update last position
     this.state.lastWorldPosition = [currentWorld[0], currentWorld[1], currentWorld[2]];
 
-    // Translate the screw
-    if (this.modelStateService.translateScrew) {
-      this.modelStateService.translateScrew(this.state.selectedScrewId, constrainedDelta);
+    // Apply interaction based on mode
+    if (this.state.interactionMode === 'rotate') {
+      // ROTATE mode: Rotate the screw around its center
+      if (this.modelStateService.rotateScrew && this.state.viewportPlaneNormal) {
+        this.modelStateService.rotateScrew(
+          this.state.selectedScrewId,
+          constrainedDelta,
+          this.state.viewportPlaneNormal
+        );
+      }
+    } else {
+      // TRANSLATE mode (default): Move the screw
+      if (this.modelStateService.translateScrew) {
+        this.modelStateService.translateScrew(this.state.selectedScrewId, constrainedDelta);
+      }
     }
   };
 
@@ -287,8 +315,21 @@ class ScrewInteractionTool extends BaseTool {
       if (!viewport) return [0, 0, 1];
 
       const camera = viewport.getCamera();
-      if (camera?.viewPlaneNormal) {
-        return camera.viewPlaneNormal as [number, number, number];
+      if (camera) {
+        // viewPlaneNormal points from the scene toward the camera (out of the screen)
+        // For rotation in the viewport plane, we want to rotate around this axis
+        const vpn = camera.viewPlaneNormal as [number, number, number];
+
+        // Also get viewUp for reference
+        const viewUp = camera.viewUp as [number, number, number];
+
+        console.log('📷 [ScrewInteractionTool] Camera info:');
+        console.log(`   viewPlaneNormal: [${vpn?.map(v => v.toFixed(3)).join(', ')}]`);
+        console.log(`   viewUp: [${viewUp?.map(v => v.toFixed(3)).join(', ')}]`);
+
+        if (vpn) {
+          return vpn;
+        }
       }
     } catch (error) {
       this._log('Error getting viewport plane normal:', error);

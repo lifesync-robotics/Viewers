@@ -1255,32 +1255,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`      viewports: ${viewportIds.join(', ')}`);
     });
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // TEST INSIDE/OUTSIDE DETECTION using crosshair position
-    // ═══════════════════════════════════════════════════════════════════════════
-    console.log('\n🎯 TESTING INSIDE/OUTSIDE DETECTION:');
-    console.log('───────────────────────────────────────────────────────');
-
-    // Get crosshair center position
-    const crosshairCenter = crosshairsHandler.getCrosshairCenter();
-    if (crosshairCenter) {
-      console.log(`📍 Crosshair position: [${crosshairCenter.map(v => v.toFixed(2)).join(', ')}]`);
-
-      // Test if crosshair position is inside any screw
-      if (modelStateService.findScrewAtPoint) {
-        const result = modelStateService.findScrewAtPoint(crosshairCenter as [number, number, number]);
-        if (result) {
-          console.log(`✅ Crosshair is INSIDE screw: ${result.screwLabel} (${result.part})`);
-        } else {
-          console.log(`❌ Crosshair is NOT inside any screw`);
-        }
-      } else {
-        console.log(`⚠️ findScrewAtPoint method not available on modelStateService`);
-      }
-    } else {
-      console.log(`⚠️ Could not get crosshair position`);
-    }
-
     console.log('═══════════════════════════════════════════════════════');
 
     // Show alert with summary
