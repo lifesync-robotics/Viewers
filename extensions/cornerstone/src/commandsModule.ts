@@ -1515,13 +1515,13 @@ function commandsModule({
                   (dims[1] * spacing[1]) ** 2 +
                   (dims[2] * spacing[2]) ** 2
                 );
-                const maxSamples = mapper.getMaximumSamplesPerRay?.() || 4000;
+                const maxSamples = (mapper as any).getMaximumSamplesPerRay?.() || 4000;
                 const minRequiredDistance = (spatialDiagonal / (maxSamples * 0.8));
-                const currentDistance = mapper.getSampleDistance?.();
+                const currentDistance = (mapper as any).getSampleDistance?.();
 
                 if (!currentDistance || currentDistance < minRequiredDistance) {
                   console.log(`[setViewportPreset] Adjusting sample distance: ${currentDistance?.toFixed(4)} → ${minRequiredDistance.toFixed(4)}`);
-                  mapper.setSampleDistance(minRequiredDistance);
+                  (mapper as any).setSampleDistance(minRequiredDistance);
                 }
               }
             }
@@ -1542,32 +1542,123 @@ function commandsModule({
 
     setVolumeRenderingQulaity: ({ viewportId, volumeQuality }) => {
       const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+      const actors = viewport.getActors();
 
-      // console.log(`[setVolumeRenderingQuality] Viewport type: ${viewport.type}, quality: ${volumeQuality}, id: ${viewportId}`);
+      console.log(`[setVolumeRenderingQuality] Viewport: ${viewportId}, Quality: ${volumeQuality}, Actors: ${actors.length}`);
 
-      const { actor } = viewport.getActors()[0];
-      const mapper = actor.getMapper();
-      const image = mapper.getInputData();
-      const dims = image.getDimensions();
-      const spacing = image.getSpacing();
-      const spatialDiagonal = vec3.length(
-        vec3.fromValues(dims[0] * spacing[0], dims[1] * spacing[1], dims[2] * spacing[2])
-      );
+      let appliedCount = 0;
+      actors.forEach(({ actor, uid }, index) => {
+        const mapper = actor.getMapper();
+        // Only apply to mappers that have input data (volumes)
+        if (mapper && mapper.getInputData && mapper.setSampleDistance) {
+          const image = mapper.getInputData();
+          if (!image) return;
 
-      // Calculate desired sample distance based on quality
-      let sampleDistance = spacing.reduce((a, b) => a + b) / 3.0;
-      sampleDistance /= volumeQuality > 1 ? 0.5 * volumeQuality ** 2 : 1.0;
+          const dims = image.getDimensions();
+          const spacing = image.getSpacing();
+          const spatialDiagonal = vec3.length(
+            vec3.fromValues(dims[0] * spacing[0], dims[1] * spacing[1], dims[2] * spacing[2])
+          );
 
-      // Ensure sample distance is large enough to stay under the maximum samples limit
-      const maxSamples = mapper.getMaximumSamplesPerRay?.() || 4000;
-      const minRequiredDistance = (spatialDiagonal / (maxSamples * 0.8));
+          // Calculate desired sample distance based on quality
+          let sampleDistance = spacing.reduce((a, b) => a + b) / 3.0;
+          sampleDistance /= volumeQuality > 1 ? 0.5 * volumeQuality ** 2 : 1.0;
 
-      // Use the larger of the two (safer)
-      const safeSampleDistance = Math.max(sampleDistance, minRequiredDistance);
+          // Ensure sample distance is large enough to stay under the maximum samples limit
+          const maxSamples = mapper.getMaximumSamplesPerRay?.() || 4000;
+          const minRequiredDistance = (spatialDiagonal / (maxSamples * 0.8));
+          const safeSampleDistance = Math.max(sampleDistance, minRequiredDistance);
 
-      console.log(`[setVolumeRenderingQuality] Quality: ${volumeQuality}, desired: ${sampleDistance.toFixed(4)}, minRequired: ${minRequiredDistance.toFixed(4)}, final: ${safeSampleDistance.toFixed(4)}`);
-      mapper.setSampleDistance(safeSampleDistance);
-      viewport.render();
+          // Disable auto-adjust
+          if (mapper.setAutoAdjustSampleDistances) {
+            mapper.setAutoAdjustSampleDistances(false);
+          }
+
+          mapper.setSampleDistance(safeSampleDistance);
+          console.log(`  - Actor ${index} (${uid}): Set sample distance to ${safeSampleDistance.toFixed(4)}`);
+          appliedCount++;
+        }
+      });
+
+      if (appliedCount > 0) {
+        viewport.render();
+      } else {
+        console.warn('[setVolumeRenderingQuality] No suitable mappers found');
+      }
+    },
+
+    /**
+     * Sets the image sample distance for volume rendering (controls ray density per pixel).
+     * Higher values = fewer rays per pixel = better performance but lower quality.
+     * @param {string} viewportId - The ID of the viewport to set the image sample distance.
+     * @param {number} imageSampleDistance - The sample distance factor (1.0 = normal, 2.0 = half rays).
+     */
+    setVolumeRenderingImageSampleDistance: ({ viewportId, imageSampleDistance }) => {
+      const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+      const actors = viewport.getActors();
+
+      console.log(`[setVolumeRenderingImageSampleDistance] Viewport: ${viewportId}, imageSampleDistance: ${imageSampleDistance}, Actors: ${actors.length}`);
+
+      let appliedCount = 0;
+      actors.forEach(({ actor, uid }, index) => {
+        const mapper = actor.getMapper();
+        if (mapper && mapper.setImageSampleDistance) {
+          mapper.setImageSampleDistance(imageSampleDistance);
+
+          // CRITICAL: Disable auto-adjust so it doesn't override our setting
+          if (mapper.setAutoAdjustSampleDistances) {
+            mapper.setAutoAdjustSampleDistances(false);
+          }
+
+          console.log(`  - Actor ${index} (${uid}): Set image sample distance to ${imageSampleDistance}`);
+          appliedCount++;
+        }
+      });
+
+      if (appliedCount > 0) {
+        viewport.render();
+      } else {
+        console.warn('[setVolumeRenderingImageSampleDistance] No suitable mappers found');
+      }
+    },
+
+    /**
+     * Sets interaction sample distance factor for volume rendering.
+     * Reduces quality during interaction (dragging/rotating) for better performance.
+     * @param {string} viewportId - The ID of the viewport.
+     * @param {number} initialScale - Quality reduction factor when interaction starts (default: 2.0).
+     * @param {number} interactionFactor - Additional quality reduction during interaction (default: 2.0).
+     */
+    setVolumeRenderingInteractionSampleDistance: ({ viewportId, initialScale = 2.0, interactionFactor = 2.0 }) => {
+      const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+      const actors = viewport.getActors();
+
+      console.log(`[setVolumeRenderingInteractionSampleDistance] Viewport: ${viewportId}, scale: ${initialScale}, factor: ${interactionFactor}`);
+
+      let appliedCount = 0;
+      actors.forEach(({ actor, uid }, index) => {
+        const mapper = actor.getMapper();
+        if (mapper) {
+          if (mapper.setInitialInteractionScale) {
+            mapper.setInitialInteractionScale(initialScale);
+          }
+          if (mapper.setInteractionSampleDistanceFactor) {
+            mapper.setInteractionSampleDistanceFactor(interactionFactor);
+          }
+          // CRITICAL: Disable auto-adjust
+          if (mapper.setAutoAdjustSampleDistances) {
+            mapper.setAutoAdjustSampleDistances(false);
+          }
+          console.log(`  - Actor ${index} (${uid}): Updated interaction settings`);
+          appliedCount++;
+        }
+      });
+
+      if (appliedCount > 0) {
+        viewport.render();
+      } else {
+        console.warn('[setVolumeRenderingInteractionSampleDistance] No suitable mappers found');
+      }
     },
 
     /**
@@ -3370,9 +3461,23 @@ function commandsModule({
       storeContexts: [],
       options: {},
     },
+    setVolumeRenderingImageSampleDistance: {
+      commandFn: actions.setVolumeRenderingImageSampleDistance,
+      storeContexts: [],
+      options: {},
+    },
+    setVolumeRenderingInteractionSampleDistance: {
+      commandFn: actions.setVolumeRenderingInteractionSampleDistance,
+      storeContexts: [],
+      options: {},
+    },
   };
 
   console.log('📦 [commandsModule] Total commands registered:', Object.keys(definitions).length);
+  console.log('🔧 [commandsModule] Volume rendering performance commands:');
+  console.log('  - setVolumeRenderingImageSampleDistance:', !!definitions.setVolumeRenderingImageSampleDistance);
+  console.log('  - setVolumeRenderingInteractionSampleDistance:', !!definitions.setVolumeRenderingInteractionSampleDistance);
+  console.log('  - setVolumeRenderingQulaity:', !!definitions.setVolumeRenderingQulaity);
   console.log('📦 [commandsModule] showModelUploadModal registered:', !!definitions.showModelUploadModal);
 
   if (definitions.showModelUploadModal) {
@@ -3385,11 +3490,19 @@ function commandsModule({
     console.error('❌ [commandsModule] showModelUploadModal command NOT FOUND in definitions!');
   }
 
-  return {
+  const commandsModuleExport = {
     actions,
     definitions,
     defaultContext: 'CORNERSTONE',
   };
+
+  // Expose to window for debugging
+  if (typeof window !== 'undefined') {
+    window.cornerstoneCommandsModule = commandsModuleExport;
+    console.log('✅ [commandsModule] Exposed to window.cornerstoneCommandsModule for debugging');
+  }
+
+  return commandsModuleExport;
 }
 
 export default commandsModule;

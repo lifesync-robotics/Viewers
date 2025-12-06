@@ -22,6 +22,9 @@ window.config = {
   showLoadingIndicator: true,
   experimentalStudyBrowserSort: false,
   strictZSpacingForVolumeViewport: false,
+  // Volume rendering performance optimizations
+  preferSizeOverAccuracy: true,  // Use half-float for VR/MPR to reduce memory usage
+  useNorm16Texture: true,        // Use 16-bit normalized textures when supported
   groupEnabledModesFirst: true,
   allowMultiSelectExport: false,
   maxNumRequests: {
@@ -317,26 +320,6 @@ window.config = {
   //     );
   //   },
   // },
-  whiteLabeling: {
-    createLogoComponentFn: function (React) {
-      // Original Node-style require kept for reference (not available in browser):
-      // const LifeSyncRobotics =
-      //   require('../../../extensions/lifesync/src/components/Icons/LifeSyncRobotics').default;
-      const lifeSyncLogoComponent =
-        typeof window !== 'undefined' ? window['LifeSyncRobotics'] : undefined;
-
-      if (!lifeSyncLogoComponent) {
-        console.warn('LifeSyncRobotics logo component is not available on window.');
-        return React.createElement('img', {
-          src: './Logo.svg',
-          alt: 'LifeSync Robotics',
-        });
-      }
-
-      return React.createElement(lifeSyncLogoComponent);
-    },
-  },
-
   whiteLabeling: {
     createLogoComponentFn: function (React) {
       // Original Node-style require kept for reference (not available in browser):

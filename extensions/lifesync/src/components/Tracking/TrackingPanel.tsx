@@ -28,6 +28,16 @@ declare global {
   }
 }
 
+// create a new interface for our 3d instrument models
+interface InstrumentModel3D {
+  tool_id: string;              // Tool identifier (e.g., "DR-VR06-A33")
+  model_id: string;             // Model ID in modelStateService
+  loaded: boolean;              // Whether model is successfully loaded
+  visible: boolean;             // Current visibility state
+  lastUpdateTime: number;       // Timestamp of last transform update (for throttling)
+  color?: [number, number, number]; // Color for visibility state changes
+}
+
 interface TrackingConfig {
   version: string;
   tracking_mode: {
@@ -131,6 +141,9 @@ function PanelTracking() {
 
   // Phase 4: Real-time tracking state
   const [trackingFrame, setTrackingFrame] = React.useState<TrackingFrame | null>(null);
+  
+  // Dictionary: tool_id → InstrumentModel3D (for 3D model tracking)
+  const instrumentModelsRef = React.useRef<Map<string, InstrumentModel3D>>(new Map());
   const [wsConnected, setWsConnected] = React.useState(false);
   const [coordinateSystem, setCoordinateSystem] = React.useState<'tracker' | 'patient_reference'>('patient_reference');
   const [alerts, setAlerts] = React.useState<Array<{id: string; message: string; severity: string; timestamp: string}>>([]);
@@ -165,7 +178,17 @@ function PanelTracking() {
     [0, 0, 1, 0],
     [0, 0, 0, 1]
   ];
-  const [prToDicomMatrix, setPrToDicomMatrix] = React.useState<number[][]>(identityMatrix);
+
+  // we have already registered it for development , let fix it for current development mode
+  const [prToDicomMatrix, setPrToDicomMatrix] = React.useState<number[][]>([
+    [-0.9967, -0.0487, 0.0647, -17.2],
+    [0.00471, 0.7623, 0.6403, 187.5],
+    [-0.0811, 0.6454, -0.7593, 62.0],
+    [0.0000, 0.0000, 0.0000, 1.0000]
+
+
+
+  ]);
   const [markerToTooltipMatrix, setMarkerToTooltipMatrix] = React.useState<number[][]>([
     [-1, 0, 0, -17.08],
     [0, 1, 0, 0.10],
@@ -174,7 +197,7 @@ function PanelTracking() {
   ]); // DR-VR06-A32 calibration matrix
   // String representation for input fields to allow intermediate typing states
   const [prToDicomMatrixInput, setPrToDicomMatrixInput] = React.useState<string[][]>(
-    identityMatrix.map(row => row.map(val => val.toString()))
+    prToDicomMatrix.map(row => row.map(val => val.toString()))
   );
   const [markerToTooltipMatrixInput, setMarkerToTooltipMatrixInput] = React.useState<string[][]>([
     ["-1", "0", "0", "-17.08"],
@@ -183,7 +206,7 @@ function PanelTracking() {
     ["0", "0", "0", "1"]
   ]); // DR-VR06-A32 calibration matrix
   const [matricesExpanded, setMatricesExpanded] = React.useState(false);
-  const [matricesApplied, setMatricesApplied] = React.useState(false);
+  const [matricesApplied, setMatricesApplied] = React.useState(true); // Mark as applied since it's hardcoded in service
   
   // Debug panel state
   const [debugExpanded, setDebugExpanded] = React.useState(false);
@@ -192,6 +215,10 @@ function PanelTracking() {
     rMatrix?: number[][];
     dicomMatrix?: number[][];
     rToDicomMatrix?: number[][];
+    prRelativeMatrix_marker?: number[][];
+    prRelativeMatrix_tooltip?: number[][];
+    currentPrToDicom?: number[][];
+    currentMarkerToTooltip?: number[][];
   } | null>(null);
 
   // Initialize NavigationController early so mode switching works even when navigation is not started
@@ -249,7 +276,153 @@ function PanelTracking() {
   const prDebugInterval = 5000; // 5 seconds
 
   // Get TrackingService
-  const trackingService = servicesManager?.services?.trackingService;
+  const trackingService = (servicesManager?.services as any)?.trackingService;
+
+  // Initialize matrices from TrackingService on mount
+  React.useEffect(() => {
+    if (trackingService) {
+      const prToDicom = trackingService.getPrToDicomMatrix();
+      const markerToTooltip = trackingService.getMarkerToTooltipMatrix();
+      
+      if (prToDicom) {
+        setPrToDicomMatrix(prToDicom);
+        setPrToDicomMatrixInput(prToDicom.map(row => row.map(val => val.toString())));
+        console.log('✅ [TrackingPanel] Initialized prToDicomMatrix from service:', prToDicom);
+      }
+      
+      if (markerToTooltip) {
+        setMarkerToTooltipMatrix(markerToTooltip);
+        setMarkerToTooltipMatrixInput(markerToTooltip.map(row => row.map(val => val.toString())));
+        console.log('✅ [TrackingPanel] Initialized markerToTooltipMatrix from service:', markerToTooltip);
+      }
+    }
+  }, [trackingService]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Matrix Utility Functions (for 3D model transformations)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Convert 4x4 matrix to flat array (16 elements, COLUMN-MAJOR for VTK.js)
+   * 
+   * Same approach as screw models (which render correctly)
+   * Simple transpose from row-major to column-major, no coordinate corrections
+   * 
+   * This keeps the transformation pipeline unchanged (2D projections work correctly)
+   * and treats tracking models the same as screw models for VTK rendering.
+   */
+  const matrix4x4ToFlat = React.useCallback((matrix: number[][]): number[] => {
+    // Simple transpose: row-major → column-major for VTK
+    // Same as modelStateService.ts setModelTransform() for screw models
+    return [
+      // Column 0 (X-axis)
+      matrix[0][0], matrix[1][0], matrix[2][0], matrix[3][0],
+      // Column 1 (Y-axis)
+      matrix[0][1], matrix[1][1], matrix[2][1], matrix[3][1],
+      // Column 2 (Z-axis)
+      matrix[0][2], matrix[1][2], matrix[2][2], matrix[3][2],
+      // Column 3 (Translation)
+      matrix[0][3], matrix[1][3], matrix[2][3], matrix[3][3]
+    ];
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 3D Model Transformation Update Function
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Update transformation matrices for all loaded instrument 3D models
+   * Throttled to 20Hz per model to prevent performance issues
+   * Uses DICOM matrices pre-calculated by TrackingService
+   * DICOM matrices place the tool in DICOM image space (same as CT/MRI volumes)
+   * @param tools - Tools data from tracking update (passed directly to avoid stale state)
+   */
+  const setTransformationMatrices = React.useCallback((tools: any) => {
+    if (!tools) {
+      console.warn('⚠️ [setTransformationMatrices] No tools data provided');
+      return;
+    }
+
+    const modelStateService = (servicesManager?.services as any)?.modelStateService;
+    if (!modelStateService) {
+      console.warn('⚠️ [setTransformationMatrices] modelStateService not available');
+      return;
+    }
+
+    const now = performance.now();
+    const throttleMs = 50; // 20Hz update rate (1000ms / 20 = 50ms)
+
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let throttledCount = 0;
+
+    Object.entries(tools).forEach(([toolId, toolData]: [string, any]) => {
+      // Skip if tool is patient reference or not visible
+      if (toolData.is_patient_reference || !toolData.visible) {
+        skippedCount++;
+        return;
+      }
+
+      // Check if model exists for this tool
+      const modelData = instrumentModelsRef.current.get(toolId);
+      if (!modelData || !modelData.loaded) {
+        console.warn(`⚠️ [setTransformationMatrices] No 3D model loaded for tool ${toolId}`);
+        skippedCount++;
+        return;
+      }
+
+      // Throttle updates to 20Hz per model
+      if (now - modelData.lastUpdateTime < throttleMs) {
+        throttledCount++;
+        return;
+      }
+
+      // Get pre-calculated DICOM matrix from TrackingService
+      // TrackingService stores it as dM{toolId} in dicom coordinates
+      // This is the correct matrix for 3D model rendering (in DICOM image space)
+      const dicomMatrixKey = `dM${toolId}`;
+      const dicomMatrix = (toolData.coordinates?.dicom as any)?.[dicomMatrixKey];
+
+      if (!dicomMatrix) {
+        console.warn(`⚠️ [setTransformationMatrices] No DICOM matrix for tool ${toolId} (key: ${dicomMatrixKey})`);
+        console.warn(`   Available dicom keys:`, Object.keys(toolData.coordinates?.dicom || {}));
+        console.warn(`   Available PR keys:`, Object.keys(toolData.coordinates?.patient_reference || {}));
+        skippedCount++;
+        return;
+      }
+
+      // Convert to flat array (column-major for VTK.js) for modelStateService
+      const transformFlat = matrix4x4ToFlat(dicomMatrix);
+
+      // Update model transformation
+      modelStateService.setInstrumentModelTransform(modelData.model_id, transformFlat);
+
+      // Update last update time
+      modelData.lastUpdateTime = now;
+      instrumentModelsRef.current.set(toolId, modelData);
+      updatedCount++;
+
+      // Log successful updates (throttled to every 100th update)
+      if (updatedCount === 1 || updatedCount % 100 === 0) {
+        console.log(`✅ [setTransformationMatrices] Updated ${toolId} transform (count: ${updatedCount})`);
+        console.log(`   Position (DICOM space):`, [
+          dicomMatrix[0][3].toFixed(1),
+          dicomMatrix[1][3].toFixed(1),
+          dicomMatrix[2][3].toFixed(1)
+        ]);
+      }
+    });
+
+    // Log summary for first few calls
+    if (updatedCount + skippedCount + throttledCount <= 10) {
+      console.log(`📊 [setTransformationMatrices] Summary:`, {
+        updated: updatedCount,
+        skipped: skippedCount,
+        throttled: throttledCount,
+        totalModels: instrumentModelsRef.current.size
+      });
+    }
+  }, [servicesManager, matrix4x4ToFlat]);
 
   // Sync coordinate system with TrackingService
   React.useEffect(() => {
@@ -449,12 +622,32 @@ function PanelTracking() {
         setUpdateHz(0);
         frameTimestampsRef.current = [];
         setWsConnected(false);
+
+        // Remove all instrument 3D models
+        const modelStateService = (servicesManager?.services as any)?.modelStateService;
+        if (modelStateService) {
+          console.log('  - Removing instrument 3D models');
+          let removedCount = 0;
+          instrumentModelsRef.current.forEach((modelData) => {
+            if (modelData.loaded && modelData.model_id) {
+              try {
+                modelStateService.removeModel(modelData.model_id);
+                removedCount++;
+                console.log(`    ✅ Removed model for tool ${modelData.tool_id}`);
+              } catch (error) {
+                console.error(`    ❌ Failed to remove model for tool ${modelData.tool_id}:`, error);
+              }
+            }
+          });
+          instrumentModelsRef.current.clear();
+          console.log(`  - Removed ${removedCount} instrument models`);
+        }
       }
     } catch (error) {
       console.error('Failed to stop navigation:', error);
       setError('Failed to stop navigation');
     }
-  }, [commandsManager]);
+  }, [commandsManager, servicesManager]);
 
   const handleSetCenter = React.useCallback(() => {
     try {
@@ -529,7 +722,7 @@ function PanelTracking() {
     // Subscribe to tracking updates
     const trackingSub = trackingService.subscribe(
       'event::tracking_update',
-      (data) => {
+      async (data) => {
         // Calculate update Hz
         const now = Date.now();
         frameTimestampsRef.current.push(now);
@@ -543,6 +736,86 @@ function PanelTracking() {
           const hz = frameTimestampsRef.current.length / 2;
           setUpdateHz(Math.round(hz * 10) / 10); // Round to 1 decimal
         }
+        // this is an advanced feature, we will add it later, NOT USED FOR NOW
+        // // Auto-load 3D models for newly visible tools (non-blocking)
+        // if (data.tools) {
+        //   const modelStateService = (servicesManager?.services as any)?.modelStateService;
+        //   if (modelStateService) {
+        //     for (const [toolId, toolData] of Object.entries(data.tools)) {
+        //       const tool = toolData as any;
+              
+        //       // Skip if tool is patient reference or not visible
+        //       if (tool.is_patient_reference || !tool.visible) continue;
+
+        //       // Check if we already have a model for this tool
+        //       const existingModel = instrumentModelsRef.current.get(toolId);
+        //       if (existingModel) continue; // Already loaded or attempted
+
+        //       // Try to load model from server
+        //       try {
+        //         const romFile = tool.rom_file;
+        //         const modelName = romFile ? romFile.replace('.rom', '.obj') : `${toolId}.obj`;
+        //         const modelUrl = `/models/instruments/${modelName}`;
+                
+        //         console.log(`🔍 Attempting to load 3D model for tool ${toolId}: ${modelUrl}`);
+
+        //         // Check if model exists on server
+        //         const models = await modelStateService.fetchAvailableModels();
+        //         const modelExists = models.some((m: any) => 
+        //           m.url === modelUrl || 
+        //           m.name === modelName ||
+        //           m.url?.includes(modelName) ||
+        //           m.name?.includes(toolId)
+        //         );
+                
+        //         if (!modelExists) {
+        //           console.log(`ℹ️ No 3D model found for tool ${toolId}, skipping visualization`);
+        //           // Mark as attempted so we don't keep trying
+        //           instrumentModelsRef.current.set(toolId, {
+        //             tool_id: toolId,
+        //             model_id: '',
+        //             loaded: false,
+        //             visible: false,
+        //             lastUpdateTime: 0
+        //           });
+        //           continue;
+        //         }
+
+        //         // Load model from server
+        //         const loadedModel = await modelStateService.loadModelFromServer(modelUrl, {
+        //           modelId: `instrument_${toolId}`,
+        //           modelName: toolId,
+        //           viewportId: 'viewport-3d',
+        //           visible: true,
+        //           opacity: 0.8,
+        //           color: [0.2, 0.8, 0.2] // Default green color
+        //         });
+
+        //         if (loadedModel) {
+        //           console.log(`✅ Loaded 3D model for tool ${toolId}`);
+        //           instrumentModelsRef.current.set(toolId, {
+        //             tool_id: toolId,
+        //             model_id: loadedModel.metadata.id,
+        //             loaded: true,
+        //             visible: true,
+        //             lastUpdateTime: 0,
+        //             color: [0.2, 0.8, 0.2]
+        //           });
+        //         }
+        //       } catch (error) {
+        //         console.error(`❌ Failed to load model for tool ${toolId}:`, error);
+        //         // Mark as attempted to avoid repeated failures
+        //         instrumentModelsRef.current.set(toolId, {
+        //           tool_id: toolId,
+        //           model_id: '',
+        //           loaded: false,
+        //           visible: false,
+        //           lastUpdateTime: 0
+        //         });
+        //       }
+        //     }
+        //   }
+        // }
 
         // Update tracking frame
         setTrackingFrame({
@@ -559,6 +832,16 @@ function PanelTracking() {
           timestamp: data.timestamp || new Date().toISOString(),
           frame_number: data.frame_number || 0
         });
+
+        
+        // Update 3D model transformations (throttled to 20Hz per model)
+        // Pass tools data directly to avoid React state closure issue
+        setTransformationMatrices(data.tools);
+        
+
+
+
+
         
         // 📍 [PR-DEBUG] Log PR data every 5 seconds
         const nowPrDebug = Date.now();
@@ -604,6 +887,45 @@ function PanelTracking() {
       trackingSub?.unsubscribe();
     };
   }, [trackingService, updateHz]);
+
+  // Auto-register loaded 3D models that match tracking tool IDs
+  React.useEffect(() => {
+    if (!trackingFrame || !trackingFrame.tools) return;
+    
+    const modelStateService = (servicesManager?.services as any)?.modelStateService;
+    if (!modelStateService) return;
+
+    // Get all loaded models from modelStateService
+    const allModels = modelStateService.getAllModels();
+    
+    // For each tool in the tracking frame
+    Object.entries(trackingFrame.tools).forEach(([toolId, toolData]: [string, any]) => {
+      // Skip patient reference
+      if (toolData.is_patient_reference) return;
+
+      // Check if we already have this tool registered
+      if (instrumentModelsRef.current.has(toolId)) return;
+
+      // Look for a model with matching ID
+      const matchingModel = allModels.find((model: any) => model.metadata.id === toolId);
+      
+      if (matchingModel) {
+        // Register the model
+        instrumentModelsRef.current.set(toolId, {
+          tool_id: toolId,
+          model_id: matchingModel.metadata.id,
+          loaded: true,
+          visible: matchingModel.metadata.visible,
+          lastUpdateTime: 0,
+          color: matchingModel.metadata.color || [0.2, 0.8, 0.2]
+        });
+        
+        console.log(`✅ [TrackingPanel] Auto-registered 3D model for tool ${toolId}`);
+        console.log(`   Model ID: ${matchingModel.metadata.id}`);
+        console.log(`   Model Name: ${matchingModel.metadata.modelName || 'N/A'}`);
+      }
+    });
+  }, [trackingFrame, servicesManager]);
 
   // Load config on mount
   React.useEffect(() => {

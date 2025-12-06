@@ -238,7 +238,7 @@ function ModelUploadSimple({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".obj,.stl,.ply"
+        accept=".obj,.stl"
         multiple
         onChange={handleFileSelect}
         style={{ display: 'none' }}
@@ -265,7 +265,7 @@ function ModelUploadSimple({
 
           <div className="space-y-2 text-gray-400">
             <p>Click to select files or drag and drop</p>
-            <p className="text-sm">Supported: <span className="text-blue-400 font-semibold">.OBJ, .STL, .PLY</span></p>
+            <p className="text-sm">Supported: <span className="text-blue-400 font-semibold">.OBJ, .STL</span></p>
           </div>
 
           <div className="flex gap-3">

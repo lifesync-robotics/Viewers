@@ -79,6 +79,9 @@
       "packageName": "@ohif/mode-navigation"
     },
     {
+      "packageName": "@ohif/mode-navigation-3d"
+    },
+    {
       "packageName": "@ohif/mode-planner"
     },
     {

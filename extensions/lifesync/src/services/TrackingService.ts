@@ -50,19 +50,25 @@ class TrackingService extends PubSubService {
   private selectedToolId: string | null = null; // Selected tool for visualization
   private coordinateSystem: 'tracker' | 'patient_reference' = 'patient_reference'; // Coordinate system for navigation
   
-  // 📍 [PR-DEBUG] Time-based PR logging (commented out - PR working)
-  // private lastPrDebugLog: number = 0;
-  // private prDebugInterval: number = 5000; // 5 seconds in milliseconds
+  
 
   // Registration transformation matrix (4x4 row-major)
   // Direct transformation: PR space → DICOM space
-  // dicomMatrix = prToDicomMatrix * markerToTooltipMatrix * prRelativeMatrix_marker
+  // 
+  // Transformation pipeline (applied right-to-left):
+  //   tooltip_DICOM = prToDicomMatrix × markerToPrMatrix × markerToTooltipMatrix
+  // Where:
+  //   markerToPrMatrix = marker position in PR space (from NDI tracker)
+  //   markerToTooltipMatrix = calibration offset (marker → tooltip)
+  //   prToDicomMatrix = registration (PR → DICOM)
+  // 
+  // Hardcoded for development - obtained from registration procedure
   private prToDicomMatrix: number[][] = [
-    [1, 0, 0, 0],
-    [0, 1, 0, 0],
-    [0, 0, 1, 0],
-    [0, 0, 0, 1]
-  ]; // PR space to DICOM image space (identity by default, set via registration)
+    [-0.9967, -0.0487, 0.0647, -17.2],
+    [0.00471, 0.7623, 0.6403, 187.5],
+    [-0.0811, 0.6454, -0.7593, 62.0],
+    [0.0000, 0.0000, 0.0000, 1.0000]
+  ]; // PR space to DICOM image space (from registration)
   
   // Instrument calibration matrix (marker array → stylus tooltip)
   // Hardcoded from DR-VR06-A32.cal file
@@ -79,8 +85,8 @@ class TrackingService extends PubSubService {
   
   // Debug info for transformation pipeline
   private lastDebugInfo: {
-    prRelativeMatrix_marker?: number[][];
-    prRelativeMatrix_tooltip?: number[][];
+    markerToPrMatrix?: number[][];
+    tooltipMatrix?: number[][];
     dicomMatrix?: number[][];
     markerToTooltipMatrix?: number[][];
     prToDicomMatrix?: number[][];
@@ -650,9 +656,9 @@ class TrackingService extends PubSubService {
           const isUsingPrRelativeCoords = this.coordinateSystem === 'patient_reference';
           
           if (this.applyPr2DicomTransform && matrix && isUsingPrRelativeCoords) {
-            // Transform matrix from PR-relative marker array to DICOM space
-            // Pipeline: marker array → stylus tooltip → DICOM space
-            // dicomMatrix = prToDicomMatrix × markerToTooltipMatrix × prRelativeMatrix_marker
+            // Transform matrix from marker array to DICOM space
+            // Pipeline: marker position → instrument tooltip → DICOM space
+            // tooltip_DICOM = prToDicomMatrix × markerToPrMatrix × markerToTooltipMatrix
             finalMatrix = this._applyPr2DicomTransform(matrix);
             
             // Extract position from transformed matrix
@@ -760,6 +766,48 @@ class TrackingService extends PubSubService {
     }
     this.statsData.lastUpdate = now;
 
+    // Calculate tooltip matrices and DICOM matrices for each tool
+    const toolsWithTooltipMatrices = { ...data.tools };
+    if (data.tools) {
+      Object.entries(data.tools).forEach(([toolId, toolData]: [string, any]) => {
+        if (toolData.is_patient_reference) return; // Skip patient reference
+
+        // Get the marker position matrix in PR space
+        const matrixKey = `rM${toolId}`;
+        const markerToPrMatrix = toolData.coordinates?.register?.[matrixKey] ||
+                                 toolData.coordinates?.patient_reference?.[matrixKey];
+
+        if (markerToPrMatrix) {
+          // Step 1: Calculate tooltip matrix in PR space
+          // tooltipMatrix = markerToPrMatrix × markerToTooltipMatrix
+          // This applies the calibration transform to the marker position
+          const tooltipMatrix = this._multiplyMatrix4x4(markerToPrMatrix, this.markerToTooltipMatrix);
+
+          // Step 2: Calculate DICOM matrix (for 3D model rendering)
+          // dicomMatrix = prToDicomMatrix × tooltipMatrix
+          const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
+
+          // Add matrices to tool data
+          if (!toolsWithTooltipMatrices[toolId].coordinates) {
+            toolsWithTooltipMatrices[toolId].coordinates = {};
+          }
+          if (!toolsWithTooltipMatrices[toolId].coordinates.patient_reference) {
+            toolsWithTooltipMatrices[toolId].coordinates.patient_reference = {};
+          }
+          if (!toolsWithTooltipMatrices[toolId].coordinates.dicom) {
+            toolsWithTooltipMatrices[toolId].coordinates.dicom = {};
+          }
+
+          // Store tooltip matrix (PR-relative space) as tM{toolId}
+          toolsWithTooltipMatrices[toolId].coordinates.patient_reference[`tM${toolId}`] = tooltipMatrix;
+          
+          // Store DICOM matrix (DICOM image space) as dM{toolId}
+          // This is what should be used for 3D model transformations
+          toolsWithTooltipMatrices[toolId].coordinates.dicom[`dM${toolId}`] = dicomMatrix;
+        }
+      });
+    }
+
     // Broadcast to listeners (NavigationController will handle this)
     this._broadcastEvent(EVENTS.TRACKING_UPDATE, {
       position,
@@ -771,7 +819,7 @@ class TrackingService extends PubSubService {
       quality: data.quality,
       quality_score: data.quality_score,
       visible: data.visible,
-      tools: data.tools,
+      tools: toolsWithTooltipMatrices, // Use tools with tooltip matrices
       // Patient reference data (needed by TrackingPanel)
       patient_reference_id: data.patient_reference_id,
       patient_reference_name: data.patient_reference_name,
@@ -1004,38 +1052,39 @@ class TrackingService extends PubSubService {
   /**
    * Apply PR to DICOM transformation with instrument calibration
    * Transforms coordinates from Patient Reference space to DICOM image space
-   * Pipeline: PR-relative marker → instrument tooltip → DICOM space
-   * Formula: dicomMatrix = prToDicomMatrix × markerToTooltipMatrix × prRelativeMatrix_marker
-   * 
-   * @param prRelativeMatrix_marker - 4x4 matrix for marker array in PR-relative space (can be 2D array or flat array)
+   * Pipeline: marker position → instrument tooltip → DICOM space
+   * Formula: tooltip_DICOM = prToDicomMatrix × markerToPrMatrix × markerToTooltipMatrix
+   *
+   * @param markerToPrMatrix - 4x4 matrix for marker array in PR space (can be 2D array or flat array)
    * @returns Transformed 4x4 matrix in DICOM space (same format as input)
    */
-  private _applyPr2DicomTransform(prRelativeMatrix_marker: number[][] | number[]): number[][] | number[] {
-    if (!prRelativeMatrix_marker) return prRelativeMatrix_marker;
+  private _applyPr2DicomTransform(markerToPrMatrix: number[][] | number[]): number[][] | number[] {
+    if (!markerToPrMatrix) return markerToPrMatrix;
 
     // Detect if input is flat array or 2D array
-    const isFlat = !Array.isArray(prRelativeMatrix_marker[0]);
+    const isFlat = !Array.isArray(markerToPrMatrix[0]);
 
     // Convert to 4x4 if needed
     let markerMatrix4x4: number[][];
     if (isFlat) {
-      markerMatrix4x4 = this._flatToMatrix4x4(prRelativeMatrix_marker as number[]);
+      markerMatrix4x4 = this._flatToMatrix4x4(markerToPrMatrix as number[]);
     } else {
-      markerMatrix4x4 = prRelativeMatrix_marker as number[][];
+      markerMatrix4x4 = markerToPrMatrix as number[][];
     }
 
     // Step 1: Transform from marker array to stylus tooltip
-    // prRelativeMatrix_tooltip = markerToTooltipMatrix × prRelativeMatrix_marker
+    // tooltipMatrix = markerToPrMatrix × markerToTooltipMatrix
+    // This applies the calibration transform to the marker position
     const tooltipMatrix = this._multiplyMatrix4x4(markerMatrix4x4, this.markerToTooltipMatrix);
 
     // Step 2: Transform from PR-relative tooltip to DICOM space
-    // dicomMatrix = prToDicomMatrix × prRelativeMatrix_tooltip
+    // dicomMatrix = prToDicomMatrix × tooltipMatrix
     const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
 
     // Store debug info (deep copy to avoid reference issues)
     this.lastDebugInfo = {
-      prRelativeMatrix_marker: markerMatrix4x4.map(row => [...row]),
-      prRelativeMatrix_tooltip: tooltipMatrix.map(row => [...row]),
+      markerToPrMatrix: markerMatrix4x4.map(row => [...row]),
+      tooltipMatrix: tooltipMatrix.map(row => [...row]),
       dicomMatrix: dicomMatrix.map(row => [...row]),
       markerToTooltipMatrix: this.markerToTooltipMatrix.map(row => [...row]),
       prToDicomMatrix: this.prToDicomMatrix.map(row => [...row])
@@ -1171,8 +1220,8 @@ class TrackingService extends PubSubService {
    * Returns intermediate matrices from the transformation pipeline
    */
   public getTransformDebugInfo(): {
-    prRelativeMatrix_marker?: number[][];
-    prRelativeMatrix_tooltip?: number[][];
+    markerToPrMatrix?: number[][];
+    tooltipMatrix?: number[][];
     dicomMatrix?: number[][];
     markerToTooltipMatrix?: number[][];
     prToDicomMatrix?: number[][];

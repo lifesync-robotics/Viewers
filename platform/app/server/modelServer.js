@@ -63,6 +63,9 @@ const USER_MODELS_DIR = path.join(MODELS_DIR, 'uploads');
 const MODEL_PREFIX = '7300-T10';
 const SCREW_CAP_FILENAME = '7300-T10_Top.obj';
 
+const NDI_PROBE_DIR = "C:\\Users\\hp\\tableTop\\mvisioner\\server_deployment\\AsclepiusPrototype\\AssetLibrary\\Instruments\\Tracked\\NDI\\Pointer\\DR-VR06-A32";
+const NDI_PROBE_FILENAME = 'DR-VR06-A32.STL';
+
 // Ensure directories exist
 [MODELS_DIR, SERVER_MODELS_DIR, USER_MODELS_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) {
@@ -999,6 +1002,113 @@ app.delete('/api/models/:filename', (req, res) => {
 });
 
 /**
+ * Get NDI probe information
+ * GET /api/ndi/probe/info
+ */
+app.get('/api/ndi/probe/info', (req, res) => {
+  try {
+    const probePath = path.join(NDI_PROBE_DIR, NDI_PROBE_FILENAME);
+
+    if (!fs.existsSync(probePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'NDI probe file not found',
+        expectedPath: probePath
+      });
+    }
+
+    const stats = fs.statSync(probePath);
+    const probeInfo = {
+      success: true,
+      probe: {
+        id: 'ndi_probe_dr_vr06_a32',
+        name: 'NDI DR-VR06-A32 Pointer',
+        filename: NDI_PROBE_FILENAME,
+        type: 'ndi_probe',
+        url: `/ndi/probe/${NDI_PROBE_FILENAME}`,
+        size: stats.size,
+        format: 'stl',
+        lastModified: stats.mtime,
+        directory: NDI_PROBE_DIR
+      }
+    };
+
+    console.log('NDI probe info requested:', probeInfo.probe.filename);
+    res.json(probeInfo);
+  } catch (error) {
+    console.error('Error getting NDI probe info:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get NDI probe info',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * List all available NDI probe files
+ * GET /api/ndi/probe/list
+ */
+app.get('/api/ndi/probe/list', (req, res) => {
+  try {
+    if (!fs.existsSync(NDI_PROBE_DIR)) {
+      return res.json({
+        success: true,
+        count: 0,
+        probes: [],
+        message: 'NDI probe directory not found'
+      });
+    }
+
+    const files = fs.readdirSync(NDI_PROBE_DIR)
+      .filter(file => path.extname(file).toLowerCase() === '.stl');
+
+    const probes = files.map(file => {
+      const filePath = path.join(NDI_PROBE_DIR, file);
+      const stats = fs.statSync(filePath);
+
+      return {
+        id: `ndi_${file.replace('.stl', '').toLowerCase()}`,
+        name: file.replace('.stl', ''),
+        filename: file,
+        type: 'ndi_probe',
+        url: `/ndi/probe/${file}`,
+        size: stats.size,
+        format: 'stl',
+        lastModified: stats.mtime
+      };
+    });
+
+    res.json({
+      success: true,
+      count: probes.length,
+      probes: probes.sort((a, b) => b.lastModified - a.lastModified),
+      directory: NDI_PROBE_DIR
+    });
+  } catch (error) {
+    console.error('Error listing NDI probes:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to list NDI probes',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Serve static NDI probe files
+ * This allows direct access to NDI probe STL files via URL
+ */
+app.use('/ndi/probe', express.static(NDI_PROBE_DIR, {
+  setHeaders: (res, filepath) => {
+    // Set appropriate CORS headers
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET');
+    res.set('Content-Type', 'application/sla'); // STL MIME type
+  }
+}));
+
+/**
  * Serve static model files
  * This allows direct access to model files via URL
  */
@@ -1029,6 +1139,8 @@ app.get('/api/health', (req, res) => {
     modelsDir: MODELS_DIR,
     serverModelsDir: SERVER_MODELS_DIR,
     userModelsDir: USER_MODELS_DIR,
+    ndiProbeDir: NDI_PROBE_DIR,
+    ndiProbeFilename: NDI_PROBE_FILENAME,
     modelDictionaryCount: Object.keys(modelDictionary).length,
     generatedCylindersCached: Object.keys(generatedCylinderCache).length,
     vtkEnabled: vtkEnabled,
@@ -1132,7 +1244,15 @@ app.listen(PORT, () => {
   console.log(`  DELETE /api/models/:filename        - Delete user model`);
   console.log(`  GET  /models/server/*               - Access server models`);
   console.log(`  GET  /models/uploads/*              - Access uploaded models`);
-  console.log(`  GET  /api/health                    - Health check (shows cache & VTK stats)`);
+  console.log('');
+  console.log('NDI Probe Endpoints:');
+  console.log(`  GET  /api/ndi/probe/info                   - Get NDI probe information`);
+  console.log(`  GET  /api/ndi/probe/list                   - List all available NDI probe files`);
+  console.log(`  GET  /ndi/probe/*                  - Access NDI probe STL files`);
+  console.log(`  NDI Probe Directory: ${NDI_PROBE_DIR}`);
+  console.log(`  NDI Probe File: ${NDI_PROBE_FILENAME}`);
+  console.log('');
+  console.log(`  GET  /api/health                    - Health check (shows cache, VTK & NDI stats)`);
   console.log('=================================================');
 });
 
