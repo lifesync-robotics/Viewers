@@ -1483,28 +1483,39 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     let adjustedTransform = [...transform];
 
     if (isCylinder && length && length > 0) {
-      // Move forward along the coronal (Y) direction by length/2
-      // This positions the screw so its center is at the crosshair center
-      const offset = length / 2;
+      // Move BACKWARD along the coronal (Y) direction by -length/2
+      // This positions the screw so its CAP (top) is at the crosshair center
+      //
+      // Screw geometry in local space:
+      //   - Bottom (tip): y = -length/2
+      //   - Center (model origin): y = 0
+      //   - Top (cap): y = +length/2
+      //
+      // To align CAP to crosshair:
+      //   - Crosshair position = transform[3,7,11]
+      //   - Model origin must be at: crosshair - length/2 * coronal
+      //   - Then screw top (y=+length/2) will be at crosshair
+      const offset = -length / 2;  // NEGATIVE to move model origin backward
 
       console.log(`📏 Screw length: ${length}mm`);
-      console.log(`📏 Applying offset: +${offset}mm along coronal direction`);
+      console.log(`📏 Applying offset: ${offset}mm along coronal direction (SCREW CAP aligned to crosshair)`);
 
       // Original translation (column 3 in row-major)
       const originalTransX = transform[3];
       const originalTransY = transform[7];
       const originalTransZ = transform[11];
 
-      console.log(`📍 Original translation: [${originalTransX}, ${originalTransY}, ${originalTransZ}]`);
+      console.log(`📍 Original translation (crosshair position): [${originalTransX}, ${originalTransY}, ${originalTransZ}]`);
 
-      // Adjust translation by moving forward along coronal direction
-      // Forward means positive direction along the local Y-axis
+      // Adjust translation by moving BACKWARD along coronal direction
+      // This moves model origin down, so the top (cap) aligns with crosshair
       adjustedTransform[3] = originalTransX + (coronalX * offset);
       adjustedTransform[7] = originalTransY + (coronalY * offset);
       adjustedTransform[11] = originalTransZ + (coronalZ * offset);
 
-      console.log(`📍 Adjusted translation: [${adjustedTransform[3]}, ${adjustedTransform[7]}, ${adjustedTransform[11]}]`);
+      console.log(`📍 Adjusted translation (model origin): [${adjustedTransform[3]}, ${adjustedTransform[7]}, ${adjustedTransform[11]}]`);
       console.log(`📐 Offset vector: [${coronalX * offset}, ${coronalY * offset}, ${coronalZ * offset}]`);
+      console.log(`✅ Screw cap (top) is now at crosshair position`);
     } else {
       if (!isCylinder) {
         console.log(`ℹ️ No offset applied - OBJ model (not a generated cylinder)`);
@@ -1590,8 +1601,8 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
 
     for (let i = 0; i < numPoints; i++) {
       const point = points.getPoint(i);
-      const transformedPoint = [0, 0, 0];
-      vtkTransformObj.transformPoint(point, transformedPoint);
+      const transformedPoint = new Float32Array([0, 0, 0]);
+      vtkTransformObj.transformPoint(point as any, transformedPoint as any);
 
       const idx = i * 3;
       transformedPoints[idx] = transformedPoint[0];
@@ -1635,6 +1646,701 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
   }
 }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCREW INTERACTION METHODS
+  // Methods for picking and translating screws on MPR planes
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Check if a model is a screw (not a cap)
+   *
+   * A model is considered a "screw" if:
+   * 1. It has a user transform matrix (was positioned via setModelTransform)
+   * 2. Its name does NOT contain 'cap' (caps are separate models)
+   *
+   * OR if it's a generated cylinder:
+   * - Path contains '/cylinder/'
+   */
+  private _isScrewModel(model: LoadedModel): boolean {
+    const path = model.metadata.fileUrl || model.metadata.filePath || '';
+    const name = model.metadata.name || '';
+    const modelId = model.metadata.id || '';
+
+    // Exclude cap models
+    const isCap = name.toLowerCase().includes('cap') || modelId.toLowerCase().includes('cap');
+    if (isCap) return false;
+
+    // Method 1: Generated cylinder from API
+    const isCylinder = path.includes('/cylinder/');
+    if (isCylinder) return true;
+
+    // Method 2: Any model with a user transform matrix (was positioned)
+    const hasUserMatrix = model.actor?.getUserMatrix?.() !== null;
+    if (hasUserMatrix) {
+      // Additional check: model should have polyData (it's a real 3D model)
+      const hasPolyData = !!model.polyData;
+      return hasPolyData;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if a model is a screw cap
+   */
+  private _isCapModel(model: LoadedModel): boolean {
+    const name = model.metadata.name || '';
+    return name.toLowerCase().includes('cap');
+  }
+
+  /**
+   * Get screw center position from transform matrix
+   *
+   * IMPORTANT: The transform matrix position [12,13,14] is the MODEL ORIGIN position.
+   * For screws with length offset applied (via setModelTransform), the model origin
+   * was shifted by -length/2 along the Y-axis so that the CAP aligns with crosshair.
+   *
+   * To get the TRUE SCREW CENTER, we need to offset from model origin by +length/2
+   * along the screw's Y-axis direction.
+   */
+  private _getScrewCenter(model: LoadedModel): [number, number, number] {
+    const matrix = model.actor.getUserMatrix();
+    if (matrix) {
+      // Column-major format: translation at [12], [13], [14]
+      // This is the MODEL ORIGIN (which is offset from screw center for cylinders)
+      const modelOrigin: [number, number, number] = [matrix[12], matrix[13], matrix[14]];
+
+      // Get the screw's Y-axis direction (screw length direction)
+      // Column-major: Y-axis is column 1 -> [4], [5], [6]
+      const yAxisX = matrix[4];
+      const yAxisY = matrix[5];
+      const yAxisZ = matrix[6];
+
+      // Get screw dimensions to calculate offset
+      const dimensions = this._getScrewDimensions(model);
+
+      // Check if this is a cylinder (has length offset applied)
+      const modelPath = model.metadata.fileUrl || model.metadata.filePath || '';
+      const isCylinder = modelPath.includes('/cylinder/');
+
+      if (isCylinder && dimensions.length > 0) {
+        // For cylinders: screw center = model origin + (length/2) * Y-axis
+        // Because model origin was shifted to align CAP with crosshair
+        const offset = dimensions.length / 2;
+        return [
+          modelOrigin[0] + yAxisX * offset,
+          modelOrigin[1] + yAxisY * offset,
+          modelOrigin[2] + yAxisZ * offset
+        ];
+      }
+
+      // For non-cylinder models, model origin IS the center
+      return modelOrigin;
+    }
+
+    // Fallback: calculate from polyData bounds
+    const bounds = model.polyData?.getBounds();
+    if (bounds) {
+      return [
+        (bounds[0] + bounds[1]) / 2,
+        (bounds[2] + bounds[3]) / 2,
+        (bounds[4] + bounds[5]) / 2
+      ];
+    }
+
+    return [0, 0, 0];
+  }
+
+  /**
+   * Get screw axis direction from transform matrix
+   * Returns the Y-axis (coronal direction) of the screw
+   */
+  private _getScrewAxisDirection(model: LoadedModel): [number, number, number] {
+    const matrix = model.actor.getUserMatrix();
+    if (matrix) {
+      // Column-major: Y-axis (screw length direction) is column 1
+      // [4], [5], [6] in column-major (which is row 1 in the 4x4)
+      return [matrix[4], matrix[5], matrix[6]];
+    }
+    return [0, 1, 0]; // Default: Y-up
+  }
+
+  /**
+   * Extract screw dimensions from model path, metadata, or geometry
+   */
+  private _getScrewDimensions(model: LoadedModel): { length: number; radius: number } {
+    const path = model.metadata.fileUrl || model.metadata.filePath || '';
+
+    // Method 1: Parse from URL like /api/planning/model/cylinder/3.5/40
+    const match = path.match(/cylinder\/([0-9.]+)\/([0-9.]+)/);
+    if (match) {
+      return {
+        radius: parseFloat(match[1]),
+        length: parseFloat(match[2])
+      };
+    }
+
+    // Method 2: Calculate from polyData bounds (for OBJ models)
+    if (model.polyData) {
+      const bounds = model.polyData.getBounds();
+      if (bounds) {
+        // bounds = [xMin, xMax, yMin, yMax, zMin, zMax]
+        const xSize = bounds[1] - bounds[0];
+        const ySize = bounds[3] - bounds[2];
+        const zSize = bounds[5] - bounds[4];
+
+        // Assume screw is oriented along Y-axis (longest dimension is length)
+        // The two shorter dimensions give us the radius
+        const sizes = [xSize, ySize, zSize].sort((a, b) => b - a);
+        const length = sizes[0]; // Longest dimension
+        const radius = Math.min(sizes[1], sizes[2]) / 2; // Half of shorter dimension
+
+        console.log(`   📐 Calculated dimensions from polyData: radius=${radius.toFixed(2)}mm, length=${length.toFixed(2)}mm`);
+        return { radius, length };
+      }
+    }
+
+    // Default values (typical pedicle screw)
+    console.log(`   ⚠️ Using default dimensions: radius=3.5mm, length=40mm`);
+    return { radius: 3.5, length: 40 };
+  }
+
+  /**
+   * Get all screw models (excluding caps)
+   */
+  public getAllScrewModels(): Map<string, LoadedModel> {
+    const screwModels = new Map<string, LoadedModel>();
+
+    for (const [id, model] of this.loadedModels) {
+      if (this._isScrewModel(model)) {
+        screwModels.set(id, model);
+      }
+    }
+
+    return screwModels;
+  }
+
+  /**
+   * Find the nearest screw to a world position
+   * @param worldPoint - Click position in world coordinates [x, y, z]
+   * @param maxDistance - Maximum detection distance in mm (default: 20mm)
+   * @returns ScrewPickResult or null if no screw found
+   */
+  public findNearestScrew(
+    worldPoint: [number, number, number],
+    maxDistance: number = 20
+  ): ScrewPickResult | null {
+
+    let nearestResult: ScrewPickResult | null = null;
+    let minDistance = Infinity;
+
+    console.log(`🎯 [ModelStateService] Finding screw near point: [${worldPoint.map(v => v.toFixed(2)).join(', ')}]`);
+    console.log(`   📦 Total loaded models: ${this.loadedModels.size}`);
+
+    // Debug: List all models
+    for (const [modelId, model] of this.loadedModels) {
+      const path = model.metadata.fileUrl || model.metadata.filePath || '';
+      const name = model.metadata.name || '';
+      const isCylinder = path.includes('/cylinder/');
+      const isCap = name.toLowerCase().includes('cap');
+      const isScrew = isCylinder && !isCap;
+
+      console.log(`   - Model: ${modelId}`);
+      console.log(`     name: ${name}, path: ${path}`);
+      console.log(`     isCylinder: ${isCylinder}, isCap: ${isCap}, isScrew: ${isScrew}`);
+
+      const matrix = model.actor?.getUserMatrix?.();
+      if (matrix) {
+        console.log(`     position: [${matrix[12]?.toFixed(2)}, ${matrix[13]?.toFixed(2)}, ${matrix[14]?.toFixed(2)}]`);
+      } else {
+        console.log(`     ⚠️ No user matrix available`);
+      }
+    }
+
+    for (const [modelId, model] of this.loadedModels) {
+      // Skip non-screw models
+      if (!this._isScrewModel(model)) continue;
+
+      const screwCenter = this._getScrewCenter(model);
+      const screwAxis = this._getScrewAxisDirection(model);
+      const dimensions = this._getScrewDimensions(model);
+
+      // Calculate distance from point to screw axis (cylinder distance)
+      const distance = this._distanceToScrewAxis(
+        worldPoint,
+        screwCenter,
+        screwAxis,
+        dimensions.length
+      );
+
+      console.log(`   📍 Screw ${model.metadata.name}: distance = ${distance.toFixed(2)}mm`);
+
+      if (distance < minDistance && distance < maxDistance) {
+        minDistance = distance;
+
+        // Determine which part of the screw was clicked
+        const part = this._determineScrewPart(
+          worldPoint,
+          screwCenter,
+          screwAxis,
+          dimensions.length
+        );
+
+        nearestResult = {
+          modelId,
+          screwLabel: model.metadata.name || modelId,
+          part,
+          worldPosition: worldPoint,
+          distance,
+          screwLength: dimensions.length,
+          screwRadius: dimensions.radius
+        };
+      }
+    }
+
+    if (nearestResult) {
+      console.log(`✅ Found screw: ${nearestResult.screwLabel} (${nearestResult.part}), distance: ${nearestResult.distance.toFixed(2)}mm`);
+    } else {
+      console.log(`❌ No screw found within ${maxDistance}mm`);
+    }
+
+    return nearestResult;
+  }
+
+  /**
+   * Calculate distance from a point to a screw axis (treating screw as cylinder)
+   */
+  private _distanceToScrewAxis(
+    point: [number, number, number],
+    screwCenter: [number, number, number],
+    screwAxis: [number, number, number],
+    screwLength: number
+  ): number {
+    // Vector from screw center to point
+    const toPoint = [
+      point[0] - screwCenter[0],
+      point[1] - screwCenter[1],
+      point[2] - screwCenter[2]
+    ];
+
+    // Project onto screw axis
+    const projection =
+      toPoint[0] * screwAxis[0] +
+      toPoint[1] * screwAxis[1] +
+      toPoint[2] * screwAxis[2];
+
+    // Check if projection is within screw length bounds (with some margin)
+    const halfLength = screwLength / 2;
+    const margin = 10; // 10mm extra margin for cap
+
+    if (projection < -halfLength - margin || projection > halfLength + margin) {
+      return Infinity; // Point is outside screw bounds
+    }
+
+    // Calculate perpendicular distance to axis
+    const closestOnAxis = [
+      screwCenter[0] + projection * screwAxis[0],
+      screwCenter[1] + projection * screwAxis[1],
+      screwCenter[2] + projection * screwAxis[2]
+    ];
+
+    const perpDistance = Math.sqrt(
+      Math.pow(point[0] - closestOnAxis[0], 2) +
+      Math.pow(point[1] - closestOnAxis[1], 2) +
+      Math.pow(point[2] - closestOnAxis[2], 2)
+    );
+
+    return perpDistance;
+  }
+
+  /**
+   * Check if a point is INSIDE a screw cylinder (inside/outside test)
+   * This is a strict geometric test that checks:
+   * 1. The point's perpendicular distance to the screw axis is less than the radius
+   * 2. The point's projection along the axis is within the screw length bounds
+   *
+   * @param point - World coordinate to test [x, y, z]
+   * @param screwCenter - Center of the screw in world coordinates
+   * @param screwAxis - Normalized direction vector of the screw axis
+   * @param screwLength - Length of the screw in mm
+   * @param screwRadius - Radius of the screw in mm
+   * @returns Object with isInside flag and detailed information
+   */
+  public isPointInsideScrew(
+    point: [number, number, number],
+    screwCenter: [number, number, number],
+    screwAxis: [number, number, number],
+    screwLength: number,
+    screwRadius: number
+  ): { isInside: boolean; perpDistance: number; axialPosition: number; reason?: string } {
+    // Vector from screw center to point
+    const toPoint = [
+      point[0] - screwCenter[0],
+      point[1] - screwCenter[1],
+      point[2] - screwCenter[2]
+    ];
+
+    // Project onto screw axis to get axial position
+    // Positive = towards cap, Negative = towards tip
+    const axialPosition =
+      toPoint[0] * screwAxis[0] +
+      toPoint[1] * screwAxis[1] +
+      toPoint[2] * screwAxis[2];
+
+    // Calculate closest point on axis
+    const closestOnAxis = [
+      screwCenter[0] + axialPosition * screwAxis[0],
+      screwCenter[1] + axialPosition * screwAxis[1],
+      screwCenter[2] + axialPosition * screwAxis[2]
+    ];
+
+    // Calculate perpendicular distance to axis
+    const perpDistance = Math.sqrt(
+      Math.pow(point[0] - closestOnAxis[0], 2) +
+      Math.pow(point[1] - closestOnAxis[1], 2) +
+      Math.pow(point[2] - closestOnAxis[2], 2)
+    );
+
+    // Check bounds
+    const halfLength = screwLength / 2;
+
+    // Test 1: Is point within screw length bounds (along axis)?
+    if (axialPosition < -halfLength || axialPosition > halfLength) {
+      return {
+        isInside: false,
+        perpDistance,
+        axialPosition,
+        reason: `Outside axial bounds: position=${axialPosition.toFixed(2)}, bounds=[-${halfLength.toFixed(2)}, ${halfLength.toFixed(2)}]`
+      };
+    }
+
+    // Test 2: Is point within screw radius (perpendicular to axis)?
+    if (perpDistance > screwRadius) {
+      return {
+        isInside: false,
+        perpDistance,
+        axialPosition,
+        reason: `Outside radius: perpDistance=${perpDistance.toFixed(2)}, radius=${screwRadius.toFixed(2)}`
+      };
+    }
+
+    // Point is inside the screw cylinder!
+    return {
+      isInside: true,
+      perpDistance,
+      axialPosition
+    };
+  }
+
+  /**
+   * Find if a point is inside ANY screw and return the screw info
+   * This is the main entry point for inside/outside testing
+   *
+   * @param worldPoint - Click position in world coordinates [x, y, z]
+   * @returns ScrewPickResult with isInside=true if inside a screw, null otherwise
+   */
+  public findScrewAtPoint(worldPoint: [number, number, number]): ScrewPickResult | null {
+    console.log('');
+    console.log('╔═══════════════════════════════════════════════════════════════════╗');
+    console.log('║          🎯 SCREW INSIDE/OUTSIDE TEST - MOUSE DOWN                ║');
+    console.log('╠═══════════════════════════════════════════════════════════════════╣');
+    console.log(`║  Click Point: [${worldPoint.map(v => v.toFixed(2).padStart(8)).join(', ')}]  ║`);
+    console.log('╚═══════════════════════════════════════════════════════════════════╝');
+
+    // Count screws for summary
+    const screwModels = Array.from(this.loadedModels.entries()).filter(
+      ([_, model]) => this._isScrewModel(model)
+    );
+
+    console.log(`📦 Found ${screwModels.length} screw model(s) to test against`);
+    console.log(`📦 Total loaded models: ${this.loadedModels.size}`);
+
+    // List ALL models for debugging
+    if (this.loadedModels.size > 0) {
+      console.log('📋 All loaded models:');
+      for (const [modelId, model] of this.loadedModels) {
+        const path = model.metadata.fileUrl || model.metadata.filePath || '';
+        const name = model.metadata.name || '';
+        const isCylinder = path.includes('/cylinder/');
+        const isCap = name.toLowerCase().includes('cap');
+        const isScrew = this._isScrewModel(model);
+
+        const matrix = model.actor?.getUserMatrix?.();
+        const pos = matrix ? `[${matrix[12]?.toFixed(1)}, ${matrix[13]?.toFixed(1)}, ${matrix[14]?.toFixed(1)}]` : 'no matrix';
+
+        console.log(`   - ${modelId}: isScrew=${isScrew}, isCylinder=${isCylinder}, isCap=${isCap}, pos=${pos}`);
+      }
+    }
+    console.log('');
+
+    for (const [modelId, model] of this.loadedModels) {
+      // Skip non-screw models
+      if (!this._isScrewModel(model)) continue;
+
+      const screwCenter = this._getScrewCenter(model);
+      const screwAxis = this._getScrewAxisDirection(model);
+      const dimensions = this._getScrewDimensions(model);
+
+      // Get model origin for debugging
+      const matrix = model.actor.getUserMatrix();
+      const modelOrigin = matrix ? [matrix[12], matrix[13], matrix[14]] : [0, 0, 0];
+
+      console.log(`┌─────────────────────────────────────────────────────────────────┐`);
+      console.log(`│ 📍 Testing: ${(model.metadata.name || modelId).padEnd(50)} │`);
+      console.log(`├─────────────────────────────────────────────────────────────────┤`);
+      console.log(`│  Model Origin:  [${modelOrigin.map(v => v.toFixed(2).padStart(8)).join(', ')}]       │`);
+      console.log(`│  Screw Center:  [${screwCenter.map(v => v.toFixed(2).padStart(8)).join(', ')}]       │`);
+      console.log(`│  Click Point:   [${worldPoint.map(v => v.toFixed(2).padStart(8)).join(', ')}]       │`);
+      console.log(`│  Screw Axis:    [${screwAxis.map(v => v.toFixed(3).padStart(7)).join(', ')}]          │`);
+      console.log(`│  Radius: ${dimensions.radius.toFixed(1).padStart(5)}mm   Length: ${dimensions.length.toFixed(1).padStart(5)}mm                     │`);
+
+      // Perform inside/outside test
+      const result = this.isPointInsideScrew(
+        worldPoint,
+        screwCenter,
+        screwAxis,
+        dimensions.length,
+        dimensions.radius
+      );
+
+      console.log(`├─────────────────────────────────────────────────────────────────┤`);
+      console.log(`│  Perpendicular Distance: ${result.perpDistance.toFixed(2).padStart(8)}mm (must be < ${dimensions.radius.toFixed(1)}mm)  │`);
+      console.log(`│  Axial Position:         ${result.axialPosition.toFixed(2).padStart(8)}mm (must be in [-${(dimensions.length/2).toFixed(1)}, ${(dimensions.length/2).toFixed(1)}]) │`);
+
+      if (result.isInside) {
+        // Determine which part of the screw (cap, body, or tip)
+        const part = this._determineScrewPart(
+          worldPoint,
+          screwCenter,
+          screwAxis,
+          dimensions.length
+        );
+
+        console.log(`├─────────────────────────────────────────────────────────────────┤`);
+        console.log(`│  ✅✅✅ RESULT: INSIDE THE SCREW! ✅✅✅                        │`);
+        console.log(`│  Part clicked: ${part.toUpperCase().padEnd(48)} │`);
+        console.log(`└─────────────────────────────────────────────────────────────────┘`);
+        console.log('');
+        console.log('╔═══════════════════════════════════════════════════════════════════╗');
+        console.log('║  ✅ CHECK INSIDE A SCREW - CAN DRAG                               ║');
+        console.log(`║  Screw: ${(model.metadata.name || modelId).padEnd(56)} ║`);
+        console.log('╚═══════════════════════════════════════════════════════════════════╝');
+        console.log('');
+
+        return {
+          modelId,
+          screwLabel: model.metadata.name || modelId,
+          part,
+          worldPosition: worldPoint,
+          distance: result.perpDistance,
+          screwLength: dimensions.length,
+          screwRadius: dimensions.radius
+        };
+      } else {
+        console.log(`├─────────────────────────────────────────────────────────────────┤`);
+        console.log(`│  ❌ RESULT: OUTSIDE - ${result.reason?.substring(0, 42).padEnd(42)} │`);
+        console.log(`└─────────────────────────────────────────────────────────────────┘`);
+        console.log('');
+      }
+    }
+
+    console.log('╔═══════════════════════════════════════════════════════════════════╗');
+    console.log('║  ❌ CLICK IS OUTSIDE ALL SCREWS - CANNOT DRAG                     ║');
+    console.log('╚═══════════════════════════════════════════════════════════════════╝');
+    console.log('');
+
+    return null;
+  }
+
+  /**
+   * Determine which part of the screw was clicked (cap, body, or tip)
+   */
+  private _determineScrewPart(
+    worldPoint: [number, number, number],
+    screwCenter: [number, number, number],
+    screwAxis: [number, number, number],
+    screwLength: number
+  ): 'cap' | 'body' | 'tip' {
+    // Vector from screw center to click point
+    const toPoint = [
+      worldPoint[0] - screwCenter[0],
+      worldPoint[1] - screwCenter[1],
+      worldPoint[2] - screwCenter[2]
+    ];
+
+    // Project onto screw axis to get position along screw
+    const projection =
+      toPoint[0] * screwAxis[0] +
+      toPoint[1] * screwAxis[1] +
+      toPoint[2] * screwAxis[2];
+
+    const halfLength = screwLength / 2;
+    const normalizedPosition = (projection + halfLength) / screwLength; // 0 = tip, 1 = cap
+
+    if (normalizedPosition > 0.75) {
+      return 'cap';
+    } else if (normalizedPosition < 0.25) {
+      return 'tip';
+    } else {
+      return 'body';
+    }
+  }
+
+  /**
+   * Translate a screw by a delta vector (for drag operations)
+   * This also moves the associated cap model
+   * @param modelId - Screw model ID
+   * @param delta - Translation delta in world coordinates [dx, dy, dz]
+   * @returns true if successful
+   */
+  public translateScrew(modelId: string, delta: [number, number, number]): boolean {
+    const model = this.loadedModels.get(modelId);
+    if (!model) {
+      console.error(`❌ Model not found: ${modelId}`);
+      return false;
+    }
+
+    console.log(`🔄 [ModelStateService] Translating screw ${modelId} by [${delta.map(v => v.toFixed(2)).join(', ')}]`);
+
+    // Get current transform
+    const currentMatrix = model.actor.getUserMatrix();
+    if (!currentMatrix) {
+      console.error(`❌ No transform matrix for model: ${modelId}`);
+      return false;
+    }
+
+    // Create new matrix with updated translation (column-major: [12], [13], [14])
+    const newMatrix = new Float32Array(currentMatrix);
+    newMatrix[12] += delta[0];
+    newMatrix[13] += delta[1];
+    newMatrix[14] += delta[2];
+
+    // Apply to actor
+    model.actor.setUserMatrix(newMatrix);
+
+    // Update polyData for plane cutters
+    this._updatePolyDataWithTransform(model, newMatrix);
+
+    // Also translate the cap if it exists
+    const capId = `${modelId}-Cap`;
+    const capModel = this.loadedModels.get(capId);
+    if (capModel) {
+      const capMatrix = capModel.actor.getUserMatrix();
+      if (capMatrix) {
+        const newCapMatrix = new Float32Array(capMatrix);
+        newCapMatrix[12] += delta[0];
+        newCapMatrix[13] += delta[1];
+        newCapMatrix[14] += delta[2];
+        capModel.actor.setUserMatrix(newCapMatrix);
+        this._updatePolyDataWithTransform(capModel, newCapMatrix);
+      }
+    }
+
+    // Broadcast update event for PlaneCutterService
+    this._broadcastEvent(this.EVENTS.MODEL_UPDATED, {
+      modelId,
+      property: 'position',
+      delta
+    });
+
+    // Trigger re-render
+    const renderingEngines = getRenderingEngines();
+    for (const engine of renderingEngines) {
+      engine.render();
+    }
+
+    return true;
+  }
+
+  /**
+   * Update polyData transform for plane cutters (internal helper)
+   */
+  private _updatePolyDataWithTransform(model: LoadedModel, newMatrix: Float32Array): void {
+    if (!model.reader || !model.polyData) return;
+
+    // Get original polyData from reader
+    const originalPolyData = model.reader.getOutputData();
+    if (!originalPolyData) return;
+
+    // Create VTK transform
+    const vtkTransformObj = vtkTransform.newInstance();
+    vtkTransformObj.setMatrix(newMatrix);
+
+    // Transform all points
+    const points = originalPolyData.getPoints();
+    const numPoints = points.getNumberOfPoints();
+    const transformedPoints = new Float32Array(numPoints * 3);
+
+    for (let i = 0; i < numPoints; i++) {
+      const point = points.getPoint(i);
+      const transformedPoint: [number, number, number] = [0, 0, 0];
+      vtkTransformObj.transformPoint(point, transformedPoint);
+
+      const idx = i * 3;
+      transformedPoints[idx] = transformedPoint[0];
+      transformedPoints[idx + 1] = transformedPoint[1];
+      transformedPoints[idx + 2] = transformedPoint[2];
+    }
+
+    // Update polyData
+    model.polyData.getPoints().setData(transformedPoints, 3);
+  }
+
+  /**
+   * Get screw transform matrix (row-major format for external use)
+   */
+  public getScrewTransform(modelId: string): number[] | null {
+    const model = this.loadedModels.get(modelId);
+    if (!model) return null;
+
+    const matrix = model.actor.getUserMatrix();
+    if (!matrix) return null;
+
+    // Convert column-major to row-major
+    return [
+      matrix[0], matrix[4], matrix[8],  matrix[12],
+      matrix[1], matrix[5], matrix[9],  matrix[13],
+      matrix[2], matrix[6], matrix[10], matrix[14],
+      matrix[3], matrix[7], matrix[11], matrix[15]
+    ];
+  }
+
+  /**
+   * Project a world delta vector onto a viewport plane
+   * Removes the component along the plane normal
+   * @param delta - World delta vector [dx, dy, dz]
+   * @param planeNormal - Viewport plane normal [nx, ny, nz]
+   * @returns Projected delta on the plane
+   */
+  public projectDeltaOntoPlane(
+    delta: [number, number, number],
+    planeNormal: [number, number, number]
+  ): [number, number, number] {
+    // Project: delta - (delta · normal) * normal
+    const dot =
+      delta[0] * planeNormal[0] +
+      delta[1] * planeNormal[1] +
+      delta[2] * planeNormal[2];
+
+    return [
+      delta[0] - dot * planeNormal[0],
+      delta[1] - dot * planeNormal[1],
+      delta[2] - dot * planeNormal[2]
+    ];
+  }
+}
+
+/**
+ * Result of screw picking operation
+ */
+export interface ScrewPickResult {
+  modelId: string;
+  screwLabel: string;
+  part: 'cap' | 'body' | 'tip';
+  worldPosition: [number, number, number];
+  distance: number;
+  screwLength: number;
+  screwRadius: number;
 }
 
 export default ModelStateService;

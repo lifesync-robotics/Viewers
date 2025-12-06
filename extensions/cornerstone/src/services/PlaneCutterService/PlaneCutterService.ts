@@ -510,6 +510,13 @@ class PlaneCutterService extends PubSubService {
   }
 
   /**
+   * Get all plane cutters (for debugging)
+   */
+  public getPlaneCutters(): PlaneCutterData[] {
+    return this.planeCutters;
+  }
+
+  /**
    * Add a model to all plane cutters
    */
   public addModelToCutters(modelId: string): void {

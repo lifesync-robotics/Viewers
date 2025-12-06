@@ -21,6 +21,7 @@ import {
   SessionStatus,
   LoadingScreen,
   SaveScrewButton,
+  ScrewToolbar,
   ScrewListHeader,
   EmptyScrewList,
   ScrewTable,
@@ -31,6 +32,59 @@ import {
   ScrewListScrollArea,
   SessionStateDialog,
 } from './ScrewManagementUI';
+import { ToolGroupManager, addTool, state as cornerstoneToolsState } from '@cornerstonejs/tools';
+import ScrewInteractionTool from '../../tools/ScrewInteractionTool';
+
+// Register ScrewInteractionTool globally (only once)
+let screwToolRegistered = false;
+function registerScrewInteractionTool() {
+  console.log('🔧 [ScrewManagement] registerScrewInteractionTool() called');
+  console.log('   screwToolRegistered:', screwToolRegistered);
+
+  if (screwToolRegistered) {
+    console.log('   Already registered, skipping');
+    return true;
+  }
+
+  try {
+    // Check if tool is already registered in cornerstoneTools state
+    const existingTools = cornerstoneToolsState.tools;
+    console.log('   cornerstoneToolsState.tools:', existingTools ? Object.keys(existingTools) : 'undefined');
+
+    if (existingTools && existingTools[ScrewInteractionTool.toolName]) {
+      console.log('✅ [ScrewManagement] ScrewInteractionTool already registered globally');
+      screwToolRegistered = true;
+      return true;
+    }
+
+    console.log('   Calling addTool(ScrewInteractionTool)...');
+    console.log('   ScrewInteractionTool:', ScrewInteractionTool);
+    console.log('   ScrewInteractionTool.toolName:', ScrewInteractionTool.toolName);
+
+    addTool(ScrewInteractionTool);
+    screwToolRegistered = true;
+    console.log('✅ [ScrewManagement] ScrewInteractionTool registered globally SUCCESS!');
+    return true;
+  } catch (error) {
+    console.error('❌ [ScrewManagement] addTool error:', error);
+    if (error.message?.includes('already registered')) {
+      console.log('✅ [ScrewManagement] ScrewInteractionTool already registered (caught)');
+      screwToolRegistered = true;
+      return true;
+    } else {
+      console.error('❌ [ScrewManagement] Failed to register ScrewInteractionTool:', error);
+      return false;
+    }
+  }
+}
+
+// Try to register tool immediately when module loads
+console.log('🚀 [ScrewManagement] Module loading - attempting early tool registration');
+try {
+  registerScrewInteractionTool();
+} catch (e) {
+  console.log('⚠️ [ScrewManagement] Early registration failed (will retry later):', e.message);
+}
 
 export default function ScrewManagementPanel({ servicesManager }) {
   const { viewportStateService, modelStateService, planeCutterService } = servicesManager.services;
@@ -55,6 +109,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [backendSummary, setBackendSummary] = useState<any | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  // Screw Interaction Tool state
+  const [isMoveToolActive, setIsMoveToolActive] = useState(false);
+  const [selectedScrew, setSelectedScrew] = useState<{ label: string } | null>(null);
+  const [modelCount, setModelCount] = useState(0);
 
   // Debug: Log screws whenever they change
   useEffect(() => {
@@ -134,13 +193,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       if (response.success && response.session_id) {
         const newSessionId = response.session_id;
-        
+
         // If new session_id is different from old one, clear old models
         if (oldSessionId && oldSessionId !== newSessionId) {
           console.log('🔄 New session detected - clearing old session data');
           console.log(`   Old session: ${oldSessionId.substring(0, 8)}...`);
           console.log(`   New session: ${newSessionId.substring(0, 8)}...`);
-          
+
           // Clear old 3D models
           modelStateService.clearAllModels();
           // Clear old viewport snapshots
@@ -149,7 +208,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
           setScrews([]);
           console.log('🧹 Cleared old session data (models, snapshots, screws)');
         }
-        
+
         setSessionId(newSessionId);
         setSessionStatus('ready');
         console.log('✅ Planning session started:', newSessionId);
@@ -215,17 +274,17 @@ export default function ScrewManagementPanel({ servicesManager }) {
    */
   const loadScrewsLocal = () => {
     console.log('📁 Checking localStorage for cached screws...');
-    
+
     // Get cached session_id from localStorage
     const CACHED_SESSION_KEY = 'ohif_planning_session_id';
     const cachedSessionId = localStorage.getItem(CACHED_SESSION_KEY);
-    
+
     // Check if cached session_id matches current session_id
     if (cachedSessionId && sessionId && cachedSessionId === sessionId) {
       console.log('✅ Cached session_id matches current session_id');
       console.log(`   Cached: ${cachedSessionId.substring(0, 8)}...`);
       console.log(`   Current: ${sessionId.substring(0, 8)}...`);
-      
+
       const allScrews = viewportStateService.getAllSnapshots();
       setScrews(allScrews);
       console.log(`✅ Loaded ${allScrews.length} screws from localStorage`);
@@ -233,11 +292,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('⚠️ Session ID mismatch or missing - clearing cached screws and 3D models');
       console.log(`   Cached session_id: ${cachedSessionId || 'none'}`);
       console.log(`   Current session_id: ${sessionId || 'none'}`);
-      
+
       // Clear cached screws if session_id doesn't match
       viewportStateService.clearAll();
       setScrews([]);
-      
+
       // Clear all rendered 3D models (this is critical!)
       modelStateService.clearAllModels();
       console.log('🧹 Cleared cached screws and 3D models due to session mismatch');
@@ -341,7 +400,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
     try {
       console.log(`🔍 Loading cap model for screw: "${screwLabel}" (length: ${length}mm)`);
       console.log(`🔍 Transform:`, transform);
-      
+
       // Use the same color as the screw body
       const capColor = screwLabel ? getScrewColor(screwLabel) : [1.0, 0.84, 0.0];
       console.log(`🎨 Using color [${capColor}] for cap "${screwLabel || 'default'}"`);
@@ -380,7 +439,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
         // Cap height (fixed value, unit: millimeters)
         const capHeight = 15.0;
-        
+
         // Cap should be placed at the top of the screw
         // Screw body already has length/2 offset to center-align to entry point
         // Cap needs offset: length/2 (reach screw top) + capHeight/2 (if origin is at center, align bottom)
@@ -608,14 +667,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
     // Pattern: {level}{side_abbr}, where level = L/T/C/S + number, side_abbr = L or R
     const pattern = /^([LTCS]\d+)([LR])$/i;
     const match = label.trim().match(pattern);
-    
+
     if (match) {
       const level = match[1].toUpperCase(); // L3, T5, C7, S1, etc.
       const sideAbbr = match[2].toUpperCase(); // L or R
       const side = sideAbbr === 'L' ? 'left' : 'right';
       return { level, side };
     }
-    
+
     // If parsing fails, return default values
     console.warn(`⚠️ Cannot parse vertebral level and side from label "${label}", using default values`);
     return { level: 'Unknown', side: 'unknown' };
@@ -758,19 +817,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       } catch (apiError) {
         console.error('❌ Failed to save screw to API:', apiError);
-        
+
         // Check if error is about maximum limit reached
         const errorMessage = apiError?.message || apiError?.error || String(apiError);
         console.log('🔍 Error message for limit check:', errorMessage);
-        
-        const isLimitError = errorMessage.toLowerCase().includes('maximum limit') || 
+
+        const isLimitError = errorMessage.toLowerCase().includes('maximum limit') ||
                             errorMessage.toLowerCase().includes('capacity') ||
                             errorMessage.toLowerCase().includes('maximum of') ||
                             errorMessage.toLowerCase().includes('screws reached') ||
                             errorMessage.toLowerCase().includes('cannot add screw');
-        
+
         console.log('🔍 Is limit error?', isLimitError);
-        
+
         if (isLimitError) {
           // Show the proper limit error message
           alert(`Maximum of 10 screws reached. Please delete some screws before adding more.`);
@@ -791,13 +850,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
        // Check model limit - only count screw body models, exclude cap models
        const screwBodyModels = getScrewBodyModels();
        const maxModels = 10; // Match Python backend MAX_SCREWS limit
- 
+
        if (screwBodyModels.length >= maxModels) {
          console.warn(`⚠️ Maximum number of screws (${maxModels}) reached.`);
          alert(`Maximum of ${maxModels} screws reached. Please delete some screws before adding more.`);
          return;
        }
- 
+
        const allModels = modelStateService.getAllModels();
        console.log(`📊 Current screw bodies: ${screwBodyModels.length}/${maxModels} (total models: ${allModels.length})`);
 
@@ -848,7 +907,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       setIsRestoring(true);
 
       const allModels = modelStateService.getAllModels();
-      
+
 
       let displayInfo;
       try {
@@ -933,7 +992,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         // Load and display the 3D model
         const screwId = screwData.screw_id || screwData.id || null;
         await loadScrewModel(displayInfo.radius, displayInfo.length, transformArray, displayInfo.label, screwId);
-        
+
         // ═════════════════════════════════════════════════════════
         // Load cap model after loading screw body (cap doesn't count toward model limit)
         // ═════════════════════════════════════════════════════════
@@ -1120,6 +1179,256 @@ export default function ScrewManagementPanel({ servicesManager }) {
     } catch (error) {
       console.error('Error deleting screw:', error);
       alert('Failed to delete screw. Please check the console for details.');
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCREW INTERACTION TOOL
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Debug function to check screw interaction state and plane cutters
+   */
+  const debugScrewInteraction = async () => {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔍 [DEBUG] SCREW & PLANE CUTTER STATE');
+    console.log('═══════════════════════════════════════════════════════');
+
+    // Check models
+    const allModels = modelStateService.getAllModels();
+    console.log(`📦 Loaded models: ${allModels.length}`);
+    allModels.forEach((model, i) => {
+      console.log(`   ${i + 1}. ${model.metadata?.name || model.metadata?.id}`);
+      console.log(`      - fileUrl: ${model.metadata?.fileUrl || 'unknown'}`);
+      console.log(`      - hasPolyData: ${!!model.polyData}`);
+      console.log(`      - hasActor: ${!!model.actor}`);
+    });
+
+    // Check screws from API
+    console.log(`\n🔩 Screws from API: ${screws.length}`);
+    screws.forEach((screw, i) => {
+      console.log(`   ${i + 1}. ${screw.screw_label || screw.name || 'unnamed'}`);
+    });
+
+    // Check PlaneCutterService
+    console.log(`\n🔪 PlaneCutterService:`);
+    if (planeCutterService) {
+      console.log(`   - isEnabled: ${planeCutterService.getIsEnabled()}`);
+      const planeCutters = planeCutterService.getPlaneCutters?.() || [];
+      console.log(`   - planeCutters count: ${planeCutters.length}`);
+      planeCutters.forEach((pc, i) => {
+        console.log(`   ${i + 1}. viewportId: ${pc.viewportId}, orientation: ${pc.orientation}`);
+        console.log(`      - modelCutters: ${pc.modelCutters?.size || 0}`);
+      });
+
+      // Try to reinitialize if no plane cutters
+      if (planeCutters.length === 0) {
+        console.log('\n⚠️ No plane cutters found! Attempting to initialize...');
+        try {
+          await planeCutterService.initialize();
+          planeCutterService.enable();
+          console.log('✅ Plane cutters initialized and enabled');
+        } catch (error) {
+          console.error('❌ Failed to initialize plane cutters:', error);
+        }
+      }
+    } else {
+      console.log(`   ❌ PlaneCutterService not available!`);
+    }
+
+    // Check viewports
+    console.log(`\n🖼️ Available Viewports:`);
+    const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+    if (renderingEngine) {
+      const viewports = renderingEngine.getViewports();
+      viewports.forEach((vp, i) => {
+        console.log(`   ${i + 1}. ${vp.id} (type: ${vp.type})`);
+      });
+    }
+
+    // Check tool groups
+    const allToolGroups = ToolGroupManager.getAllToolGroups();
+    console.log(`\n🛠️ Tool groups: ${allToolGroups.length}`);
+    allToolGroups.forEach((tg, i) => {
+      console.log(`   ${i + 1}. ${tg.id}`);
+      const viewportIds = tg.getViewportIds?.() || [];
+      console.log(`      viewports: ${viewportIds.join(', ')}`);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST INSIDE/OUTSIDE DETECTION using crosshair position
+    // ═══════════════════════════════════════════════════════════════════════════
+    console.log('\n🎯 TESTING INSIDE/OUTSIDE DETECTION:');
+    console.log('───────────────────────────────────────────────────────');
+
+    // Get crosshair center position
+    const crosshairCenter = crosshairsHandler.getCrosshairCenter();
+    if (crosshairCenter) {
+      console.log(`📍 Crosshair position: [${crosshairCenter.map(v => v.toFixed(2)).join(', ')}]`);
+
+      // Test if crosshair position is inside any screw
+      if (modelStateService.findScrewAtPoint) {
+        const result = modelStateService.findScrewAtPoint(crosshairCenter as [number, number, number]);
+        if (result) {
+          console.log(`✅ Crosshair is INSIDE screw: ${result.screwLabel} (${result.part})`);
+        } else {
+          console.log(`❌ Crosshair is NOT inside any screw`);
+        }
+      } else {
+        console.log(`⚠️ findScrewAtPoint method not available on modelStateService`);
+      }
+    } else {
+      console.log(`⚠️ Could not get crosshair position`);
+    }
+
+    console.log('═══════════════════════════════════════════════════════');
+
+    // Show alert with summary
+    const planeCutters = planeCutterService?.getPlaneCutters?.() || [];
+    alert(`Debug Info:\n\nModels: ${allModels.length}\nScrews (API): ${screws.length}\nPlaneCutters: ${planeCutters.length}\nPlaneCutter Enabled: ${planeCutterService?.getIsEnabled()}\n\nCheck console for details.`);
+  };
+
+  /**
+   * Toggle the Screw Interaction Tool (Move Screw)
+   * When active, users can click and drag screws on MPR planes
+   */
+  const toggleMoveTool = () => {
+    try {
+      // First, ensure the tool is registered globally with cornerstoneTools
+      registerScrewInteractionTool();
+
+      const toolName = 'ScrewInteraction';
+
+      // Get all tool groups and find one that has viewports
+      const allToolGroups = ToolGroupManager.getAllToolGroups();
+      console.log('📋 [ScrewManagement] All tool groups:', allToolGroups.map(g => `${g.id} (${g.getViewportIds?.()?.length || 0} viewports)`));
+
+      // Find the tool group that contains MPR viewports (fourUpMesh viewports)
+      let foundToolGroup = null;
+
+      for (const tg of allToolGroups) {
+        const viewportIds = tg.getViewportIds?.() || [];
+        console.log(`   Checking "${tg.id}": ${viewportIds.length} viewport(s)`);
+
+        // Check if this tool group has MPR viewports
+        const hasMPRViewports = viewportIds.some(vpId =>
+          vpId.includes('mpr') || vpId.includes('axial') || vpId.includes('coronal') || vpId.includes('sagittal')
+        );
+
+        if (hasMPRViewports && viewportIds.length > 0) {
+          foundToolGroup = tg;
+          console.log(`✅ [ScrewManagement] Found tool group with MPR viewports: ${tg.id}`);
+          break;
+        }
+
+        // Also accept any tool group with viewports
+        if (!foundToolGroup && viewportIds.length > 0) {
+          foundToolGroup = tg;
+        }
+      }
+
+      if (!foundToolGroup) {
+        console.error('❌ [ScrewManagement] No tool group with viewports found!');
+        console.error('   This usually means the viewports are not properly set up.');
+        return;
+      }
+
+      const toolGroup = foundToolGroup;
+      console.log(`✅ [ScrewManagement] Using tool group: ${toolGroup.id}`);
+
+      // Check if tool is already in the tool group, if not add it
+      let toolInstance = toolGroup.getToolInstance(toolName);
+      if (!toolInstance) {
+        console.log(`📦 [ScrewManagement] Adding ${toolName} to tool group`);
+        try {
+          toolGroup.addTool(toolName);
+          toolInstance = toolGroup.getToolInstance(toolName);
+        } catch (addError) {
+          console.error(`❌ [ScrewManagement] Failed to add tool: ${addError.message}`);
+        }
+      }
+
+      if (isMoveToolActive) {
+        // Deactivate: Set to Passive (or Disabled)
+        console.log('🔴 [ScrewManagement] Deactivating ScrewInteraction tool');
+        try {
+          toolGroup.setToolPassive(toolName);
+        } catch (e) {
+          toolGroup.setToolDisabled(toolName);
+        }
+        setIsMoveToolActive(false);
+        setSelectedScrew(null);
+      } else {
+        // Activate: Set tool active with primary mouse button
+        console.log('🟢 [ScrewManagement] Activating ScrewInteraction tool');
+        console.log(`   ToolGroup ID: ${toolGroup.id}`);
+        console.log(`   ToolGroup viewportsInfo:`, toolGroup.viewportsInfo);
+
+        // Log all viewports in this tool group
+        const viewportIds = toolGroup.getViewportIds?.() || [];
+        console.log(`   Viewports in toolGroup: ${viewportIds.length}`);
+        viewportIds.forEach((vpId, i) => {
+          console.log(`      ${i + 1}. ${vpId}`);
+        });
+
+        // Set the servicesManager on the tool instance
+        if (toolInstance && toolInstance.setServicesManager) {
+          toolInstance.setServicesManager(servicesManager);
+          console.log('✅ [ScrewManagement] ServicesManager set on tool instance');
+        } else {
+          console.warn('⚠️ [ScrewManagement] Could not set servicesManager on tool');
+          console.warn('   toolInstance:', toolInstance);
+        }
+
+        // Log current tool states before activation
+        console.log('📋 Current tool options in toolGroup:');
+        const toolOptions = toolGroup.toolOptions;
+        if (toolOptions) {
+          Object.keys(toolOptions).forEach(tn => {
+            console.log(`   - ${tn}: mode=${toolOptions[tn]?.mode}, bindings=${JSON.stringify(toolOptions[tn]?.bindings)}`);
+          });
+        }
+
+        toolGroup.setToolActive(toolName, {
+          bindings: [{ mouseButton: 1 }] // Left mouse button (Primary)
+        });
+
+        console.log('✅ [ScrewManagement] Tool activated with primary mouse button binding');
+
+        // Verify activation
+        const toolOptionsAfter = toolGroup.toolOptions;
+        if (toolOptionsAfter && toolOptionsAfter[toolName]) {
+          console.log(`   Tool mode after activation: ${toolOptionsAfter[toolName]?.mode}`);
+          console.log(`   Tool bindings after activation: ${JSON.stringify(toolOptionsAfter[toolName]?.bindings)}`);
+        }
+
+        // Debug: Check which viewports are in this tool group
+        console.log('');
+        console.log('🔍 [DEBUG] Tool Group Viewport Check:');
+        const toolGroupViewportIds = toolGroup.getViewportIds?.() || [];
+        console.log(`   Tool group "${toolGroup.id}" has ${toolGroupViewportIds.length} viewport(s):`);
+        toolGroupViewportIds.forEach((vpId, i) => {
+          console.log(`      ${i + 1}. ${vpId}`);
+        });
+
+        // Check all viewports in rendering engine
+        const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+        if (renderingEngine) {
+          const allViewports = renderingEngine.getViewports();
+          console.log(`   Rendering engine has ${allViewports.length} viewport(s):`);
+          allViewports.forEach((vp, i) => {
+            const isInToolGroup = toolGroupViewportIds.includes(vp.id);
+            console.log(`      ${i + 1}. ${vp.id} (type: ${vp.type}) - ${isInToolGroup ? '✅ IN tool group' : '❌ NOT in tool group'}`);
+          });
+        }
+        console.log('');
+        console.log('⚠️ NOTE: ScrewInteraction tool will ONLY respond to clicks in viewports that are IN the tool group!');
+        console.log('');
+
+        setIsMoveToolActive(true);
+      }
+    } catch (error) {
+      console.error('❌ [ScrewManagement] Error toggling move tool:', error);
     }
   };
 
@@ -1551,7 +1860,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
           const screwId = screw.screw_id || screw.id || null;
           await loadScrewModel(displayInfo.radius, displayInfo.length, transform, displayInfo.label, screwId);
-          
+
           // ═════════════════════════════════════════════════════════
           // Load cap model after loading screw body (cap doesn't count toward model limit)
           // ═════════════════════════════════════════════════════════
@@ -1566,7 +1875,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
           } else {
             console.warn(`   ⚠️ Skipping cap model load for ${displayInfo.label} - no valid transform`);
           }
-          
+
           modelsLoaded++;
         } catch (modelError) {
           modelsFailed++;
@@ -1678,8 +1987,9 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
-  const maxScrews = viewportStateService.getMaxSnapshots();
-  const remainingSlots = viewportStateService.getRemainingSlots();
+  // Use screws.length for actual screw count, not viewport snapshots
+  const maxScrews = 10; // Maximum screws allowed
+  const remainingSlots = Math.max(0, maxScrews - screws.length);
 
   if (isLoading) {
     return <LoadingScreen />;
@@ -1737,6 +2047,17 @@ export default function ScrewManagementPanel({ servicesManager }) {
         status={sessionStatus}
         sessionId={sessionId}
         onRetry={initializeSession}
+      />
+
+      {/* Screw Interaction Toolbar */}
+      <ScrewToolbar
+        isMoveToolActive={isMoveToolActive}
+        onToggleMoveTool={toggleMoveTool}
+        hasScrews={screws.length > 0}
+        selectedScrew={selectedScrew}
+        modelCount={modelStateService.getAllModels().length}
+        screwCount={screws.length}
+        onDebug={debugScrewInteraction}
       />
 
       {/* Save Screw Placement Button - Above the table */}
