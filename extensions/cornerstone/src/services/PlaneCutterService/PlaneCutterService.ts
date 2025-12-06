@@ -164,13 +164,24 @@ class PlaneCutterService extends PubSubService {
    * Handle MODEL_UPDATED event (transforms, visibility changes, etc)
    */
   private _handleModelUpdated(event: { modelId: string; property?: string }): void {
-    const { modelId } = event;
+    const { modelId, property } = event;
 
-    console.log(`🔄 [PlaneCutterService] Model updated: ${modelId}`);
+    console.log(`🔄 [PlaneCutterService] Model updated: ${modelId}, property: ${property}`);
 
     if (!this.isEnabled) {
+      console.log(`   ℹ️ Plane cutters not enabled, skipping update`);
       return;
     }
+
+    // Check if we have cutters for this model
+    let hasCutters = false;
+    for (const planeCutter of this.planeCutters) {
+      if (planeCutter.modelCutters.has(modelId)) {
+        hasCutters = true;
+        break;
+      }
+    }
+    console.log(`   📊 Has existing cutters for ${modelId}: ${hasCutters}`);
 
     // Update the model's cutters with latest polyData
     this.updateModelCutters(modelId);
@@ -383,50 +394,13 @@ class PlaneCutterService extends PubSubService {
         return;
       }
 
-      // Use the provided crosshair center if available
-      if (crosshairCenter) {
-        planeOrigin = crosshairCenter;
-      } else {
-        // Fallback: Calculate plane origin from viewport's current image slice
-        try {
-          const imageData = viewport.getImageData?.();
-          if (imageData) {
-            const { focalPoint } = camera;
-            const origin = imageData.getOrigin();
-            const spacing = imageData.getSpacing();
-            const dimensions = imageData.getDimensions();
+      // Get camera focalPoint - this is the most reliable source for current slice position
+      const { focalPoint } = camera;
 
-            // Calculate the center position of the current slice based on viewport orientation
-            if (planeCutter.orientation === 'axial') {
-              const sliceIndex = Math.round((focalPoint[2] - origin[2]) / spacing[2]);
-              const clampedIndex = Math.max(0, Math.min(dimensions[2] - 1, sliceIndex));
-              planeOrigin = [
-                origin[0] + (dimensions[0] / 2) * spacing[0],
-                origin[1] + (dimensions[1] / 2) * spacing[1],
-                origin[2] + clampedIndex * spacing[2]
-              ];
-            } else if (planeCutter.orientation === 'coronal') {
-              const sliceIndex = Math.round((focalPoint[1] - origin[1]) / spacing[1]);
-              const clampedIndex = Math.max(0, Math.min(dimensions[1] - 1, sliceIndex));
-              planeOrigin = [
-                origin[0] + (dimensions[0] / 2) * spacing[0],
-                origin[1] + clampedIndex * spacing[1],
-                origin[2] + (dimensions[2] / 2) * spacing[2]
-              ];
-            } else if (planeCutter.orientation === 'sagittal') {
-              const sliceIndex = Math.round((focalPoint[0] - origin[0]) / spacing[0]);
-              const clampedIndex = Math.max(0, Math.min(dimensions[0] - 1, sliceIndex));
-              planeOrigin = [
-                origin[0] + clampedIndex * spacing[0],
-                origin[1] + (dimensions[1] / 2) * spacing[1],
-                origin[2] + (dimensions[2] / 2) * spacing[2]
-              ];
-            }
-          }
-        } catch (sliceError) {
-          return;
-        }
-      }
+      // ALWAYS use focalPoint directly as the plane origin
+      // This ensures the cutting plane follows the current slice position
+      // (crosshairCenter was not updating correctly during scroll)
+      planeOrigin = [focalPoint[0], focalPoint[1], focalPoint[2]];
 
       // If still no valid position, skip update
       if (!planeOrigin || !Array.isArray(planeOrigin) || planeOrigin.length !== 3) {
@@ -438,9 +412,27 @@ class PlaneCutterService extends PubSubService {
       planeCutter.plane.setNormal(planeNormal[0], planeNormal[1], planeNormal[2]);
 
       // Update all model cutters in this plane
-      for (const modelCutterData of planeCutter.modelCutters.values()) {
+      for (const [modelId, modelCutterData] of planeCutter.modelCutters.entries()) {
         modelCutterData.cutter.modified();
         modelCutterData.cutter.update();
+
+        // Debug: Check cut result
+        const cutterOutput = modelCutterData.cutter.getOutputData();
+        const numCutPoints = cutterOutput?.getPoints()?.getNumberOfPoints() || 0;
+
+        // Get model bounds for comparison
+        const inputData = modelCutterData.cutter.getInputData();
+        const modelBounds = inputData?.getBounds() || [0, 0, 0, 0, 0, 0];
+
+        // Log if plane intersects model (only when there's meaningful data)
+        if (numCutPoints > 0 || (inputData && inputData.getPoints()?.getNumberOfPoints() > 0)) {
+          const planePos = planeCutter.orientation === 'axial' ? planeOrigin[2] :
+                          planeCutter.orientation === 'coronal' ? planeOrigin[1] : planeOrigin[0];
+          const boundsIdx = planeCutter.orientation === 'axial' ? [4, 5] :
+                           planeCutter.orientation === 'coronal' ? [2, 3] : [0, 1];
+
+          console.log(`  🔪 ${planeCutter.orientation} (${modelId}): plane=${planePos.toFixed(1)}, bounds=[${modelBounds[boundsIdx[0]].toFixed(1)}, ${modelBounds[boundsIdx[1]].toFixed(1)}], cut=${numCutPoints}pts`);
+        }
       }
     } catch (error) {
       console.warn(`⚠️ [${planeCutter.orientation}] Error updating plane:`, error.message);

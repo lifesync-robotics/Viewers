@@ -862,7 +862,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Load the 3D model using the new API
       try {
-        await loadScrewModel(radiusValue, lengthValue, transform, screwLabel);
+        await loadScrewModel(radiusValue, lengthValue, transform, screwLabel, savedScrewId);
         console.log(`✅ Model loaded successfully - Total: ${modelStateService.getAllModels().length}/${maxModels}`);
 
         // ═════════════════════════════════════════════════════════
@@ -1352,6 +1352,18 @@ export default function ScrewManagementPanel({ servicesManager }) {
         } else {
           console.warn('⚠️ [ScrewManagement] Could not set servicesManager on tool');
           console.warn('   toolInstance:', toolInstance);
+        }
+
+        // Set the planningBackendService on the tool instance (imported directly, not from servicesManager)
+        if (toolInstance && toolInstance.setPlanningBackendService) {
+          toolInstance.setPlanningBackendService(planningBackendService);
+          console.log('✅ [ScrewManagement] PlanningBackendService set on tool instance');
+        }
+
+        // Set the sessionId on the tool instance for backend saving
+        if (toolInstance && toolInstance.setSessionId) {
+          toolInstance.setSessionId(sessionId);
+          console.log(`✅ [ScrewManagement] SessionId set on tool: ${sessionId}`);
         }
 
         // Log current tool states before activation

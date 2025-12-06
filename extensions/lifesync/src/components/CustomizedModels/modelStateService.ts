@@ -5,6 +5,7 @@ import vtkMapper from '@kitware/vtk.js/Rendering/Core/Mapper';
 import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';  // models are all in obj format
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 import vtkPolyData from '@kitware/vtk.js/Common/DataModel/PolyData';
+import vtkPoints from '@kitware/vtk.js/Common/Core/Points';
 import vtkTransform from '@kitware/vtk.js/Common/Transform/Transform';
 
 import { Types as OHIFTypes } from '@ohif/core';
@@ -1599,6 +1600,12 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     const numPoints = points.getNumberOfPoints();
     const transformedPoints = new Float32Array(numPoints * 3);
 
+    // Debug: Check first point before/after transform
+    if (numPoints > 0) {
+      const firstPoint = points.getPoint(0);
+      console.log(`   🔍 First point BEFORE transform: [${firstPoint[0].toFixed(2)}, ${firstPoint[1].toFixed(2)}, ${firstPoint[2].toFixed(2)}]`);
+    }
+
     for (let i = 0; i < numPoints; i++) {
       const point = points.getPoint(i);
       const transformedPoint = new Float32Array([0, 0, 0]);
@@ -1610,13 +1617,31 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       transformedPoints[idx + 2] = transformedPoint[2];
     }
 
-    // Update polyData with transformed coordinates
-    transformedPolyData.getPoints().setData(transformedPoints, 3);
+    // Debug: Check first transformed point
+    if (numPoints > 0) {
+      console.log(`   🔍 First point AFTER transform: [${transformedPoints[0].toFixed(2)}, ${transformedPoints[1].toFixed(2)}, ${transformedPoints[2].toFixed(2)}]`);
+    }
+
+    // CRITICAL FIX: Create completely NEW vtkPoints object with transformed data
+    // The shallowCopy's points may have cached bounds that don't update
+    const newPoints = vtkPoints.newInstance();
+    newPoints.setData(transformedPoints, 3);
+
+    // Set the new points on the polyData (this replaces the old points entirely)
+    transformedPolyData.setPoints(newPoints);
+
+    // Mark as modified
+    transformedPolyData.modified();
 
     // Store transformed polyData
     loadedModel.polyData = transformedPolyData;
 
+    // Log bounds for debugging - should now be correct
+    const bounds = transformedPolyData.getBounds();
+    const originalBounds = originalPolyData.getBounds();
     console.log(`✅ Transformed ${numPoints} points`);
+    console.log(`   Original bounds: [${originalBounds.map(b => b.toFixed(1)).join(', ')}]`);
+    console.log(`   Transformed bounds: [${bounds.map(b => b.toFixed(1)).join(', ')}]`);
     console.log('✅ PolyData transformed and stored');
 
     // ═════════════════════════════════════════════════════════
@@ -2262,12 +2287,21 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       }
     }
 
-    // Broadcast update event for PlaneCutterService
+    // Broadcast update event for PlaneCutterService - main screw
     this._broadcastEvent(this.EVENTS.MODEL_UPDATED, {
       modelId,
       property: 'position',
       delta
     });
+
+    // Also broadcast for cap model if it exists (so its plane cutter updates too)
+    if (capModel) {
+      this._broadcastEvent(this.EVENTS.MODEL_UPDATED, {
+        modelId: capId,
+        property: 'position',
+        delta
+      });
+    }
 
     // Trigger re-render
     const renderingEngines = getRenderingEngines();
@@ -2492,11 +2526,19 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       }
     }
 
-    // Broadcast update event
+    // Broadcast update event for main screw
     this._broadcastEvent(this.EVENTS.MODEL_UPDATED, {
       modelId,
       property: 'rotation'
     });
+
+    // Also broadcast for cap model if it exists (so its plane cutter updates too)
+    if (capModel) {
+      this._broadcastEvent(this.EVENTS.MODEL_UPDATED, {
+        modelId: capId,
+        property: 'rotation'
+      });
+    }
 
     // Trigger re-render
     const renderingEngines = getRenderingEngines();
@@ -2509,13 +2551,20 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
 
   /**
    * Update polyData transform for plane cutters (internal helper)
+   * This updates the polyData points in world space for accurate plane cutting
    */
   private _updatePolyDataWithTransform(model: LoadedModel, newMatrix: Float32Array): void {
-    if (!model.reader || !model.polyData) return;
+    if (!model.reader || !model.polyData) {
+      console.warn(`⚠️ [ModelStateService] _updatePolyDataWithTransform: Missing reader or polyData for ${model.metadata.id}`);
+      return;
+    }
 
-    // Get original polyData from reader
+    // Get original polyData from reader (untransformed geometry)
     const originalPolyData = model.reader.getOutputData();
-    if (!originalPolyData) return;
+    if (!originalPolyData) {
+      console.warn(`⚠️ [ModelStateService] _updatePolyDataWithTransform: No output data from reader for ${model.metadata.id}`);
+      return;
+    }
 
     // Create VTK transform
     const vtkTransformObj = vtkTransform.newInstance();
@@ -2537,8 +2586,22 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       transformedPoints[idx + 2] = transformedPoint[2];
     }
 
-    // Update polyData
-    model.polyData.getPoints().setData(transformedPoints, 3);
+    // CRITICAL FIX: Create NEW vtkPoints object with transformed data
+    // Modifying existing points doesn't update bounds correctly
+    const newPointsObj = vtkPoints.newInstance();
+    newPointsObj.setData(transformedPoints, 3);
+
+    // Replace points on polyData (this forces bounds recalculation)
+    model.polyData.setPoints(newPointsObj);
+    model.polyData.modified();
+
+    // Log bounds for debugging (should now reflect transformed positions)
+    const bounds = model.polyData.getBounds();
+    const originalBounds = originalPolyData.getBounds();
+    console.log(`📐 [ModelStateService] PolyData updated for ${model.metadata.id}:`);
+    console.log(`   Original bounds: [${originalBounds.map(b => b.toFixed(1)).join(', ')}]`);
+    console.log(`   New bounds: [${bounds.map(b => b.toFixed(1)).join(', ')}]`);
+    console.log(`   Matrix translation: [${newMatrix[12].toFixed(1)}, ${newMatrix[13].toFixed(1)}, ${newMatrix[14].toFixed(1)}]`);
   }
 
   /**
