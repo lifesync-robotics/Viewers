@@ -102,6 +102,7 @@ const EVENTS = {
  * - vtk.js OBJ Viewer: https://kitware.github.io/vtk-js/examples/OBJViewer.html
  */
 class ModelStateService extends PubSubService {
+  private _transformCallCount: number = 0;
   static REGISTRATION = {
     name: 'modelStateService',
     altName: 'ModelStateService',
@@ -342,6 +343,14 @@ class ModelStateService extends PubSubService {
         screwRadius: options.screwRadius,
         screwLength: options.screwLength,
       };
+
+      // Debug: Log if screw dimensions are being stored
+      if (options.screwRadius || options.screwLength) {
+        console.log('📏 [ModelStateService] Storing screw dimensions in metadata:');
+        console.log(`   modelId: ${modelId}`);
+        console.log(`   screwRadius: ${options.screwRadius}mm`);
+        console.log(`   screwLength: ${options.screwLength}mm`);
+      }
 
       let loadedModel: LoadedModel;
 
@@ -1446,6 +1455,37 @@ class ModelStateService extends PubSubService {
  */
 async setModelTransform(modelId: string, transform: number[] | Float32Array, length?: number): Promise<boolean> {
   try {
+    // IMMEDIATELY capture and log the input transform values to prevent any confusion
+    const inputTransformTranslation = [transform[3], transform[7], transform[11]];
+    const callStack = new Error().stack;
+    const callerInfo = callStack?.split('\n')[2]?.trim() || 'unknown';
+
+    this._transformCallCount = (this._transformCallCount || 0) + 1;
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`🔧 [setModelTransform] ENTRY - CALL #${this._transformCallCount}`);
+    console.log(`   Model ID: ${modelId}`);
+    console.log(`   Caller: ${callerInfo}`);
+
+    // Get model info to check source
+    const model = this.loadedModels.get(modelId);
+    if (model) {
+      const modelPath = model.metadata.fileUrl || model.metadata.filePath || '';
+      const isAssetLibrary = modelPath.includes('asset_library') || modelPath.includes('lsr-rgs');
+      const isGenerated = modelPath.includes('generated') || modelPath.includes('cylinder');
+      console.log(`   Model Name: ${model.metadata.name || 'N/A'}`);
+      console.log(`   Model Path: ${modelPath.substring(0, 100)}${modelPath.length > 100 ? '...' : ''}`);
+      console.log(`   Source: ${isAssetLibrary ? 'ASSET_LIBRARY' : isGenerated ? 'GENERATED_OBJ' : 'UNKNOWN'}`);
+    } else {
+      console.log(`   ⚠️ Model not found in loadedModels!`);
+    }
+
+    console.log(`   Input transform[3] = ${transform[3]}`);
+    console.log(`   Input transform[7] = ${transform[7]}`);
+    console.log(`   Input transform[11] = ${transform[11]}`);
+    console.log(`   Input translation: [${inputTransformTranslation[0]}, ${inputTransformTranslation[1]}, ${inputTransformTranslation[2]}]`);
+    console.log(`   Length parameter: ${length || 'none'}`);
+    console.log('═══════════════════════════════════════════════════════');
+
     const loadedModel = this.loadedModels.get(modelId);
     if (!loadedModel) {
       console.error(`❌ Model not found`);
@@ -1464,15 +1504,32 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
 
     console.log(`✅ Valid transform: ${transform.constructor.name}[${transform.length}]`);
 
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('🔧 [ModelStateService] APPLYING TRANSFORM WITH LENGTH OFFSET');
-    console.log('═══════════════════════════════════════════════════════');
+    // Verify transform values haven't changed
+    if (Math.abs(transform[7] - inputTransformTranslation[1]) > 0.001) {
+      console.error(`❌ CRITICAL: transform[7] was modified during validation!`);
+      console.error(`   Original: ${inputTransformTranslation[1]}, Current: ${transform[7]}`);
+    }
 
-    // Check if model is a generated cylinder (only apply offset for cylinders)
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔧 [ModelStateService] APPLYING TRANSFORM (SIMPLIFIED - NO OFFSET)');
+    console.log(`   🔍 Model ID: ${modelId}`);
+    console.log(`   🔍 Model Name: ${loadedModel.metadata.name}`);
+    console.log(`   🔍 Length param: ${length}mm (IGNORED in simplified logic)`);
+    console.log(`   ⏰ Time: ${new Date().toISOString()}`);
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('📍 CALL STACK:');
+    console.trace(); // This will show who called setModelTransform
+
+    // ⚠️ SIMPLIFIED LOGIC - Path and dimension checks kept for logging only
     const modelPath = loadedModel.metadata.fileUrl || loadedModel.metadata.filePath;
-    const isCylinder = modelPath.includes('/cylinder/');
+    const isCylinderFromPath = modelPath.includes('/cylinder/');
+    const hasScrewDimensions = loadedModel.metadata.screwLength && loadedModel.metadata.screwLength > 0;
+    const isScrew = isCylinderFromPath || hasScrewDimensions;
 
-    console.log(`📦 Model type: ${isCylinder ? 'Generated Cylinder' : 'OBJ Model'}`);
+    console.log(`📦 Model type detection (for info only):`);
+    console.log(`   - Path contains /cylinder/: ${isCylinderFromPath}`);
+    console.log(`   - Has screwLength in metadata: ${hasScrewDimensions} (${loadedModel.metadata.screwLength}mm)`);
+    console.log(`   - Is screw: ${isScrew} (not used in simplified logic)`);
     console.log(`📂 Model path: ${modelPath}`);
 
     // Extract the coronal (Y-axis) direction from the transform matrix (column 1 in row-major)
@@ -1488,58 +1545,87 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
 
     console.log(`📐 Coronal (Y-axis) direction: [${coronalX}, ${coronalY}, ${coronalZ}]`);
 
-    // Apply length offset if provided AND model is a generated cylinder
-    let adjustedTransform = [...transform];
+    // ⚠️ SIMPLIFIED LOGIC: NO OFFSET APPLIED
+    // Transform position = Model origin position (no automatic alignment)
+    // Users can drag to adjust position precisely
 
-    if (isCylinder && length && length > 0) {
-      // Move BACKWARD along the coronal (Y) direction by -length/2
-      // This positions the screw so its CAP (top) is at the crosshair center
-      //
-      // Screw geometry in local space:
-      //   - Bottom (tip): y = -length/2
-      //   - Center (model origin): y = 0
-      //   - Top (cap): y = +length/2
-      //
-      // To align CAP to crosshair:
-      //   - Crosshair position = transform[3,7,11]
-      //   - Model origin must be at: crosshair - length/2 * coronal
-      //   - Then screw top (y=+length/2) will be at crosshair
-      const offset = -length / 2;  // NEGATIVE to move model origin backward
-
-      console.log(`📏 Screw length: ${length}mm`);
-      console.log(`📏 Applying offset: ${offset}mm along coronal direction (SCREW CAP aligned to crosshair)`);
-
-      // Original translation (column 3 in row-major)
-      const originalTransX = transform[3];
-      const originalTransY = transform[7];
-      const originalTransZ = transform[11];
-
-      console.log(`📍 Original translation (crosshair position): [${originalTransX}, ${originalTransY}, ${originalTransZ}]`);
-
-      // Adjust translation by moving BACKWARD along coronal direction
-      // This moves model origin down, so the top (cap) aligns with crosshair
-      adjustedTransform[3] = originalTransX + (coronalX * offset);
-      adjustedTransform[7] = originalTransY + (coronalY * offset);
-      adjustedTransform[11] = originalTransZ + (coronalZ * offset);
-
-      console.log(`📍 Adjusted translation (model origin): [${adjustedTransform[3]}, ${adjustedTransform[7]}, ${adjustedTransform[11]}]`);
-      console.log(`📐 Offset vector: [${coronalX * offset}, ${coronalY * offset}, ${coronalZ * offset}]`);
-      console.log(`✅ Screw cap (top) is now at crosshair position`);
+    // Create a deep copy to ensure no reference issues
+    let adjustedTransform: number[];
+    if (transform instanceof Float32Array) {
+      adjustedTransform = Array.from(transform);
     } else {
-      if (!isCylinder) {
-        console.log(`ℹ️ No offset applied - OBJ model (not a generated cylinder)`);
-      } else if (!length || length <= 0) {
-        console.log(`ℹ️ No offset applied - length not provided (length=${length})`);
-      }
+      adjustedTransform = [...transform];
+    }
+
+    console.log(`✅ SIMPLIFIED: No offset applied - transform used as-is`);
+    console.log(`   🔍 DEBUG: Input transform values:`);
+    console.log(`      transform[3] = ${transform[3]}`);
+    console.log(`      transform[7] = ${transform[7]}`);
+    console.log(`      transform[11] = ${transform[11]}`);
+    console.log(`   Transform position (row-major): [${transform[3]}, ${transform[7]}, ${transform[11]}]`);
+    console.log(`   🔍 DEBUG: AdjustedTransform values after copy:`);
+    console.log(`      adjustedTransform[3] = ${adjustedTransform[3]}`);
+    console.log(`      adjustedTransform[7] = ${adjustedTransform[7]}`);
+    console.log(`      adjustedTransform[11] = ${adjustedTransform[11]}`);
+    console.log(`   AdjustedTransform position (row-major): [${adjustedTransform[3]}, ${adjustedTransform[7]}, ${adjustedTransform[11]}]`);
+
+    // Verify they match
+    if (Math.abs(adjustedTransform[3] - transform[3]) > 0.001 ||
+        Math.abs(adjustedTransform[7] - transform[7]) > 0.001 ||
+        Math.abs(adjustedTransform[11] - transform[11]) > 0.001) {
+      console.error(`   ❌ ERROR: adjustedTransform values don't match transform!`);
+      console.error(`      Differences: [${adjustedTransform[3] - transform[3]}, ${adjustedTransform[7] - transform[7]}, ${adjustedTransform[11] - transform[11]}]`);
+    } else {
+      console.log(`   ✅ adjustedTransform values match transform`);
+    }
+
+    console.log(`   This will be the model origin position`);
+    console.log(`   Note: Screw cap will be at origin + length/2 along coronal direction`);
+
+    // Verify adjustedTransform hasn't been modified before conversion
+    console.log(`   🔍 DEBUG: Before conversion - verifying adjustedTransform values:`);
+    console.log(`      adjustedTransform[3] = ${adjustedTransform[3]} (should be ${transform[3]})`);
+    console.log(`      adjustedTransform[7] = ${adjustedTransform[7]} (should be ${transform[7]})`);
+    console.log(`      adjustedTransform[11] = ${adjustedTransform[11]} (should be ${transform[11]})`);
+
+    if (Math.abs(adjustedTransform[7] - transform[7]) > 0.001) {
+      console.error(`   ❌ CRITICAL ERROR: adjustedTransform[7] was modified!`);
+      console.error(`      Original transform[7] = ${transform[7]}`);
+      console.error(`      Current adjustedTransform[7] = ${adjustedTransform[7]}`);
+      console.error(`      Difference = ${adjustedTransform[7] - transform[7]}`);
     }
 
     // Convert row-major to column-major and create Float32Array
+    // Row-major: [m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33]
+    //            [0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15]
+    // Column-major (VTK): [m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]
+    //                      [0,   4,   8,   12,  1,   5,   9,   13,  2,   6,   10,  14,  3,   7,   11,  15]
+    // Translation in row-major is at indices [3, 7, 11] (m03, m13, m23)
+    // Translation in column-major should be at indices [12, 13, 14] (m03, m13, m23)
+    //
+    // Mapping: finalTransform[12] = adjustedTransform[3], finalTransform[13] = adjustedTransform[7], finalTransform[14] = adjustedTransform[11]
     const finalTransform = new Float32Array([
-      adjustedTransform[0], adjustedTransform[4], adjustedTransform[8],  adjustedTransform[12],
-      adjustedTransform[1], adjustedTransform[5], adjustedTransform[9],  adjustedTransform[13],
-      adjustedTransform[2], adjustedTransform[6], adjustedTransform[10], adjustedTransform[14],
-      adjustedTransform[3], adjustedTransform[7], adjustedTransform[11], adjustedTransform[15]
+      adjustedTransform[0], adjustedTransform[4], adjustedTransform[8],  adjustedTransform[12],  // Col 0: [m00, m10, m20, m30]
+      adjustedTransform[1], adjustedTransform[5], adjustedTransform[9],  adjustedTransform[13],  // Col 1: [m01, m11, m21, m31]
+      adjustedTransform[2], adjustedTransform[6], adjustedTransform[10], adjustedTransform[14],  // Col 2: [m02, m12, m22, m32]
+      adjustedTransform[3], adjustedTransform[7], adjustedTransform[11], adjustedTransform[15]  // Col 3: [m03, m13, m23, m33] = [translationX, translationY, translationZ, 1]
     ]);
+
+    console.log(`   🔍 DEBUG: After conversion - finalTransform values:`);
+    console.log(`      finalTransform[12] = ${finalTransform[12]} (from adjustedTransform[3] = ${adjustedTransform[3]})`);
+    console.log(`      finalTransform[13] = ${finalTransform[13]} (from adjustedTransform[7] = ${adjustedTransform[7]})`);
+    console.log(`      finalTransform[14] = ${finalTransform[14]} (from adjustedTransform[11] = ${adjustedTransform[11]})`);
+    console.log(`   Final transform position (column-major): [${finalTransform[12]}, ${finalTransform[13]}, ${finalTransform[14]}]`);
+    console.log(`   Verification: Should match row-major translation [${transform[3]}, ${transform[7]}, ${transform[11]}]`);
+
+    // Final verification
+    if (Math.abs(finalTransform[13] - transform[7]) > 0.001) {
+      console.error(`   ❌ CRITICAL ERROR: finalTransform[13] doesn't match transform[7]!`);
+      console.error(`      transform[7] = ${transform[7]}`);
+      console.error(`      adjustedTransform[7] = ${adjustedTransform[7]}`);
+      console.error(`      finalTransform[13] = ${finalTransform[13]}`);
+      console.error(`      Difference = ${finalTransform[13] - transform[7]}`);
+    }
 
     console.log('───────────────────────────────────────────────────────');
     console.log('✅ Final transform matrix prepared (column-major for VTK)');
@@ -1579,10 +1665,44 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     // ═════════════════════════════════════════════════════════
     // PART 1: Transform ACTOR (GPU-side, for 3D display)
     // ═════════════════════════════════════════════════════════
+    console.log('🔧 Applying transform to actor...');
+    console.log(`   🔍 DEBUG: Reading finalTransform values directly:`);
+    console.log(`      finalTransform[12] = ${finalTransform[12]}`);
+    console.log(`      finalTransform[13] = ${finalTransform[13]}`);
+    console.log(`      finalTransform[14] = ${finalTransform[14]}`);
+    console.log(`   Final transform translation (column-major): [${finalTransform[12]}, ${finalTransform[13]}, ${finalTransform[14]}]`);
+    console.log(`   🔍 DEBUG: Verifying finalTransform array is not modified:`);
+    console.log(`      finalTransform type: ${finalTransform.constructor.name}`);
+    console.log(`      finalTransform length: ${finalTransform.length}`);
+
     loadedModel.actor.setUserMatrix(finalTransform);
     loadedModel.actor.setPosition(0, 0, 0);
     loadedModel.actor.setScale(1, 1, 1);
     loadedModel.actor.setOrientation(0, 0, 0);
+
+    // Verify the actor's actual position after transformation
+    const actorMatrix = loadedModel.actor.getUserMatrix();
+    if (actorMatrix) {
+      const actorTranslation = [
+        actorMatrix[12],
+        actorMatrix[13],
+        actorMatrix[14]
+      ];
+      console.log(`   Actor matrix translation after setUserMatrix: [${actorTranslation[0]}, ${actorTranslation[1]}, ${actorTranslation[2]}]`);
+      console.log(`   Expected: [${finalTransform[12]}, ${finalTransform[13]}, ${finalTransform[14]}]`);
+
+      const diff = [
+        Math.abs(actorTranslation[0] - finalTransform[12]),
+        Math.abs(actorTranslation[1] - finalTransform[13]),
+        Math.abs(actorTranslation[2] - finalTransform[14])
+      ];
+      if (diff[0] > 0.01 || diff[1] > 0.01 || diff[2] > 0.01) {
+        console.warn(`   ⚠️ WARNING: Actor translation differs from expected!`);
+        console.warn(`   Differences: [${diff[0]}, ${diff[1]}, ${diff[2]}]`);
+      } else {
+        console.log(`   ✅ Actor translation matches expected values`);
+      }
+    }
 
     console.log('✅ Actor transformed (GPU rendering)');
 
@@ -1637,6 +1757,14 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
 
     console.log('✅ Model transform complete!');
     console.log('✅ MODEL_UPDATED event broadcast - PlaneCutterService will update cutters');
+
+    // Log concise summary message for debugging
+    if (length && length > 0) {
+      console.log(`✅ Applied transform to model: ${modelId} with length offset: ${length}mm`);
+    } else {
+      console.log(`✅ Applied transform to model: ${modelId} (no length offset)`);
+    }
+
     return true;
 
 
@@ -2263,9 +2391,57 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     this._updatePolyDataWithTransform(model, newMatrix);
 
     // Also translate the cap if it exists
-    const capId = `${modelId}-Cap`;
-    const capModel = this.loadedModels.get(capId);
+    // Cap model ID can be in different formats:
+    // 1. `${modelId}-cap` (lowercase, from loadCapModel when screwId is provided)
+    // 2. `${modelId}-Cap` (uppercase C, alternative format)
+    // 3. Find by modelName pattern (contains "-Cap" suffix and matches screw label)
+
+    console.log(`🔍 [translateScrew] Looking for cap model for screw: ${modelId}`);
+    console.log(`   Screw model name: ${model.metadata.name}`);
+    console.log(`   All loaded models: ${Array.from(this.loadedModels.keys()).join(', ')}`);
+
+    let capModel = this.loadedModels.get(`${modelId}-cap`) || this.loadedModels.get(`${modelId}-Cap`);
+
+    // If not found by ID, try to find by name pattern
+    if (!capModel && model.metadata.name) {
+      const screwLabel = model.metadata.name;
+      console.log(`   Searching by name pattern for screw label: "${screwLabel}"`);
+
+      for (const [id, m] of this.loadedModels) {
+        const modelName = m.metadata.name || '';
+        const isCap = modelName.includes('-Cap') || modelName === 'Screw Cap';
+        const matchesLabel = modelName.includes(screwLabel);
+
+        console.log(`   Checking model: ${id} (${modelName}) - isCap: ${isCap}, matchesLabel: ${matchesLabel}`);
+
+        if (isCap && matchesLabel) {
+          console.log(`   ✅ Found cap model by name pattern: ${id} (${modelName})`);
+          capModel = m;
+          break;
+        }
+      }
+    }
+
+    // Last resort: find any cap model that was loaded after this screw
+    // (This handles the case where both screw and cap have auto-generated IDs)
+    if (!capModel) {
+      console.log(`   Trying to find cap by loading order...`);
+      const allModels = Array.from(this.loadedModels.entries());
+      const screwIndex = allModels.findIndex(([id]) => id === modelId);
+
+      if (screwIndex >= 0 && screwIndex < allModels.length - 1) {
+        // Check the next model (cap is usually loaded right after screw)
+        const nextModel = allModels[screwIndex + 1][1];
+        const nextModelName = nextModel.metadata.name || '';
+        if (nextModelName.includes('-Cap') || nextModelName === 'Screw Cap') {
+          console.log(`   ✅ Found cap model by loading order: ${allModels[screwIndex + 1][0]} (${nextModelName})`);
+          capModel = nextModel;
+        }
+      }
+    }
+
     if (capModel) {
+      console.log(`✅ Found cap model: ${capModel.metadata.id} (${capModel.metadata.name})`);
       const capMatrix = capModel.actor.getUserMatrix();
       if (capMatrix) {
         const newCapMatrix = new Float32Array(capMatrix);
@@ -2274,7 +2450,12 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
         newCapMatrix[14] += delta[2];
         capModel.actor.setUserMatrix(newCapMatrix);
         this._updatePolyDataWithTransform(capModel, newCapMatrix);
+        console.log(`✅ Cap translated by [${delta.map(v => v.toFixed(2)).join(', ')}]`);
       }
+    } else {
+      console.warn(`⚠️ Cap model not found for screw ${modelId} (${model.metadata.name})`);
+      console.warn(`   Tried: "${modelId}-cap" and "${modelId}-Cap"`);
+      console.warn(`   Available models: ${Array.from(this.loadedModels.keys()).join(', ')}`);
     }
 
     // Broadcast update event for PlaneCutterService
@@ -2566,10 +2747,12 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     console.log('═══════════════════════════════════════════════════════');
     console.log(`   modelId: ${modelId}`);
     console.log(`   modelPath: ${modelPath}`);
-    console.log(`   hasScrewDimensions: ${hasScrewDimensions} (metadata.screwLength: ${model.metadata.screwLength})`);
+    console.log(`   metadata.screwRadius: ${model.metadata.screwRadius}`);
+    console.log(`   metadata.screwLength: ${model.metadata.screwLength}`);
+    console.log(`   hasScrewDimensions: ${hasScrewDimensions}`);
     console.log(`   isCylinderPath: ${isCylinderPath}`);
     console.log(`   needsCompensation: ${needsCompensation}`);
-    console.log(`   dimensions: radius=${dimensions.radius}mm, length=${dimensions.length}mm`);
+    console.log(`   dimensions (from _getScrewDimensions): radius=${dimensions.radius}mm, length=${dimensions.length}mm`);
     console.log(`   Actor userMatrix (column-major):`);
     console.log(`     Col0: [${matrix[0].toFixed(3)}, ${matrix[1].toFixed(3)}, ${matrix[2].toFixed(3)}, ${matrix[3].toFixed(3)}]`);
     console.log(`     Col1: [${matrix[4].toFixed(3)}, ${matrix[5].toFixed(3)}, ${matrix[6].toFixed(3)}, ${matrix[7].toFixed(3)}]`);
@@ -2585,39 +2768,10 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       matrix[3], matrix[7], matrix[11], matrix[15]
     ];
 
-    // For screw models, compensate for the length offset that was applied during loading
-    // The model origin is at: entryPoint + coronalDir * (-length/2)
-    // So entryPoint = modelOrigin + coronalDir * (+length/2)
-    if (needsCompensation && dimensions.length > 0) {
-      // Coronal direction (Y-axis) in column-major is at indices 4, 5, 6
-      // After conversion to row-major, it's at indices 1, 5, 9
-      const coronalX = rowMajor[1];
-      const coronalY = rowMajor[5];
-      const coronalZ = rowMajor[9];
-
-      console.log(`   Coronal direction (Y-axis): [${coronalX.toFixed(3)}, ${coronalY.toFixed(3)}, ${coronalZ.toFixed(3)}]`);
-
-      // Compensate: add back the offset that was subtracted during loading
-      const offset = dimensions.length / 2;
-      console.log(`   Compensation offset: +${offset.toFixed(2)}mm along coronal`);
-
-      // Store original values for logging
-      const origX = rowMajor[3];
-      const origY = rowMajor[7];
-      const origZ = rowMajor[11];
-
-      // Translation in row-major is at indices 3, 7, 11
-      rowMajor[3] += coronalX * offset;
-      rowMajor[7] += coronalY * offset;
-      rowMajor[11] += coronalZ * offset;
-
-      console.log(`🔧 [getScrewTransform] COMPENSATED for length offset`);
-      console.log(`   Before: [${origX.toFixed(2)}, ${origY.toFixed(2)}, ${origZ.toFixed(2)}] (model origin)`);
-      console.log(`   After:  [${rowMajor[3].toFixed(2)}, ${rowMajor[7].toFixed(2)}, ${rowMajor[11].toFixed(2)}] (entry point)`);
-      console.log(`   Delta:  [${(rowMajor[3]-origX).toFixed(2)}, ${(rowMajor[7]-origY).toFixed(2)}, ${(rowMajor[11]-origZ).toFixed(2)}]`);
-    } else {
-      console.log(`   ⚠️ No compensation applied (needsCompensation=${needsCompensation}, length=${dimensions.length})`);
-    }
+    // ⚠️ SIMPLIFIED LOGIC: NO COMPENSATION
+    // Return transform as-is from the actor
+    console.log(`✅ SIMPLIFIED: No compensation applied`);
+    console.log(`   Transform returned as-is: [${rowMajor[3].toFixed(2)}, ${rowMajor[7].toFixed(2)}, ${rowMajor[11].toFixed(2)}]`);
     console.log('═══════════════════════════════════════════════════════');
 
     return rowMajor;

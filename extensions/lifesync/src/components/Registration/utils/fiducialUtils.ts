@@ -137,7 +137,7 @@ export function jumpToPosition(
         });
 
         // Render to trigger plane cutter updates
-        viewport.render();
+          viewport.render();
       } catch (error) {
         console.warn(`⚠️ Error updating viewport ${viewport.id}:`, error);
       }
@@ -171,7 +171,7 @@ export function jumpToPosition(
         }
       } catch (e) {
         console.debug(`⚠️ Could not use setToolCenter in viewport ${viewport.id}:`, e);
-      }
+    }
     }
 
     // STEP 3: Force a final render on all viewports to ensure everything is synced

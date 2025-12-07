@@ -403,16 +403,15 @@ class ViewportStateService {
             console.log(`   Transform matrix (4x4 flattened, row-major):`, flattenedTransform);
 
             try {
-              // Apply the transform to the loaded model (with length offset)
+              // ⚠️ SIMPLIFIED: Don't pass length parameter (no offset)
               const transformResult = await modelStateService.setModelTransform(
                 loadedModel.metadata.id,
-                flattenedTransform,
-                length  // Pass length to offset model backward along coronal direction
+                flattenedTransform
+                // NO length parameter - no offset applied
               );
 
               if (transformResult) {
-                console.log(`✅ Transform applied successfully to model`);
-                console.log(`   Model positioned according to screw placement (offset by length/2)`);
+                console.log(`✅ Transform applied successfully to model (no offset, simplified logic)`);
               } else {
                 console.warn(`⚠️ Transform application returned null/false`);
               }

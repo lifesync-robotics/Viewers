@@ -447,12 +447,19 @@ class ScrewInteractionTool extends BaseTool {
         return;
       }
 
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('📤 [_saveTransformToBackend] TRANSFORM FROM getScrewTransform');
+      console.log(`   Transform (row-major): [${transformMatrix[3].toFixed(2)}, ${transformMatrix[7].toFixed(2)}, ${transformMatrix[11].toFixed(2)}, ...]`);
+      console.log('   ⚠️ SIMPLIFIED LOGIC: This is MODEL ORIGIN position (no compensation)');
+      console.log('═══════════════════════════════════════════════════════');
+
       // Build update data with transform matrix
       // Transform matrix contains all position/orientation info
       const updateData: any = {
         transformMatrix: Array.from(transformMatrix),
       };
 
+      // ⚠️ SIMPLIFIED LOGIC: entryPoint = model origin (same as transform translation)
       // Extract entry point from transform matrix (translation is at indices 3, 7, 11 in row-major)
       // getScrewTransform returns row-major format
       updateData.entryPoint = {
@@ -460,6 +467,27 @@ class ScrewInteractionTool extends BaseTool {
         y: transformMatrix[7],
         z: transformMatrix[11],
       };
+
+      console.log('📊 [_saveTransformToBackend] UPDATE DATA:');
+      console.log(`   entryPoint: [${updateData.entryPoint.x.toFixed(2)}, ${updateData.entryPoint.y.toFixed(2)}, ${updateData.entryPoint.z.toFixed(2)}]`);
+      console.log(`   transformMatrix translation: [${transformMatrix[3].toFixed(2)}, ${transformMatrix[7].toFixed(2)}, ${transformMatrix[11].toFixed(2)}]`);
+
+      // ⚠️ CRITICAL CHECK: In simplified logic, these MUST be equal
+      const match = updateData.entryPoint.x === transformMatrix[3] &&
+                    updateData.entryPoint.y === transformMatrix[7] &&
+                    updateData.entryPoint.z === transformMatrix[11];
+      console.log(`   ✅ They match (both are model origin): ${match}`);
+
+      if (!match) {
+        const diffX = updateData.entryPoint.x - transformMatrix[3];
+        const diffY = updateData.entryPoint.y - transformMatrix[7];
+        const diffZ = updateData.entryPoint.z - transformMatrix[11];
+        const magnitude = Math.sqrt(diffX*diffX + diffY*diffY + diffZ*diffZ);
+        console.error(`   ❌ CRITICAL ERROR: entryPoint != transformMatrix!`);
+        console.error(`      Difference: [${diffX.toFixed(2)}, ${diffY.toFixed(2)}, ${diffZ.toFixed(2)}]`);
+        console.error(`      Magnitude: ${magnitude.toFixed(2)}mm`);
+        console.error(`      This should NEVER happen in simplified logic!`);
+      }
 
       // Extract trajectory direction from transform matrix
       // Z-axis direction (third column) indicates screw direction
@@ -487,11 +515,35 @@ class ScrewInteractionTool extends BaseTool {
       console.log('   📤 Calling planningBackendService.updateScrew...');
       console.log('      screwId:', modelId);
       console.log('      sessionId:', this.sessionId);
-      console.log('      updateData:', JSON.stringify(updateData, null, 2).substring(0, 500));
+      console.log('      updateData.transformMatrix:', JSON.stringify(updateData.transformMatrix).substring(0, 200));
+      console.log('      updateData.entryPoint:', JSON.stringify(updateData.entryPoint));
 
       const result = await this.planningBackendService.updateScrew(modelId, this.sessionId, updateData);
 
-      console.log('   📤 updateScrew result:', result);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('   📤 updateScrew RESPONSE:');
+      console.log('      success:', result.success);
+      if (result.screw) {
+        console.log('      returned screw.entry_point:', result.screw.entry_point);
+        console.log('      returned screw.transform_matrix (first 4):', result.screw.transform_matrix?.slice(0, 4));
+        console.log('      returned screw.transform_matrix translation:',
+          result.screw.transform_matrix ?
+          `[${result.screw.transform_matrix[3]?.toFixed(2)}, ${result.screw.transform_matrix[7]?.toFixed(2)}, ${result.screw.transform_matrix[11]?.toFixed(2)}]` :
+          'N/A');
+
+        // Check if backend modified the data
+        if (result.screw.transform_matrix) {
+          const sentY = updateData.transformMatrix[7];
+          const returnedY = result.screw.transform_matrix[7];
+          if (Math.abs(sentY - returnedY) > 0.01) {
+            console.error('   ❌ BACKEND MODIFIED transform_matrix!');
+            console.error(`      Sent Y: ${sentY.toFixed(2)}`);
+            console.error(`      Returned Y: ${returnedY.toFixed(2)}`);
+            console.error(`      Difference: ${(returnedY - sentY).toFixed(2)}mm`);
+          }
+        }
+      }
+      console.log('═══════════════════════════════════════════════════════');
 
       if (result.success) {
         console.log('✅ [ScrewInteractionTool] Transform saved to backend session');

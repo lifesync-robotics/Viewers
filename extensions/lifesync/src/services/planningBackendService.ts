@@ -577,13 +577,20 @@ class PlanningBackendService {
 
   /**
    * Query for a screw model by dimensions
+   * @param radius - Screw radius in mm
+   * @param length - Screw length in mm
+   * @param forceProcedural - If true, force procedural generation instead of using asset library
    */
-  async queryModel(radius: number, length: number): Promise<ModelQueryResponse> {
+  async queryModel(radius: number, length: number, forceProcedural: boolean = false): Promise<ModelQueryResponse> {
     try {
-      console.log(`🔍 [PlanningBackend] Querying model: R=${radius}mm, L=${length}mm`);
+      console.log(`🔍 [PlanningBackend] Querying model: R=${radius}mm, L=${length}mm${forceProcedural ? ' (FORCED PROCEDURAL)' : ''}`);
+
+      const url = forceProcedural
+        ? `${this.baseUrl}/models/query?radius=${radius}&length=${length}&force_procedural=true`
+        : `${this.baseUrl}/models/query?radius=${radius}&length=${length}`;
 
       const response = await fetch(
-        `${this.baseUrl}/models/query?radius=${radius}&length=${length}`,
+        url,
         {
           credentials: 'include',
         }

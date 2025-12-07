@@ -72,7 +72,7 @@ const InputGroup = ({
             isSortable={_isSortable}
             sortDirection={_sortDirection}
             onLabelClick={onLabelClick}
-            value={values[name]}
+            value={values[name] ?? ''}
             onChange={handleFieldChange}
           />
         );
@@ -119,7 +119,7 @@ const InputGroup = ({
   };
   return (
     <div className="container relative m-auto flex flex-col">
-      <div className="flex w-full flex-row"> 
+      <div className="flex w-full flex-row">
         {inputMeta.map((inputMeta, index) => {
           const isDescription = inputMeta.name === 'description';
           return (

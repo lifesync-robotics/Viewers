@@ -384,8 +384,8 @@ class PlaneCutterService extends PubSubService {
 
       // Validate focal point
       if (!focalPoint || focalPoint.length !== 3) {
-        return;
-      }
+          return;
+        }
 
       // Use camera focalPoint directly as the plane origin
       // This is the correct approach - the cutting plane should be at the camera's focal point
