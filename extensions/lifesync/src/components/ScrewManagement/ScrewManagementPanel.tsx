@@ -33,7 +33,7 @@ import {
   SessionStateDialog,
   CrosshairBookmarks,
 } from './ScrewManagementUI';
-import type { CrosshairBookmark } from './ScrewManagementUI';
+import type { CrosshairBookmark, ScrewPlacementRequest } from './ScrewManagementUI';
 import { jumpToPosition } from '../Registration/utils/fiducialUtils';
 import { ToolGroupManager, addTool, state as cornerstoneToolsState } from '@cornerstonejs/tools';
 import ScrewInteractionTool from '../../tools/ScrewInteractionTool';
@@ -1833,27 +1833,28 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
   /**
    * Add a new crosshair bookmark at the current crosshair position
+   * Returns the newly created bookmark for potential follow-up actions (like screw placement)
    */
-  const addCrosshairBookmark = (label: string) => {
+  const addCrosshairBookmark = (label: string): CrosshairBookmark | null => {
     try {
-      console.log(`📍 [Bookmark] Attempting to save bookmark: ${label}`);
+      console.log(`🏷️ [VertebralLabel] Attempting to save label: ${label}`);
 
       // Get current crosshair position using fresh read (bypasses cache)
       // This reads directly from crosshairs annotation toolCenter
       const position = crosshairsHandler.getFreshCrosshairCenter();
 
-      console.log(`📍 [Bookmark] Position from getFreshCrosshairCenter:`, position);
+      console.log(`🏷️ [VertebralLabel] Position from getFreshCrosshairCenter:`, position);
 
       if (!position) {
         alert('⚠️ Could not detect crosshair position.\n\nPlease ensure:\n1. A CT scan is loaded\n2. Crosshairs tool is active\n3. Navigate to the desired vertebral body');
-        return;
+        return null;
       }
 
       // Validate position values
       if (position.some(v => isNaN(v) || !isFinite(v))) {
-        console.error('❌ [Bookmark] Invalid position values:', position);
+        console.error('❌ [VertebralLabel] Invalid position values:', position);
         alert('⚠️ Invalid crosshair position detected. Please try again.');
-        return;
+        return null;
       }
 
       // Create new bookmark
@@ -1867,10 +1868,184 @@ export default function ScrewManagementPanel({ servicesManager }) {
       setCrosshairBookmarks(prev => [...prev, newBookmark]);
       setSelectedBookmarkId(newBookmark.id);
 
-      console.log(`✅ [Bookmark] Saved: ${label} at [${position.map(v => v.toFixed(2)).join(', ')}]`);
+      console.log(`✅ [VertebralLabel] Saved: ${label} at [${position.map(v => v.toFixed(2)).join(', ')}]`);
+      return newBookmark;
     } catch (error) {
-      console.error('❌ Error adding crosshair bookmark:', error);
-      alert('Failed to add crosshair bookmark. Check console for details.');
+      console.error('❌ Error adding vertebral label:', error);
+      alert('Failed to add vertebral label. Check console for details.');
+      return null;
+    }
+  };
+
+  /**
+   * Construct a transform matrix at a given position using current viewport cameras
+   * This creates an initial vertical orientation (pointing up along Y-axis)
+   */
+  const constructScrewTransformAtPosition = (position: [number, number, number]): Float32Array | null => {
+    try {
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔧 [ScrewManagement] CONSTRUCTING TRANSFORM AT POSITION');
+      console.log(`   Position: [${position.map(v => v.toFixed(2)).join(', ')}]`);
+      console.log('═══════════════════════════════════════════════════════');
+
+      // Get rendering engine and viewports
+      const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+      if (!renderingEngine) {
+        console.error('❌ Rendering engine not found');
+        return null;
+      }
+
+      // Find axial, sagittal, and coronal viewports
+      let axialViewport = null;
+      let sagittalViewport = null;
+      let coronalViewport = null;
+
+      const viewports = renderingEngine.getViewports();
+      for (const vp of viewports) {
+        const vpId = vp.id.toLowerCase();
+        if (vpId.includes('axial')) {
+          axialViewport = vp;
+        } else if (vpId.includes('sagittal')) {
+          sagittalViewport = vp;
+        } else if (vpId.includes('coronal')) {
+          coronalViewport = vp;
+        }
+      }
+
+      if (!axialViewport || !sagittalViewport || !coronalViewport) {
+        console.error('❌ Could not find required viewports (axial, sagittal, and coronal)');
+        return null;
+      }
+
+      // Get camera data from viewports
+      const axialCamera = axialViewport.getCamera();
+      const sagittalCamera = sagittalViewport.getCamera();
+      const coronalCamera = coronalViewport.getCamera();
+
+      const axialNormal = axialCamera.viewPlaneNormal;
+      const coronalNormal = [-coronalCamera.viewPlaneNormal[0], -coronalCamera.viewPlaneNormal[1], -coronalCamera.viewPlaneNormal[2]];
+      const sagittalNormal = sagittalCamera.viewPlaneNormal;
+
+      // Construct 4x4 transform matrix in row-major order
+      const transform = new Float32Array([
+        // Row 0: X-components of basis vectors + translation X
+        axialNormal[0], coronalNormal[0], sagittalNormal[0], position[0],
+        // Row 1: Y-components of basis vectors + translation Y
+        axialNormal[1], coronalNormal[1], sagittalNormal[1], position[1],
+        // Row 2: Z-components of basis vectors + translation Z
+        axialNormal[2], coronalNormal[2], sagittalNormal[2], position[2],
+        // Row 3: Homogeneous coordinates
+        0, 0, 0, 1
+      ]);
+
+      console.log('✅ Transform matrix constructed at position');
+      return transform;
+    } catch (error) {
+      console.error('❌ Error constructing transform at position:', error);
+      return null;
+    }
+  };
+
+  /**
+   * Place screws at specified positions (called from Vertebral Label component)
+   * Uses default screw dimensions for initial placement
+   */
+  const placeScrewsAtPositions = async (requests: ScrewPlacementRequest[]) => {
+    try {
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔩 [ScrewManagement] PLACING SCREWS AT POSITIONS');
+      console.log(`   Number of requests: ${requests.length}`);
+      console.log('═══════════════════════════════════════════════════════');
+
+      if (!sessionId) {
+        console.error('❌ No active session. Cannot place screws.');
+        alert('⚠️ No active planning session. Please wait for session to initialize.');
+        return;
+      }
+
+      // Default screw dimensions (can be adjusted later by user)
+      const defaultRadius = 3.0;   // 6mm diameter
+      const defaultLength = 40.0;  // 40mm length
+
+      for (const request of requests) {
+        console.log(`🔩 Placing screw: ${request.label} at [${request.position.map(v => v.toFixed(1)).join(', ')}]`);
+
+        // Construct transform matrix at the specified position
+        const transformMatrix = constructScrewTransformAtPosition(request.position);
+
+        if (!transformMatrix) {
+          console.warn(`⚠️ Could not construct transform for ${request.label}, skipping`);
+          continue;
+        }
+
+        const transform = Array.from(transformMatrix);
+
+        // Extract direction from transform (Y-axis / column 1)
+        const direction = [transform[4], transform[5], transform[6]];
+
+        // Parse level and side from label (e.g., "L4-L" -> level="L4", side="left")
+        const labelParts = request.label.split('-');
+        const level = labelParts[0] || 'Unknown';
+        const side = request.side;
+
+        // Save screw to backend
+        try {
+          const response = await planningBackendService.addScrew({
+            sessionId: sessionId,
+            screw: {
+              caseId: caseId || 'OHIF-CASE-' + Date.now(),
+              radius: defaultRadius,
+              length: defaultLength,
+              screwLabel: request.label,
+              screwVariantId: `generated-${defaultRadius}-${defaultLength}`,
+              vertebralLevel: level,
+              side: side,
+              entryPoint: {
+                x: request.position[0],
+                y: request.position[1],
+                z: request.position[2]
+              },
+              trajectory: {
+                direction: direction,
+                insertionDepth: defaultLength,
+                convergenceAngle: 0,
+                cephaladAngle: 0
+              },
+              transform_matrix: transform,
+              notes: `Auto-placed at ${level} ${side} side`
+            }
+          });
+
+          if (response.success && response.screw_id) {
+            console.log(`✅ Screw ${request.label} saved with ID: ${response.screw_id}`);
+
+            // Load the 3D model
+            await loadScrewModel(defaultRadius, defaultLength, transform, request.label, response.screw_id);
+
+            // Update local screws state
+            const newScrew = {
+              screw_id: response.screw_id,
+              screw_label: request.label,
+              radius: defaultRadius,
+              length: defaultLength,
+              vertebral_level: level,
+              side: side,
+              entry_point: { x: request.position[0], y: request.position[1], z: request.position[2] },
+              transform_matrix: transform
+            };
+            setScrews(prev => [...prev, newScrew]);
+          } else {
+            console.error(`❌ Failed to save screw ${request.label}:`, response);
+          }
+        } catch (error) {
+          console.error(`❌ Error saving screw ${request.label}:`, error);
+        }
+      }
+
+      console.log('✅ Finished placing screws');
+    } catch (error) {
+      console.error('❌ Error in placeScrewsAtPositions:', error);
+      alert('Failed to place screws. Check console for details.');
     }
   };
 
@@ -2229,7 +2404,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         onRetry={initializeSession}
       />
 
-      {/* Crosshair Bookmarks - Vertebral Body Navigation */}
+      {/* Vertebral Labels - Navigation and Screw Placement */}
       <CrosshairBookmarks
         bookmarks={crosshairBookmarks}
         selectedBookmarkId={selectedBookmarkId}
@@ -2237,6 +2412,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         onSelectBookmark={selectCrosshairBookmark}
         onUpdateBookmark={updateCrosshairBookmark}
         onDeleteBookmark={deleteCrosshairBookmark}
+        onPlaceScrews={placeScrewsAtPositions}
       />
 
       {/* Screw Interaction Toolbar */}

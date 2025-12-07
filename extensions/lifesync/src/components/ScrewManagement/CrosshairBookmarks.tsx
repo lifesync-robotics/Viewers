@@ -1,10 +1,11 @@
 /**
- * CrosshairBookmarks Component
+ * CrosshairBookmarks Component (Vertebral Labels)
  *
- * Manages crosshair position bookmarks for vertebral body navigation
+ * Manages crosshair position labels for vertebral body navigation
  * - Save current crosshair position with vertebral body label
- * - Select bookmark to navigate to saved position
- * - Delete bookmarks
+ * - Select label to navigate to saved position
+ * - Option to place bilateral screws (L/R) after adding a label
+ * - Delete labels
  */
 
 import React, { useState } from 'react';
@@ -20,13 +21,21 @@ export interface CrosshairBookmark {
   createdAt: number;
 }
 
+// Screw placement request with position offset
+export interface ScrewPlacementRequest {
+  label: string;  // e.g., "L4-L" or "L4-R"
+  position: [number, number, number];  // World coordinates
+  side: 'left' | 'right';
+}
+
 interface CrosshairBookmarksProps {
   bookmarks: CrosshairBookmark[];
   selectedBookmarkId: string | null;
-  onAddBookmark: (label: string) => void;
+  onAddBookmark: (label: string) => CrosshairBookmark | null;  // Returns the created bookmark
   onSelectBookmark: (bookmark: CrosshairBookmark) => void;
   onUpdateBookmark: (bookmarkId: string) => void;
   onDeleteBookmark: (bookmarkId: string) => void;
+  onPlaceScrews?: (requests: ScrewPlacementRequest[]) => void;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -44,18 +53,21 @@ const VERTEBRAL_LEVELS = [
   'S1', 'S2',
 ];
 
+// Lateral offset for screw placement (mm)
+const SCREW_LATERAL_OFFSET_MM = 15;
+
 // ═══════════════════════════════════════════════════════
-// Add Bookmark Dialog
+// Add Label Dialog
 // ═══════════════════════════════════════════════════════
 
-interface AddBookmarkDialogProps {
+interface AddLabelDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (label: string) => void;
   existingLabels: string[];
 }
 
-const AddBookmarkDialog: React.FC<AddBookmarkDialogProps> = ({
+const AddLabelDialog: React.FC<AddLabelDialogProps> = ({
   isOpen,
   onClose,
   onAdd,
@@ -74,7 +86,7 @@ const AddBookmarkDialog: React.FC<AddBookmarkDialogProps> = ({
       return;
     }
     if (existingLabels.includes(label)) {
-      alert(`A bookmark for "${label}" already exists`);
+      alert(`A label for "${label}" already exists`);
       return;
     }
     onAdd(label);
@@ -91,7 +103,7 @@ const AddBookmarkDialog: React.FC<AddBookmarkDialogProps> = ({
     onClose();
   };
 
-  // Filter out already bookmarked levels
+  // Filter out already labeled levels
   const availableLevels = VERTEBRAL_LEVELS.filter(level => !existingLabels.includes(level));
 
   return (
@@ -99,7 +111,7 @@ const AddBookmarkDialog: React.FC<AddBookmarkDialogProps> = ({
       <div className="bg-gray-800 rounded-lg shadow-xl w-96 overflow-hidden">
         {/* Header */}
         <div className="bg-teal-700 p-4 flex items-center justify-between">
-          <h3 className="text-lg font-bold text-white">📍 Add Crosshair Bookmark</h3>
+          <h3 className="text-lg font-bold text-white">🏷️ Add Vertebral Label</h3>
           <button
             onClick={handleClose}
             className="text-white hover:text-gray-200 text-xl font-bold"
@@ -202,7 +214,118 @@ const AddBookmarkDialog: React.FC<AddBookmarkDialogProps> = ({
             disabled={useCustom ? !customLabel.trim() : !selectedLevel}
             className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            📍 Save Bookmark
+            🏷️ Save Label
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+// Place Screws Confirmation Dialog
+// ═══════════════════════════════════════════════════════
+
+interface PlaceScrewsDialogProps {
+  isOpen: boolean;
+  label: string;
+  position: [number, number, number];
+  onClose: () => void;
+  onConfirm: (placeBoth: boolean, placeLeft: boolean, placeRight: boolean) => void;
+}
+
+const PlaceScrewsDialog: React.FC<PlaceScrewsDialogProps> = ({
+  isOpen,
+  label,
+  position,
+  onClose,
+  onConfirm,
+}) => {
+  const [placeLeft, setPlaceLeft] = useState(true);
+  const [placeRight, setPlaceRight] = useState(true);
+
+  if (!isOpen) return null;
+
+  const handleConfirm = () => {
+    if (!placeLeft && !placeRight) {
+      onClose();
+      return;
+    }
+    onConfirm(placeLeft && placeRight, placeLeft, placeRight);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg shadow-xl w-96 overflow-hidden">
+        {/* Header */}
+        <div className="bg-green-700 p-4 flex items-center justify-between">
+          <h3 className="text-lg font-bold text-white">🔩 Place Pedicle Screws?</h3>
+          <button
+            onClick={onClose}
+            className="text-white hover:text-gray-200 text-xl font-bold"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-gray-300">
+            Vertebral label <span className="text-teal-400 font-bold">{label}</span> has been saved.
+          </p>
+          <p className="text-sm text-gray-300">
+            Would you like to place pedicle screws at this level?
+          </p>
+
+          {/* Screw placement options */}
+          <div className="bg-gray-700 rounded p-3 space-y-3">
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="placeLeft"
+                checked={placeLeft}
+                onChange={(e) => setPlaceLeft(e.target.checked)}
+                className="w-4 h-4 accent-green-500"
+              />
+              <label htmlFor="placeLeft" className="text-white text-sm flex-1">
+                <span className="font-medium">{label}-L</span>
+                <span className="text-gray-400 ml-2">(Left, 15mm lateral)</span>
+              </label>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="placeRight"
+                checked={placeRight}
+                onChange={(e) => setPlaceRight(e.target.checked)}
+                className="w-4 h-4 accent-green-500"
+              />
+              <label htmlFor="placeRight" className="text-white text-sm flex-1">
+                <span className="font-medium">{label}-R</span>
+                <span className="text-gray-400 ml-2">(Right, 15mm lateral)</span>
+              </label>
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-500">
+            💡 Screws will be placed {SCREW_LATERAL_OFFSET_MM}mm to the left/right of the vertebral center on the axial plane.
+          </p>
+        </div>
+
+        {/* Footer */}
+        <div className="bg-gray-700 p-4 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded text-sm"
+          >
+            Skip
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!placeLeft && !placeRight}
+            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            🔩 Place Screws
           </button>
         </div>
       </div>
@@ -221,9 +344,14 @@ export const CrosshairBookmarks: React.FC<CrosshairBookmarksProps> = ({
   onSelectBookmark,
   onUpdateBookmark,
   onDeleteBookmark,
+  onPlaceScrews,
 }) => {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [pendingScrewPlacement, setPendingScrewPlacement] = useState<{
+    label: string;
+    position: [number, number, number];
+  } | null>(null);
 
   const handleSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const bookmarkId = e.target.value;
@@ -240,19 +368,75 @@ export const CrosshairBookmarks: React.FC<CrosshairBookmarksProps> = ({
     setShowDeleteConfirm(null);
   };
 
+  // Handle label added - show screw placement dialog
+  const handleLabelAdded = (label: string) => {
+    // Add the bookmark and get the created bookmark with position
+    const newBookmark = onAddBookmark(label);
+
+    // If bookmark was created successfully and screw placement is available, show dialog
+    if (newBookmark && onPlaceScrews) {
+      setPendingScrewPlacement({
+        label: newBookmark.label,
+        position: newBookmark.position,
+      });
+    }
+  };
+
+  // Handle screw placement confirmation
+  const handlePlaceScrewsConfirm = (placeBoth: boolean, placeLeft: boolean, placeRight: boolean) => {
+    if (!pendingScrewPlacement || !onPlaceScrews) {
+      setPendingScrewPlacement(null);
+      return;
+    }
+
+    const { label, position } = pendingScrewPlacement;
+    const requests: ScrewPlacementRequest[] = [];
+
+    // Calculate positions on axial plane (X is left/right in patient coordinates)
+    // Left side: negative X offset (patient's left)
+    // Right side: positive X offset (patient's right)
+    if (placeLeft) {
+      requests.push({
+        label: `${label}-L`,
+        position: [
+          position[0] - SCREW_LATERAL_OFFSET_MM,  // Left = negative X
+          position[1],
+          position[2],
+        ],
+        side: 'left',
+      });
+    }
+
+    if (placeRight) {
+      requests.push({
+        label: `${label}-R`,
+        position: [
+          position[0] + SCREW_LATERAL_OFFSET_MM,  // Right = positive X
+          position[1],
+          position[2],
+        ],
+        side: 'right',
+      });
+    }
+
+    console.log(`🔩 [VertebralLabel] Placing screws:`, requests);
+    onPlaceScrews(requests);
+    setPendingScrewPlacement(null);
+  };
+
   const selectedBookmark = bookmarks.find(b => b.id === selectedBookmarkId);
 
   return (
     <div className="space-y-2 border border-teal-600 rounded p-3 bg-teal-900 bg-opacity-20">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="font-bold text-white text-sm">📍 Vertebral Bookmarks</h3>
+        <h3 className="font-bold text-white text-sm">🏷️ Vertebral Labels</h3>
         <span className="text-xs text-gray-400">
-          {bookmarks.length} bookmark{bookmarks.length !== 1 ? 's' : ''}
+          {bookmarks.length} label{bookmarks.length !== 1 ? 's' : ''}
         </span>
       </div>
 
-      {/* Bookmark Selection Row */}
+      {/* Label Selection Row */}
       <div className="flex gap-2 items-center">
         {/* Dropdown */}
         <div className="flex-1">
@@ -261,7 +445,7 @@ export const CrosshairBookmarks: React.FC<CrosshairBookmarksProps> = ({
             onChange={handleSelect}
             className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:border-teal-500 focus:outline-none text-sm"
           >
-            <option value="">-- Select Bookmark --</option>
+            <option value="">-- Select Label --</option>
             {bookmarks.map(bookmark => (
               <option key={bookmark.id} value={bookmark.id}>
                 {bookmark.label}
@@ -274,41 +458,41 @@ export const CrosshairBookmarks: React.FC<CrosshairBookmarksProps> = ({
         <button
           onClick={() => setShowAddDialog(true)}
           className="px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded text-sm font-medium transition flex items-center gap-1"
-          title="Add new crosshair bookmark"
+          title="Add new vertebral label"
         >
           <span>➕</span>
           <span>Add</span>
         </button>
 
-        {/* Update Button - Only visible when bookmark selected */}
+        {/* Update Button - Only visible when label selected */}
         {selectedBookmarkId && (
           <button
             onClick={() => onUpdateBookmark(selectedBookmarkId)}
             className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm font-medium transition"
-            title="Update bookmark with current crosshair position"
+            title="Update label with current crosshair position"
           >
             🔄
           </button>
         )}
 
-        {/* Delete Button - Only visible when bookmark selected */}
+        {/* Delete Button - Only visible when label selected */}
         {selectedBookmarkId && (
           <button
             onClick={() => setShowDeleteConfirm(selectedBookmarkId)}
             className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-medium transition"
-            title="Delete selected bookmark"
+            title="Delete selected label"
           >
             🗑️
           </button>
         )}
       </div>
 
-      {/* Selected Bookmark Info */}
+      {/* Selected Label Info */}
       {selectedBookmark && (
         <div className="bg-gray-800 bg-opacity-50 rounded p-2 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-teal-300 font-medium">
-              📍 {selectedBookmark.label}
+              🏷️ {selectedBookmark.label}
             </span>
             <span className="text-gray-500">
               {new Date(selectedBookmark.createdAt).toLocaleTimeString()}
@@ -322,24 +506,35 @@ export const CrosshairBookmarks: React.FC<CrosshairBookmarksProps> = ({
 
       {/* Help Text */}
       <p className="text-xs text-gray-400">
-        💡 Position crosshairs at vertebral body center, then click "Add" to bookmark.
+        💡 Position crosshairs at vertebral body center, then click "Add" to create label.
       </p>
 
-      {/* Add Bookmark Dialog */}
-      <AddBookmarkDialog
+      {/* Add Label Dialog */}
+      <AddLabelDialog
         isOpen={showAddDialog}
         onClose={() => setShowAddDialog(false)}
-        onAdd={onAddBookmark}
+        onAdd={handleLabelAdded}
         existingLabels={bookmarks.map(b => b.label)}
       />
+
+      {/* Place Screws Dialog */}
+      {pendingScrewPlacement && (
+        <PlaceScrewsDialog
+          isOpen={true}
+          label={pendingScrewPlacement.label}
+          position={pendingScrewPlacement.position}
+          onClose={() => setPendingScrewPlacement(null)}
+          onConfirm={handlePlaceScrewsConfirm}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl w-80 p-4">
-            <h4 className="text-white font-bold mb-2">🗑️ Delete Bookmark?</h4>
+            <h4 className="text-white font-bold mb-2">🗑️ Delete Label?</h4>
             <p className="text-gray-300 text-sm mb-4">
-              Are you sure you want to delete the bookmark "
+              Are you sure you want to delete the label "
               {bookmarks.find(b => b.id === showDeleteConfirm)?.label}"?
             </p>
             <div className="flex justify-end gap-2">
