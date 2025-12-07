@@ -378,14 +378,17 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       // Load model using modelStateService
       // Use screwId as modelId (unique identifier) and screwLabel as modelName (human-readable)
-      console.log(`📦 Loading model with modelId: ${screwId}, modelName: ${screwLabel}`);
+      console.log(`📦 Loading model with modelId: ${screwId}, modelName: ${screwLabel}, dimensions: R=${radius}mm L=${length}mm`);
 
       const loadedModel = await modelStateService.loadModelFromServer(modelUrl, {
         viewportId: getCurrentViewportId(),
         color: screwColor,  // Color based on screw name/label
         opacity: 0.9,
         modelId: screwId,      // Unique ID from database (if available)
-        modelName: screwLabel  // Human-readable label (e.g., "L3-R1", "L2L")
+        modelName: screwLabel, // Human-readable label (e.g., "L3-R1", "L2L")
+        // Store screw dimensions for transform compensation during save
+        screwRadius: radius,
+        screwLength: length
       });
 
       // Apply transform if provided

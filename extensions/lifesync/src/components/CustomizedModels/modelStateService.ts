@@ -43,6 +43,9 @@ export interface ModelMetadata {
   dicomOrientation?: number[];
   originalPosition?: [number, number, number];
   alignedPosition?: [number, number, number];
+  // Screw-specific dimensions (for proper transform compensation)
+  screwRadius?: number; // Screw radius in mm
+  screwLength?: number; // Screw length in mm
   // Note: All models are automatically transformed:
   //   - Rotated 90° around X-axis to align with DICOM coordinate system
   //   - Scaled 10x in all directions for better visibility
@@ -72,6 +75,9 @@ export interface ModelLoadOptions {
   rotation?: [number, number, number];
   modelId?: string;   // Custom ID for the model (e.g., screw_id from database)
   modelName?: string; // Custom name/label for the model (e.g., "L3-R1", "L2L")
+  // Screw-specific dimensions (for proper transform compensation)
+  screwRadius?: number; // Screw radius in mm
+  screwLength?: number; // Screw length in mm
 }
 
 /**
@@ -332,6 +338,9 @@ class ModelStateService extends PubSubService {
         visible: options.visible ?? true,
         color: options.color,
         opacity: options.opacity ?? 1.0,
+        // Store screw dimensions if provided (for transform compensation)
+        screwRadius: options.screwRadius,
+        screwLength: options.screwLength,
       };
 
       let loadedModel: LoadedModel;
@@ -1766,14 +1775,25 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
   }
 
   /**
-   * Extract screw dimensions from model path, metadata, or geometry
+   * Extract screw dimensions from model metadata, path, or geometry
    */
   private _getScrewDimensions(model: LoadedModel): { length: number; radius: number } {
+    // Method 0 (PRIORITY): Use stored metadata dimensions
+    // This is the most reliable source as dimensions are passed when loading screws
+    if (model.metadata.screwRadius && model.metadata.screwLength) {
+      console.log(`   📐 Using metadata dimensions: radius=${model.metadata.screwRadius}mm, length=${model.metadata.screwLength}mm`);
+      return {
+        radius: model.metadata.screwRadius,
+        length: model.metadata.screwLength
+      };
+    }
+
     const path = model.metadata.fileUrl || model.metadata.filePath || '';
 
     // Method 1: Parse from URL like /api/planning/model/cylinder/3.5/40
     const match = path.match(/cylinder\/([0-9.]+)\/([0-9.]+)/);
     if (match) {
+      console.log(`   📐 Parsed dimensions from URL: radius=${match[1]}mm, length=${match[2]}mm`);
       return {
         radius: parseFloat(match[1]),
         length: parseFloat(match[2])
@@ -2529,12 +2549,33 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     const matrix = model.actor.getUserMatrix();
     if (!matrix) return null;
 
-    // Check if this is a cylinder model (has length offset applied)
+    // Check if this is a screw model that needs compensation
+    // A screw needs compensation if:
+    // 1. It has screwLength stored in metadata (most reliable), OR
+    // 2. It's a cylinder model (legacy path check)
     const modelPath = model.metadata.fileUrl || model.metadata.filePath || '';
-    const isCylinder = modelPath.includes('/cylinder/');
+    const hasScrewDimensions = model.metadata.screwLength && model.metadata.screwLength > 0;
+    const isCylinderPath = modelPath.includes('/cylinder/');
+    const needsCompensation = hasScrewDimensions || isCylinderPath;
 
     // Get screw dimensions to calculate compensation
     const dimensions = this._getScrewDimensions(model);
+
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('📊 [getScrewTransform] DEBUG INFO');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`   modelId: ${modelId}`);
+    console.log(`   modelPath: ${modelPath}`);
+    console.log(`   hasScrewDimensions: ${hasScrewDimensions} (metadata.screwLength: ${model.metadata.screwLength})`);
+    console.log(`   isCylinderPath: ${isCylinderPath}`);
+    console.log(`   needsCompensation: ${needsCompensation}`);
+    console.log(`   dimensions: radius=${dimensions.radius}mm, length=${dimensions.length}mm`);
+    console.log(`   Actor userMatrix (column-major):`);
+    console.log(`     Col0: [${matrix[0].toFixed(3)}, ${matrix[1].toFixed(3)}, ${matrix[2].toFixed(3)}, ${matrix[3].toFixed(3)}]`);
+    console.log(`     Col1: [${matrix[4].toFixed(3)}, ${matrix[5].toFixed(3)}, ${matrix[6].toFixed(3)}, ${matrix[7].toFixed(3)}]`);
+    console.log(`     Col2: [${matrix[8].toFixed(3)}, ${matrix[9].toFixed(3)}, ${matrix[10].toFixed(3)}, ${matrix[11].toFixed(3)}]`);
+    console.log(`     Col3: [${matrix[12].toFixed(3)}, ${matrix[13].toFixed(3)}, ${matrix[14].toFixed(3)}, ${matrix[15].toFixed(3)}]`);
+    console.log(`   Model origin (translation): [${matrix[12].toFixed(2)}, ${matrix[13].toFixed(2)}, ${matrix[14].toFixed(2)}]`);
 
     // Start with the raw matrix converted to row-major
     const rowMajor = [
@@ -2544,27 +2585,40 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
       matrix[3], matrix[7], matrix[11], matrix[15]
     ];
 
-    // For cylinder models, compensate for the length offset
+    // For screw models, compensate for the length offset that was applied during loading
     // The model origin is at: entryPoint + coronalDir * (-length/2)
     // So entryPoint = modelOrigin + coronalDir * (+length/2)
-    if (isCylinder && dimensions.length > 0) {
-      // Coronal direction (Y-axis) in row-major is at indices 1, 5, 9
+    if (needsCompensation && dimensions.length > 0) {
+      // Coronal direction (Y-axis) in column-major is at indices 4, 5, 6
+      // After conversion to row-major, it's at indices 1, 5, 9
       const coronalX = rowMajor[1];
       const coronalY = rowMajor[5];
       const coronalZ = rowMajor[9];
 
+      console.log(`   Coronal direction (Y-axis): [${coronalX.toFixed(3)}, ${coronalY.toFixed(3)}, ${coronalZ.toFixed(3)}]`);
+
       // Compensate: add back the offset that was subtracted during loading
       const offset = dimensions.length / 2;
+      console.log(`   Compensation offset: +${offset.toFixed(2)}mm along coronal`);
+
+      // Store original values for logging
+      const origX = rowMajor[3];
+      const origY = rowMajor[7];
+      const origZ = rowMajor[11];
 
       // Translation in row-major is at indices 3, 7, 11
       rowMajor[3] += coronalX * offset;
       rowMajor[7] += coronalY * offset;
       rowMajor[11] += coronalZ * offset;
 
-      console.log(`🔧 [getScrewTransform] Compensated for length offset (${offset}mm)`);
-      console.log(`   Model origin: [${matrix[12].toFixed(2)}, ${matrix[13].toFixed(2)}, ${matrix[14].toFixed(2)}]`);
-      console.log(`   Entry point:  [${rowMajor[3].toFixed(2)}, ${rowMajor[7].toFixed(2)}, ${rowMajor[11].toFixed(2)}]`);
+      console.log(`🔧 [getScrewTransform] COMPENSATED for length offset`);
+      console.log(`   Before: [${origX.toFixed(2)}, ${origY.toFixed(2)}, ${origZ.toFixed(2)}] (model origin)`);
+      console.log(`   After:  [${rowMajor[3].toFixed(2)}, ${rowMajor[7].toFixed(2)}, ${rowMajor[11].toFixed(2)}] (entry point)`);
+      console.log(`   Delta:  [${(rowMajor[3]-origX).toFixed(2)}, ${(rowMajor[7]-origY).toFixed(2)}, ${(rowMajor[11]-origZ).toFixed(2)}]`);
+    } else {
+      console.log(`   ⚠️ No compensation applied (needsCompensation=${needsCompensation}, length=${dimensions.length})`);
     }
+    console.log('═══════════════════════════════════════════════════════');
 
     return rowMajor;
   }
