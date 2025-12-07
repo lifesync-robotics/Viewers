@@ -327,26 +327,79 @@ class ScrewInteractionTool extends BaseTool {
       return;
     }
 
+    // CRITICAL: Apply the final position update before saving
+    // The last mouseDragCallback may have missed the final mouse position
+    const eventDetail = evt.detail;
+    const currentPoints = eventDetail?.currentPoints;
+    const finalWorld = currentPoints?.world;
+
+    if (finalWorld && this.state.lastWorldPosition) {
+      // Calculate final delta from last known position
+      const finalDelta: [number, number, number] = [
+        finalWorld[0] - this.state.lastWorldPosition[0],
+        finalWorld[1] - this.state.lastWorldPosition[1],
+        finalWorld[2] - this.state.lastWorldPosition[2]
+      ];
+
+      // Constrain to viewport plane
+      let constrainedDelta = finalDelta;
+      if (this.state.viewportPlaneNormal && this.modelStateService?.projectDeltaOntoPlane) {
+        constrainedDelta = this.modelStateService.projectDeltaOntoPlane(
+          finalDelta,
+          this.state.viewportPlaneNormal
+        );
+      }
+
+      // Apply if significant
+      const deltaMagnitude = Math.sqrt(
+        constrainedDelta[0] ** 2 +
+        constrainedDelta[1] ** 2 +
+        constrainedDelta[2] ** 2
+      );
+
+      if (deltaMagnitude >= 0.01) {
+        console.log(`   🎯 Applying final delta: [${constrainedDelta[0].toFixed(2)}, ${constrainedDelta[1].toFixed(2)}, ${constrainedDelta[2].toFixed(2)}]`);
+
+        // Apply final transformation
+        if (this.state.interactionMode === 'rotate') {
+          if (this.modelStateService?.rotateScrew && this.state.viewportPlaneNormal) {
+            this.modelStateService.rotateScrew(
+              this.state.selectedScrewId,
+              constrainedDelta,
+              this.state.viewportPlaneNormal
+            );
+          }
+        } else {
+          if (this.modelStateService?.translateScrew) {
+            this.modelStateService.translateScrew(this.state.selectedScrewId, constrainedDelta);
+          }
+        }
+      }
+    }
+
     this._log(`Drag completed for screw: ${this.state.selectedScrewLabel}`);
 
-    // Save the updated transform to backend session
-    console.log('   📤 Calling _saveTransformToBackend...');
-    console.log('   📤 selectedScrewId:', this.state.selectedScrewId);
-    console.log('   📤 sessionId:', this.sessionId);
-    console.log('   📤 planningBackendService:', !!this.planningBackendService);
-
-    // Call async save and log result
-    this._saveTransformToBackend(this.state.selectedScrewId).then(() => {
-      console.log('   ✅ _saveTransformToBackend completed');
-    }).catch((err) => {
-      console.error('   ❌ _saveTransformToBackend failed:', err);
-    });
+    // Capture the screw ID before resetting state (for async operation)
+    const screwIdToSave = this.state.selectedScrewId;
 
     // Remove highlight
     this._highlightScrew(this.state.selectedScrewId, false);
 
-    // Reset state
+    // Reset state BEFORE async save to prevent race conditions
     this.state = this._getInitialState();
+
+    // Save the updated transform to backend session
+    console.log('   📤 Calling _saveTransformToBackend...');
+    console.log('   📤 screwIdToSave:', screwIdToSave);
+    console.log('   📤 sessionId:', this.sessionId);
+    console.log('   📤 planningBackendService:', !!this.planningBackendService);
+
+    // Call async save with captured screw ID
+    this._saveTransformToBackend(screwIdToSave).then(() => {
+      console.log('   ✅ _saveTransformToBackend completed');
+    }).catch((err) => {
+      console.error('   ❌ _saveTransformToBackend failed:', err);
+    });
   };
 
   /**
