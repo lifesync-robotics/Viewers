@@ -2516,6 +2516,11 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
 
   /**
    * Get screw transform matrix (row-major format for external use)
+   *
+   * IMPORTANT: This method compensates for the length offset that was applied
+   * during setModelTransform(). The actor's userMatrix contains the MODEL ORIGIN
+   * position (offset by -length/2 from entry point). This method adjusts the
+   * translation to return the ENTRY POINT (cap position) for backend storage.
    */
   public getScrewTransform(modelId: string): number[] | null {
     const model = this.loadedModels.get(modelId);
@@ -2524,13 +2529,44 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     const matrix = model.actor.getUserMatrix();
     if (!matrix) return null;
 
-    // Convert column-major to row-major
-    return [
+    // Check if this is a cylinder model (has length offset applied)
+    const modelPath = model.metadata.fileUrl || model.metadata.filePath || '';
+    const isCylinder = modelPath.includes('/cylinder/');
+
+    // Get screw dimensions to calculate compensation
+    const dimensions = this._getScrewDimensions(model);
+
+    // Start with the raw matrix converted to row-major
+    const rowMajor = [
       matrix[0], matrix[4], matrix[8],  matrix[12],
       matrix[1], matrix[5], matrix[9],  matrix[13],
       matrix[2], matrix[6], matrix[10], matrix[14],
       matrix[3], matrix[7], matrix[11], matrix[15]
     ];
+
+    // For cylinder models, compensate for the length offset
+    // The model origin is at: entryPoint + coronalDir * (-length/2)
+    // So entryPoint = modelOrigin + coronalDir * (+length/2)
+    if (isCylinder && dimensions.length > 0) {
+      // Coronal direction (Y-axis) in row-major is at indices 1, 5, 9
+      const coronalX = rowMajor[1];
+      const coronalY = rowMajor[5];
+      const coronalZ = rowMajor[9];
+
+      // Compensate: add back the offset that was subtracted during loading
+      const offset = dimensions.length / 2;
+
+      // Translation in row-major is at indices 3, 7, 11
+      rowMajor[3] += coronalX * offset;
+      rowMajor[7] += coronalY * offset;
+      rowMajor[11] += coronalZ * offset;
+
+      console.log(`🔧 [getScrewTransform] Compensated for length offset (${offset}mm)`);
+      console.log(`   Model origin: [${matrix[12].toFixed(2)}, ${matrix[13].toFixed(2)}, ${matrix[14].toFixed(2)}]`);
+      console.log(`   Entry point:  [${rowMajor[3].toFixed(2)}, ${rowMajor[7].toFixed(2)}, ${rowMajor[11].toFixed(2)}]`);
+    }
+
+    return rowMajor;
   }
 
   /**
