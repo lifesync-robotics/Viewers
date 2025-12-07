@@ -32,7 +32,7 @@ interface CrosshairGlobalCache {
  */
 class CrosshairsHandler {
   private globalCache: CrosshairGlobalCache | null = null;
-  private readonly CACHE_TTL = Infinity; // ✨ Set to infinite - cache never expires automatically (for surgical navigation stability)
+  private readonly CACHE_TTL = 50; // 50ms cache validity - must be short to keep plane cutters in sync with crosshair movements
 
   /**
    * Get the shared crosshair center (world coordinate)

@@ -117,6 +117,94 @@ class CrosshairsHandler {
   }
 
   /**
+   * Get crosshair center with fresh read (bypasses cache)
+   * Uses crosshairs annotation toolCenter as the authoritative source
+   * This is the ACTUAL crosshair position, NOT the camera focal point
+   */
+  public getFreshCrosshairCenter(): [number, number, number] | null {
+    try {
+      // Clear cache to force fresh read
+      this.clearCache();
+
+      const renderingEngines = getRenderingEngines();
+
+      for (const engine of renderingEngines) {
+        const viewports = engine.getViewports();
+
+        // Get from crosshairs annotation - this is the ACTUAL crosshair position
+        for (const viewport of viewports) {
+          try {
+            if (!viewport.element) continue;
+
+            // Get crosshairs annotations directly from annotation state
+            const annotations = annotation.state.getAnnotations('Crosshairs', viewport.element);
+
+            if (annotations && annotations.length > 0) {
+              const crosshairAnnotation = annotations[0];
+
+              // Debug: Log complete annotation structure
+              console.log(`🔍 [CrosshairsHandler] === ANNOTATION STRUCTURE ===`);
+              console.log(`   Viewport: ${viewport.id}`);
+              console.log(`   Handle keys:`, Object.keys(crosshairAnnotation.data?.handles || {}));
+
+              // Priority 1: toolCenter - this IS the actual crosshair center
+              if (crosshairAnnotation.data?.handles?.toolCenter) {
+                const tc = crosshairAnnotation.data.handles.toolCenter;
+                console.log(`   toolCenter raw:`, tc);
+                const center = this._normalizePoint(tc, true);
+                if (center) {
+                  console.log(`📍 [CrosshairsHandler] Fresh read from toolCenter: [${center[0].toFixed(2)}, ${center[1].toFixed(2)}, ${center[2].toFixed(2)}]`);
+                  return center;
+                }
+              }
+
+              // Priority 2: rotationPoints - examine structure
+              if (crosshairAnnotation.data?.handles?.rotationPoints) {
+                const rotPoints = crosshairAnnotation.data.handles.rotationPoints;
+                console.log(`   rotationPoints type:`, typeof rotPoints);
+                console.log(`   rotationPoints length:`, Array.isArray(rotPoints) ? rotPoints.length : 'N/A');
+
+                if (Array.isArray(rotPoints) && rotPoints.length > 0) {
+                  // Log first few rotation points to understand structure
+                  for (let i = 0; i < Math.min(3, rotPoints.length); i++) {
+                    console.log(`   rotationPoints[${i}]:`, JSON.stringify(rotPoints[i]).substring(0, 100));
+                  }
+
+                  // rotationPoints structure can be nested - try to extract
+                  let rawPoint = rotPoints[0];
+
+                  // Handle nested array structure [[x,y,z], ...]
+                  if (Array.isArray(rawPoint) && rawPoint.length > 0 && Array.isArray(rawPoint[0])) {
+                    rawPoint = rawPoint[0];
+                  }
+
+                  const center = this._normalizePoint(rawPoint, true);
+                  if (center) {
+                    console.log(`📍 [CrosshairsHandler] Fresh read from rotationPoints: [${center[0].toFixed(2)}, ${center[1].toFixed(2)}, ${center[2].toFixed(2)}]`);
+                    return center;
+                  }
+                }
+              }
+
+              // Debug: log what we found
+              console.log(`🔍 [CrosshairsHandler] Could not extract center from this annotation`);
+            }
+          } catch (e) {
+            console.debug(`⚠️ Error reading crosshairs from viewport ${viewport.id}:`, e);
+            continue;
+          }
+        }
+      }
+
+      console.warn(`⚠️ [CrosshairsHandler] Could not get fresh crosshair center from annotations`);
+      return null;
+    } catch (error) {
+      console.error(`❌ [CrosshairsHandler] Error getting fresh crosshair center:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Refresh the global cache by finding the first viewport with crosshairs
    * and extracting the shared world coordinate
    * Optimized to stop at first valid crosshair tool found

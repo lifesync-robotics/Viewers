@@ -5,9 +5,13 @@
  */
 
 import { getRenderingEngine, utilities as csUtils } from '@cornerstonejs/core';
-import { annotation } from '@cornerstonejs/tools';
+import { annotation, ToolGroupManager } from '@cornerstonejs/tools';
 import { vec3 } from 'gl-matrix';
 import type { Fiducial } from '../types';
+
+// Import crosshairs handlers from both extensions to clear their caches
+import { crosshairsHandler as lifesyncCrosshairsHandler } from '../../../utils/crosshairsHandler';
+// Note: We can't easily import the cornerstone version here, but changing its TTL to 50ms should be sufficient
 
 /**
  * Get crosshair position from viewport
@@ -75,6 +79,9 @@ export function getCrosshairPosition(): number[] | null {
 /**
  * Jump viewport camera to a specific 3D position
  * Based on jumpToMeasurementViewport implementation in commandsModule
+ *
+ * IMPORTANT: Camera focal point must be updated FIRST, then crosshairs
+ * This ensures plane cutters (which use camera.focalPoint) update correctly
  */
 export function jumpToPosition(
   position: number[],
@@ -99,14 +106,19 @@ export function jumpToPosition(
       position[2],
     ];
 
-    // Update all viewports' cameras to focus on the position
+    console.log(`📍 [jumpToPosition] Target: [${targetPosition.map(v => v.toFixed(2)).join(', ')}]`);
+
+    // Clear crosshairs cache to ensure plane cutters get fresh position
+    lifesyncCrosshairsHandler.clearCache();
+
+    // STEP 1: Update all viewports' cameras FIRST
+    // This is critical because plane cutters use camera.focalPoint for cutting position
     for (const viewport of viewports) {
       try {
         const camera = viewport.getCamera();
         const { position: cameraPosition, focalPoint: cameraFocalPoint } = camera;
 
         // Calculate new camera position maintaining the same viewing direction
-        // This is similar to how jumpToMeasurementViewport works
         const viewDirection = vec3.sub(
           vec3.create(),
           cameraPosition as [number, number, number],
@@ -118,53 +130,60 @@ export function jumpToPosition(
           viewDirection
         ) as [number, number, number];
 
-        // Update camera
+        // Update camera focal point and position
         viewport.setCamera({
           focalPoint: targetPosition,
           position: newPosition,
         });
 
-        // For stack viewports, try to jump to the slice containing this position
-        if (viewport.type === 'stack') {
-          try {
-            // Try to find the closest slice to the target position
-            const imageIds = (viewport as any).getImageIds?.();
-            if (imageIds && imageIds.length > 0) {
-              // Use utilities.jumpToSlice if available
-              const { utilities } = require('@cornerstonejs/core');
-              if (utilities && utilities.jumpToSlice) {
-                // For now, just update the camera - slice jumping can be enhanced later
-                viewport.render();
-              }
-            }
-          } catch (sliceError) {
-            // If slice jumping fails, just update the camera
-            console.debug('⚠️ Could not jump to slice, updating camera only:', sliceError);
-            viewport.render();
-          }
-        } else {
-          // For volume viewports, just update the camera
-          viewport.render();
-        }
+        // Render to trigger plane cutter updates
+        viewport.render();
       } catch (error) {
         console.warn(`⚠️ Error updating viewport ${viewport.id}:`, error);
       }
     }
 
-    // Also update crosshairs if available
-    try {
-      const { cornerstoneViewportService } = servicesManager?.services;
-      if (cornerstoneViewportService && typeof cornerstoneViewportService.setCameraForViewports === 'function') {
-        cornerstoneViewportService.setCameraForViewports({
-          focalPoint: targetPosition,
-        });
+    console.log(`✅ [jumpToPosition] Camera focal points updated for all viewports`);
+
+    // STEP 2: Update crosshairs AFTER camera is updated
+    // This ensures crosshairs align with the new camera position
+    let crosshairsUpdated = false;
+    for (const viewport of viewports) {
+      try {
+        // Get tool group for this viewport
+        const toolGroup = ToolGroupManager.getToolGroupForViewport(
+          viewport.id,
+          renderingEngine.id
+        );
+
+        if (!toolGroup) continue;
+
+        // Get the Crosshairs tool instance
+        const crosshairsTool = toolGroup.getToolInstance('Crosshairs');
+
+        if (crosshairsTool && typeof crosshairsTool.setToolCenter === 'function') {
+          // Use the tool's API to properly move crosshairs
+          // Second parameter (false) means don't trigger an event
+          crosshairsTool.setToolCenter(targetPosition, false);
+          crosshairsUpdated = true;
+          console.log(`✅ [jumpToPosition] Crosshairs setToolCenter called`);
+          break; // Only need to call once, crosshairs are shared
+        }
+      } catch (e) {
+        console.debug(`⚠️ Could not use setToolCenter in viewport ${viewport.id}:`, e);
       }
-    } catch (error) {
-      // Crosshair update is optional, don't fail if it doesn't work
-      console.debug('⚠️ Could not update crosshairs (optional):', error);
     }
 
-    console.log(`✅ Jumped to position: [${targetPosition[0].toFixed(1)}, ${targetPosition[1].toFixed(1)}, ${targetPosition[2].toFixed(1)}]`);
+    // STEP 3: Force a final render on all viewports to ensure everything is synced
+    for (const viewport of viewports) {
+      try {
+        viewport.render();
+      } catch (e) {
+        // Ignore render errors
+      }
+    }
+
+    console.log(`✅ [jumpToPosition] Completed - camera: ✓, crosshairs: ${crosshairsUpdated ? '✓' : '✗'}`);
     return true;
   } catch (error) {
     console.error('❌ Error jumping to position:', error);

@@ -7,6 +7,10 @@
 
 import React from 'react';
 
+// Re-export CrosshairBookmarks component
+export { CrosshairBookmarks } from './CrosshairBookmarks';
+export type { CrosshairBookmark } from './CrosshairBookmarks';
+
 // ═══════════════════════════════════════════════════════
 // Header Components
 // ═══════════════════════════════════════════════════════

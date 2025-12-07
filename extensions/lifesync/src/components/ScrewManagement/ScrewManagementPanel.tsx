@@ -31,7 +31,10 @@ import {
   ScrewListContainer,
   ScrewListScrollArea,
   SessionStateDialog,
+  CrosshairBookmarks,
 } from './ScrewManagementUI';
+import type { CrosshairBookmark } from './ScrewManagementUI';
+import { jumpToPosition } from '../Registration/utils/fiducialUtils';
 import { ToolGroupManager, addTool, state as cornerstoneToolsState } from '@cornerstonejs/tools';
 import ScrewInteractionTool from '../../tools/ScrewInteractionTool';
 
@@ -115,6 +118,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [selectedScrew, setSelectedScrew] = useState<{ label: string } | null>(null);
   const [modelCount, setModelCount] = useState(0);
 
+  // Crosshair Bookmark state
+  const [crosshairBookmarks, setCrosshairBookmarks] = useState<CrosshairBookmark[]>([]);
+  const [selectedBookmarkId, setSelectedBookmarkId] = useState<string | null>(null);
+
   // Debug: Log screws whenever they change
   useEffect(() => {
     console.log(`🔍 [ScrewManagement] Screws state changed. Count: ${screws.length}`);
@@ -122,6 +129,26 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('🔍 [ScrewManagement] Screws data:', screws);
     }
   }, [screws]);
+
+  // Keep ScrewInteractionTool's sessionId in sync
+  useEffect(() => {
+    if (!sessionId) return;
+
+    console.log(`🔄 [ScrewManagement] SessionId changed, updating ScrewInteractionTool: ${sessionId}`);
+
+    try {
+      const allToolGroups = ToolGroupManager.getAllToolGroups();
+      for (const toolGroup of allToolGroups) {
+        const toolInstance = toolGroup.getToolInstance('ScrewInteraction');
+        if (toolInstance && toolInstance.setSessionId) {
+          toolInstance.setSessionId(sessionId);
+          console.log(`✅ [ScrewManagement] ScrewInteractionTool sessionId updated to: ${sessionId}`);
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ [ScrewManagement] Could not update ScrewInteractionTool sessionId:', error);
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     initializeSession();
@@ -1800,6 +1827,138 @@ export default function ScrewManagementPanel({ servicesManager }) {
     };
   };
 
+  // ═══════════════════════════════════════════════════════════════════
+  // Crosshair Bookmark Handlers
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Add a new crosshair bookmark at the current crosshair position
+   */
+  const addCrosshairBookmark = (label: string) => {
+    try {
+      console.log(`📍 [Bookmark] Attempting to save bookmark: ${label}`);
+
+      // Get current crosshair position using fresh read (bypasses cache)
+      // This reads directly from crosshairs annotation toolCenter
+      const position = crosshairsHandler.getFreshCrosshairCenter();
+
+      console.log(`📍 [Bookmark] Position from getFreshCrosshairCenter:`, position);
+
+      if (!position) {
+        alert('⚠️ Could not detect crosshair position.\n\nPlease ensure:\n1. A CT scan is loaded\n2. Crosshairs tool is active\n3. Navigate to the desired vertebral body');
+        return;
+      }
+
+      // Validate position values
+      if (position.some(v => isNaN(v) || !isFinite(v))) {
+        console.error('❌ [Bookmark] Invalid position values:', position);
+        alert('⚠️ Invalid crosshair position detected. Please try again.');
+        return;
+      }
+
+      // Create new bookmark
+      const newBookmark: CrosshairBookmark = {
+        id: `bookmark-${Date.now()}`,
+        label,
+        position: [...position] as [number, number, number],
+        createdAt: Date.now(),
+      };
+
+      setCrosshairBookmarks(prev => [...prev, newBookmark]);
+      setSelectedBookmarkId(newBookmark.id);
+
+      console.log(`✅ [Bookmark] Saved: ${label} at [${position.map(v => v.toFixed(2)).join(', ')}]`);
+    } catch (error) {
+      console.error('❌ Error adding crosshair bookmark:', error);
+      alert('Failed to add crosshair bookmark. Check console for details.');
+    }
+  };
+
+  /**
+   * Navigate to a saved crosshair bookmark position
+   */
+  const selectCrosshairBookmark = (bookmark: CrosshairBookmark) => {
+    try {
+      console.log(`📍 Navigating to bookmark: ${bookmark.label}`);
+      console.log(`   Position: [${bookmark.position.map(v => v.toFixed(1)).join(', ')}]`);
+
+      // Jump to the bookmarked position
+      const success = jumpToPosition(bookmark.position, servicesManager);
+
+      if (success) {
+        setSelectedBookmarkId(bookmark.id);
+        console.log(`✅ Successfully navigated to ${bookmark.label}`);
+      } else {
+        console.warn(`⚠️ Navigation to ${bookmark.label} may not have completed fully`);
+        setSelectedBookmarkId(bookmark.id);
+      }
+    } catch (error) {
+      console.error('❌ Error navigating to bookmark:', error);
+      alert('Failed to navigate to bookmark. Check console for details.');
+    }
+  };
+
+  /**
+   * Update an existing crosshair bookmark with current crosshair position
+   */
+  const updateCrosshairBookmark = (bookmarkId: string) => {
+    try {
+      const bookmark = crosshairBookmarks.find(b => b.id === bookmarkId);
+      if (!bookmark) {
+        console.warn(`⚠️ Bookmark not found: ${bookmarkId}`);
+        return;
+      }
+
+      console.log(`🔄 [Bookmark] Updating bookmark: ${bookmark.label}`);
+
+      // Get current crosshair position using fresh read
+      const position = crosshairsHandler.getFreshCrosshairCenter();
+
+      console.log(`🔄 [Bookmark] New position:`, position);
+
+      if (!position) {
+        alert('⚠️ Could not detect crosshair position.\n\nPlease ensure:\n1. A CT scan is loaded\n2. Crosshairs tool is active');
+        return;
+      }
+
+      // Validate position values
+      if (position.some(v => isNaN(v) || !isFinite(v))) {
+        console.error('❌ [Bookmark] Invalid position values:', position);
+        alert('⚠️ Invalid crosshair position detected. Please try again.');
+        return;
+      }
+
+      // Update the bookmark
+      setCrosshairBookmarks(prev => prev.map(b =>
+        b.id === bookmarkId
+          ? { ...b, position: [...position] as [number, number, number], createdAt: Date.now() }
+          : b
+      ));
+
+      console.log(`✅ [Bookmark] Updated: ${bookmark.label} to [${position.map(v => v.toFixed(2)).join(', ')}]`);
+    } catch (error) {
+      console.error('❌ Error updating crosshair bookmark:', error);
+      alert('Failed to update crosshair bookmark. Check console for details.');
+    }
+  };
+
+  /**
+   * Delete a crosshair bookmark
+   */
+  const deleteCrosshairBookmark = (bookmarkId: string) => {
+    const bookmark = crosshairBookmarks.find(b => b.id === bookmarkId);
+    if (bookmark) {
+      console.log(`🗑️ Deleting bookmark: ${bookmark.label}`);
+    }
+
+    setCrosshairBookmarks(prev => prev.filter(b => b.id !== bookmarkId));
+
+    // Clear selection if the deleted bookmark was selected
+    if (selectedBookmarkId === bookmarkId) {
+      setSelectedBookmarkId(null);
+    }
+  };
+
   /**
    * Load a saved plan
    */
@@ -2068,6 +2227,16 @@ export default function ScrewManagementPanel({ servicesManager }) {
         status={sessionStatus}
         sessionId={sessionId}
         onRetry={initializeSession}
+      />
+
+      {/* Crosshair Bookmarks - Vertebral Body Navigation */}
+      <CrosshairBookmarks
+        bookmarks={crosshairBookmarks}
+        selectedBookmarkId={selectedBookmarkId}
+        onAddBookmark={addCrosshairBookmark}
+        onSelectBookmark={selectCrosshairBookmark}
+        onUpdateBookmark={updateCrosshairBookmark}
+        onDeleteBookmark={deleteCrosshairBookmark}
       />
 
       {/* Screw Interaction Toolbar */}

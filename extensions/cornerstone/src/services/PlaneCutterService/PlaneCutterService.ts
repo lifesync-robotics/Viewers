@@ -4,7 +4,8 @@ import vtkPlane from '@kitware/vtk.js/Common/DataModel/Plane';
 import vtkCutter from '@kitware/vtk.js/Filters/Core/Cutter';
 import vtkMapper from '@kitware/vtk.js/Rendering/Core/Mapper';
 import vtkActor from '@kitware/vtk.js/Rendering/Core/Actor';
-import { crosshairsHandler } from '../../utils/crosshairsHandler';
+// Note: Plane cutters now use camera.focalPoint directly instead of crosshairs center
+// This ensures proper synchronization when scrolling MPR slices
 
 /**
  * Per-model cutter data within a viewport's plane cutter
@@ -316,12 +317,10 @@ class PlaneCutterService extends PubSubService {
     // Create centralized update function that updates ALL plane cutters
     const updateAllPlaneCutters = () => {
       try {
-        // Fetch crosshair center ONCE for all plane cutters (optimization)
-        const crosshairCenter = crosshairsHandler.getCrosshairCenter();
-
-        // Update each plane cutter with the shared crosshair center
+        // Update each plane cutter using camera focalPoint (not crosshairs)
+        // This ensures plane cutters follow the current slice when scrolling MPR
         for (const planeCutter of this.planeCutters) {
-          this._updateSinglePlaneCutter(planeCutter, crosshairCenter);
+          this._updateSinglePlaneCutter(planeCutter, null); // Use camera focalPoint, not crosshairs
         }
 
         // Render ALL viewports after all cutters are updated
@@ -358,12 +357,14 @@ class PlaneCutterService extends PubSubService {
 
   /**
    * Update a single plane cutter's position and cut all models
+   * Uses camera focalPoint to determine the cutting plane position
+   * This ensures the plane cutter follows the current slice when scrolling MPR
    * @param planeCutter - The plane cutter to update
-   * @param crosshairCenter - The crosshair center (if available), passed from caller for efficiency
+   * @param _unused - Unused parameter (kept for backwards compatibility)
    */
   private _updateSinglePlaneCutter(
     planeCutter: PlaneCutterData,
-    crosshairCenter: [number, number, number] | null = null
+    _unused: [number, number, number] | null = null
   ): void {
     try {
       const viewport = this._getViewportById(planeCutter.viewportId);
@@ -371,67 +372,25 @@ class PlaneCutterService extends PubSubService {
         return;
       }
 
-      let planeOrigin = null;
-      let planeNormal = null;
-
-      // Get camera once for both plane origin and normal calculations
+      // Get camera for plane origin and normal calculations
       const camera = viewport.getCamera();
-      planeNormal = camera.viewPlaneNormal;
+      const planeNormal = camera.viewPlaneNormal;
+      const { focalPoint } = camera;
 
       // Validate plane normal
       if (!planeNormal || planeNormal.length !== 3) {
         return;
       }
 
-      // Use the provided crosshair center if available
-      if (crosshairCenter) {
-        planeOrigin = crosshairCenter;
-      } else {
-        // Fallback: Calculate plane origin from viewport's current image slice
-        try {
-          const imageData = viewport.getImageData?.();
-          if (imageData) {
-            const { focalPoint } = camera;
-            const origin = imageData.getOrigin();
-            const spacing = imageData.getSpacing();
-            const dimensions = imageData.getDimensions();
-
-            // Calculate the center position of the current slice based on viewport orientation
-            if (planeCutter.orientation === 'axial') {
-              const sliceIndex = Math.round((focalPoint[2] - origin[2]) / spacing[2]);
-              const clampedIndex = Math.max(0, Math.min(dimensions[2] - 1, sliceIndex));
-              planeOrigin = [
-                origin[0] + (dimensions[0] / 2) * spacing[0],
-                origin[1] + (dimensions[1] / 2) * spacing[1],
-                origin[2] + clampedIndex * spacing[2]
-              ];
-            } else if (planeCutter.orientation === 'coronal') {
-              const sliceIndex = Math.round((focalPoint[1] - origin[1]) / spacing[1]);
-              const clampedIndex = Math.max(0, Math.min(dimensions[1] - 1, sliceIndex));
-              planeOrigin = [
-                origin[0] + (dimensions[0] / 2) * spacing[0],
-                origin[1] + clampedIndex * spacing[1],
-                origin[2] + (dimensions[2] / 2) * spacing[2]
-              ];
-            } else if (planeCutter.orientation === 'sagittal') {
-              const sliceIndex = Math.round((focalPoint[0] - origin[0]) / spacing[0]);
-              const clampedIndex = Math.max(0, Math.min(dimensions[0] - 1, sliceIndex));
-              planeOrigin = [
-                origin[0] + clampedIndex * spacing[0],
-                origin[1] + (dimensions[1] / 2) * spacing[1],
-                origin[2] + (dimensions[2] / 2) * spacing[2]
-              ];
-            }
-          }
-        } catch (sliceError) {
-          return;
-        }
-      }
-
-      // If still no valid position, skip update
-      if (!planeOrigin || !Array.isArray(planeOrigin) || planeOrigin.length !== 3) {
+      // Validate focal point
+      if (!focalPoint || focalPoint.length !== 3) {
         return;
       }
+
+      // Use camera focalPoint directly as the plane origin
+      // This is the correct approach - the cutting plane should be at the camera's focal point
+      // which corresponds to the current slice being viewed
+      const planeOrigin = [focalPoint[0], focalPoint[1], focalPoint[2]];
 
       // Update plane origin and normal
       planeCutter.plane.setOrigin(planeOrigin[0], planeOrigin[1], planeOrigin[2]);
