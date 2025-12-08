@@ -1331,11 +1331,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // Check if model already exists for this screw
       const loadedModels = modelStateService.getAllModels();
       let modelExists = false;
+      let existingModel = null;  // ✅ 保存找到的模型引用
 
       for (const model of loadedModels) {
         // PRIORITY 1: Check by name (which stores screwLabel) - most reliable exact match
         if (model.metadata.name && model.metadata.name === displayInfo.label) {
           modelExists = true;
+          existingModel = model;  // ✅ 保存模型引用
           console.log(`ℹ️ Model already exists for screw "${displayInfo.label}"`);
           console.log(`   Existing model: ${model.metadata.id} (${model.metadata.name})`);
           console.log(`   Matched by name (exact match)`);
@@ -1349,6 +1351,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
             (displayInfo.radius && modelName.includes(displayInfo.radius.toString())) ||
             (displayInfo.length && modelName.includes(displayInfo.length.toString()))) {
           modelExists = true;
+          existingModel = model;  // ✅ 保存模型引用
           console.log(`ℹ️ Model already exists for screw "${displayInfo.label}"`);
           console.log(`   Existing model: ${model.metadata.id} (${model.metadata.name})`);
           console.log(`   Matched by dimensions/filename (legacy)`);
@@ -1483,6 +1486,61 @@ export default function ScrewManagementPanel({ servicesManager }) {
           console.warn('⚠️ Could not restore viewport states:', stateError);
           console.error('   Error details:', stateError);
         }
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // Jump crosshairs to screw center position
+      // ═══════════════════════════════════════════════════════════
+
+      let screwPosition: [number, number, number] | null = null;
+
+      // ✅ PRIORITY 1: If model exists, use its current position
+      if (existingModel) {
+        const currentTransform = modelStateService.getScrewTransform(existingModel.metadata.id);
+        if (currentTransform && currentTransform.length === 16) {
+          screwPosition = [
+            currentTransform[3],
+            currentTransform[7],
+            currentTransform[11]
+          ];
+          console.log(`🎯 Using current model position: [${screwPosition.map(v => v.toFixed(2)).join(', ')}]`);
+          console.log(`   (Model may have been moved, using actual position instead of backend data)`);
+        }
+      }
+
+      // ✅ PRIORITY 2: Fallback to backend data if model doesn't exist
+      if (!screwPosition) {
+        if (transformArray && transformArray.length === 16) {
+          screwPosition = [
+            transformArray[3],
+            transformArray[7],
+            transformArray[11]
+          ];
+          console.log(`🎯 Using backend transform_matrix: [${screwPosition.map(v => v.toFixed(2)).join(', ')}]`);
+        } else if (screwData.entry_point) {
+          screwPosition = [
+            screwData.entry_point.x,
+            screwData.entry_point.y,
+            screwData.entry_point.z
+          ];
+          console.log(`🎯 Using backend entry_point: [${screwPosition.map(v => v.toFixed(2)).join(', ')}]`);
+        }
+      }
+
+      if (screwPosition) {
+        console.log(`🎯 Jumping crosshairs to screw position: [${screwPosition.map(v => v.toFixed(2)).join(', ')}]`);
+        try {
+          const success = jumpToPosition(screwPosition, servicesManager);
+          if (success) {
+            console.log(`✅ Crosshairs positioned at screw position`);
+          } else {
+            console.warn(`⚠️ Crosshairs positioning may not have completed fully`);
+          }
+        } catch (jumpError) {
+          console.warn('⚠️ Could not jump crosshairs to screw position:', jumpError);
+        }
+      } else {
+        console.warn('⚠️ Cannot jump crosshairs - no position data available');
       }
 
       console.log(`✅ Restored screw - Total models: ${modelStateService.getAllModels().length}/${maxModels}`);
@@ -1812,6 +1870,29 @@ export default function ScrewManagementPanel({ servicesManager }) {
       } else {
         // Activate: Set tool active with primary mouse button
         console.log('🟢 [ScrewManagement] Activating ScrewInteraction tool');
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Explicitly deactivate Crosshairs tool (before activating ScrewInteraction)
+        // ═══════════════════════════════════════════════════════════════════════════
+        const activeToolName = toolGroup.getActivePrimaryMouseButtonTool();
+        if (activeToolName === 'Crosshairs') {
+          console.log('🔴 [ScrewManagement] Explicitly deactivating Crosshairs before activating ScrewInteraction');
+          try {
+            // Check Crosshairs configuration and decide whether to disable or set to passive based on config
+            const crosshairsConfig = toolGroup.getToolConfiguration('Crosshairs');
+            if (crosshairsConfig?.disableOnPassive) {
+              toolGroup.setToolDisabled('Crosshairs');
+              console.log('✅ [ScrewManagement] Crosshairs disabled (disableOnPassive=true)');
+            } else {
+              toolGroup.setToolPassive('Crosshairs');
+              console.log('✅ [ScrewManagement] Crosshairs set to passive');
+            }
+          } catch (crosshairsError) {
+            console.warn('⚠️ [ScrewManagement] Could not deactivate Crosshairs:', crosshairsError);
+            // Continue even if failed, as setToolActive will automatically handle tool switching
+          }
+        }
+
         console.log(`   ToolGroup ID: ${toolGroup.id}`);
         console.log(`   ToolGroup viewportsInfo:`, toolGroup.viewportsInfo);
 
