@@ -524,6 +524,7 @@ function WorkList({
   dataPath,
   onRefresh,
   servicesManager,
+  extensionManager,
 }: withAppTypes) {
   const { show, hide } = useModal();
   const { t } = useTranslation();
@@ -2466,6 +2467,30 @@ function WorkList({
   const dataSourceConfigurationComponent = customizationService.getCustomization(
     'ohif.dataSourceConfigurationComponent'
   );
+
+  // 示例：假设有一个函数处理跳转到plan（根据您的代码调整）
+  const handleOpenPlanning = (caseId) => {
+    // 设置标志
+    localStorage.setItem('ohif_from_case', 'true');
+
+    // 新增：尝试预清理渲染缓存（如果extensionManager有访问servicesManager）
+    const servicesManager = extensionManager.getActiveServicesManager(); // 基于第527行extensionManager
+    if (servicesManager) {
+      const { modelStateService, viewportStateService } = servicesManager.services;
+      modelStateService.clearAllModels();
+      viewportStateService.clearAll();
+      console.log('🧹 Pre-cleared rendering cache before navigating to plan');
+    }
+
+    // 执行导航
+    navigate(`/plan?caseId=${caseId}`);
+  };
+
+  // 在useEffect中保持设置标志（第2470-2474行）
+  useEffect(() => {
+    localStorage.setItem('ohif_from_case', 'true');  // Set flag when in WorkList (case)
+  }, []);
+
 
   return (
     <div className="flex h-screen flex-col bg-black">
