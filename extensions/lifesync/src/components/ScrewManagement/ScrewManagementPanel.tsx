@@ -151,19 +151,51 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   }, [sessionId]);
 
+  // useEffect(() => {
+  //   initializeSession();
+  // }, []);
   useEffect(() => {
-    initializeSession();
+    const clearFlagOnUnload = () => {
+      sessionStorage.removeItem('ohif_new_plan_load');  // Clear flag on refresh/close
+    };
+
+    window.addEventListener('beforeunload', clearFlagOnUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', clearFlagOnUnload);
+    };
   }, []);
 
   /**
    * Initialize planning session and load existing screws
    */
   const initializeSession = async () => {
-    try {
-      setIsLoading(true);
-      setSessionStatus('initializing');
+    const CACHED_SESSION_KEY = 'ohif_planning_session_id';
+    const NEW_LOAD_FLAG = 'ohif_new_plan_load';
+    const FROM_CASE_FLAG = 'ohif_from_case';  // Flag set in WorkList
 
-      // Get real DICOM UIDs from active viewport
+    // Check if coming from case
+    const fromCase = localStorage.getItem(FROM_CASE_FLAG);
+
+    if (fromCase === 'true') {
+      // From case to plan: force new session
+      sessionStorage.removeItem(NEW_LOAD_FLAG);  // Clear to trigger generation
+      localStorage.removeItem(FROM_CASE_FLAG);  // Clear after use
+
+      // 保留核心渲染清除（去除不需要的逻辑，如额外日志）
+      modelStateService.clearAllModels();
+      viewportStateService.clearAll();
+    }
+
+    // Existing flag check for refresh
+    const isNewLoad = !sessionStorage.getItem(NEW_LOAD_FLAG);
+    if (isNewLoad) {
+      sessionStorage.setItem(NEW_LOAD_FLAG, 'true');
+
+      // Generate new session_id
+      localStorage.removeItem(CACHED_SESSION_KEY);
+
+      // Get DICOM UIDs (existing logic)
       const { displaySetService, viewportGridService } = servicesManager.services;
       const { activeViewportId, viewports } = viewportGridService.getState();
       const viewport = viewports.get(activeViewportId);
@@ -174,44 +206,20 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (viewport && viewport.displaySetInstanceUIDs && viewport.displaySetInstanceUIDs.length > 0) {
         const displaySetInstanceUID = viewport.displaySetInstanceUIDs[0];
         const displaySet = displaySetService.getDisplaySetByUID(displaySetInstanceUID);
-
         if (displaySet) {
           newStudyUID = displaySet.StudyInstanceUID;
           newSeriesUID = displaySet.SeriesInstanceUID;
-          console.log('✅ Got real DICOM UIDs from active viewport:');
-          console.log(`   Study UID: ${newStudyUID}`);
-          console.log(`   Series UID: ${newSeriesUID}`);
         }
       }
 
-      // Fallback if no viewport data available
       if (!newStudyUID || !newSeriesUID) {
-        console.warn('⚠️ Could not get DICOM UIDs from viewport, using placeholders');
-        console.warn('   Make sure a study is loaded before using planning features');
         newStudyUID = 'NO_STUDY_LOADED';
         newSeriesUID = 'NO_SERIES_LOADED';
       }
 
-      // Get case information from URL params (set during navigation from WorkList)
-      const newCaseId = urlCaseId; // Read from URL query parameter
-      const newSurgeon = 'OHIF User'; // TODO: Get from user service
+      const newCaseId = urlCaseId;
+      const newSurgeon = 'OHIF User';
 
-      // Store in state for later use in save/load (redundant if already set, but kept for clarity)
-      if (newCaseId && newCaseId !== caseId) {
-        setCaseId(newCaseId);
-      }
-      setStudyInstanceUID(newStudyUID);
-      setSeriesInstanceUID(newSeriesUID);
-      setSurgeon(newSurgeon);
-
-      console.log('🔄 Initializing planning session...');
-      console.log(`   Case ID: ${newCaseId || 'none (session without case)'}`);
-
-      // Check for old session_id before creating new session
-      const CACHED_SESSION_KEY = 'ohif_planning_session_id';
-      const oldSessionId = localStorage.getItem(CACHED_SESSION_KEY);
-
-      // Start planning session using backend service
       const response = await planningBackendService.startSession({
         studyInstanceUID: newStudyUID,
         seriesInstanceUID: newSeriesUID,
@@ -221,51 +229,88 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       if (response.success && response.session_id) {
         const newSessionId = response.session_id;
-
-        // If new session_id is different from old one, clear old models
-        if (oldSessionId && oldSessionId !== newSessionId) {
-          console.log('🔄 New session detected - clearing old session data');
-          console.log(`   Old session: ${oldSessionId.substring(0, 8)}...`);
-          console.log(`   New session: ${newSessionId.substring(0, 8)}...`);
-
-          // Clear old 3D models
-          modelStateService.clearAllModels();
-          // Clear old viewport snapshots
-          viewportStateService.clearAll();
-          // Clear old screws state
-          setScrews([]);
-          console.log('🧹 Cleared old session data (models, snapshots, screws)');
-        }
-
-        setSessionId(newSessionId);
-        setSessionStatus('ready');
-        console.log('✅ Planning session started:', newSessionId);
-
-        // Save new session_id to localStorage
         localStorage.setItem(CACHED_SESSION_KEY, newSessionId);
-        console.log(`💾 Saved session_id to localStorage: ${newSessionId.substring(0, 8)}...`);
-
-        // Load existing screws for this session
-        await loadScrews(newSessionId);
+        console.log('✅ New session generated on new load:', newSessionId);
       } else {
-        throw new Error(response.error || 'Session creation failed');
+        console.error('❌ Failed to generate new session');
       }
-    } catch (error) {
-      console.error('❌ Error initializing session:', error);
-      setSessionStatus('error');
-
-      // Show user-friendly error
-      console.warn('⚠️ Falling back to localStorage-only mode');
-      console.warn('   Planning API may not be available. Check:');
-      console.warn('   1. Is SyncForge API running on port 3001?');
-      console.warn('   2. Is Planning Service running on port 6000?');
-
-      // Fallback to localStorage
-      loadScrewsLocal();
-    } finally {
-      setIsLoading(false);
     }
+
+    // Load from cache
+    setIsLoading(true);
+    setSessionStatus('initializing');
+
+    // Get real DICOM UIDs from active viewport (keep this part as is)
+    const { displaySetService: dsService, viewportGridService: vgService } = servicesManager.services;  // Rename to avoid conflict if needed
+    const { activeViewportId: avId, viewports: vps } = vgService.getState();
+    const vp = vps.get(avId);
+
+    let newStudyUID = null;
+    let newSeriesUID = null;
+
+    if (vp && vp.displaySetInstanceUIDs && vp.displaySetInstanceUIDs.length > 0) {
+      const dsUid = vp.displaySetInstanceUIDs[0];
+      const ds = dsService.getDisplaySetByUID(dsUid);
+
+      if (ds) {
+        newStudyUID = ds.StudyInstanceUID;
+        newSeriesUID = ds.SeriesInstanceUID;
+        console.log('✅ Got real DICOM UIDs from active viewport:');
+        console.log(`   Study UID: ${newStudyUID}`);
+        console.log(`   Series UID: ${newSeriesUID}`);
+      }
+    }
+
+    // Fallback if no viewport data available
+    if (!newStudyUID || !newSeriesUID) {
+      console.warn('⚠️ Could not get DICOM UIDs from viewport, using placeholders');
+      console.warn('   Make sure a study is loaded before using planning features');
+      newStudyUID = 'NO_STUDY_LOADED';
+      newSeriesUID = 'NO_SERIES_LOADED';
+    }
+
+    // Get case information from URL params
+    const newCaseId = urlCaseId;
+    const newSurgeon = 'OHIF User';
+
+    // Store in state
+    if (newCaseId && newCaseId !== caseId) {
+      setCaseId(newCaseId);
+    }
+    setStudyInstanceUID(newStudyUID);
+    setSeriesInstanceUID(newSeriesUID);
+    setSurgeon(newSurgeon);
+
+    console.log('🔄 Loading planning session from cache...');
+    console.log(`   Case ID: ${newCaseId || 'none (session without case)'}`);
+
+    const cachedSessionId = localStorage.getItem(CACHED_SESSION_KEY);
+
+    if (cachedSessionId) {
+      setSessionId(cachedSessionId);
+      setSessionStatus('ready');
+      console.log('✅ Loaded session from cache:', cachedSessionId);
+      await loadScrews(cachedSessionId);
+    } else {
+      console.warn('❌ No cached session_id found. Please initialize from plan interface.');
+      setSessionStatus('error');
+      loadScrewsLocal();
+    }
+
+    setIsLoading(false);
   };
+
+  useEffect(() => {
+    initializeSession();
+  }, []);
+
+  // Add this new useEffect to reload screws on mount or sessionId change
+  useEffect(() => {
+    if (sessionId) {
+      console.log('🔄 Reloading screws on mount or sessionId change');
+      loadScrews(sessionId);
+    }
+  }, [sessionId]);
 
   /**
    * Load screws from planning API
@@ -284,6 +329,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (response.success) {
         setScrews(response.screws || []);
         console.log(`✅ Loaded ${response.screws?.length || 0} screws from API`);
+
+        // Load screws into the viewport
+        if (response.screws && response.screws.length > 0) {
+          console.log('🔄 Auto-loading 3D models for all screws...');
+          for (const screw of response.screws) {
+            try {
+              await restoreScrew(screw);
+            } catch (error) {
+              console.error(`❌ Failed to restore screw ${screw.screw_id || screw.id}:`, error);
+            }
+          }
+          console.log('✅ All 3D models loaded');
+        }
       } else {
         console.error('❌ Failed to load screws:', response.error);
         // Fallback to localStorage
@@ -912,18 +970,34 @@ export default function ScrewManagementPanel({ servicesManager }) {
    * Parse vertebral level and side from screw label
    * Format: "L3L" -> { level: "L3", side: "left" }
    *         "L3R" -> { level: "L3", side: "right" }
+   *         "L3-L" -> { level: "L3", side: "left" }
+   *         "L3-R" -> { level: "L3", side: "right" }
    *         "T5L" -> { level: "T5", side: "left" }
    *         "C7R" -> { level: "C7", side: "right" }
    */
   const parseLevelAndSideFromLabel = (label: string): { level: string; side: string } => {
-    // Match format: L3L, L3R, T5L, C7R, etc.
-    // Pattern: {level}{side_abbr}, where level = L/T/C/S + number, side_abbr = L or R
-    const pattern = /^([LTCS]\d+)([LR])$/i;
-    const match = label.trim().match(pattern);
-
-    if (match) {
-      const level = match[1].toUpperCase(); // L3, T5, C7, S1, etc.
-      const sideAbbr = match[2].toUpperCase(); // L or R
+    const trimmedLabel = label.trim();
+    
+    // Pattern 1: With separator (L3-L, L3-R, T5-L, etc.)
+    // Matches: {level}-{side_abbr}, where level = L/T/C/S + number, side_abbr = L or R
+    const patternWithSeparator = /^([LTCS]\d+)[-\s]([LR])$/i;
+    const matchWithSeparator = trimmedLabel.match(patternWithSeparator);
+    
+    if (matchWithSeparator) {
+      const level = matchWithSeparator[1].toUpperCase(); // L3, T5, C7, S1, etc.
+      const sideAbbr = matchWithSeparator[2].toUpperCase(); // L or R
+      const side = sideAbbr === 'L' ? 'left' : 'right';
+      return { level, side };
+    }
+    
+    // Pattern 2: Without separator (L3L, L3R, T5L, etc.)
+    // Matches: {level}{side_abbr}, where level = L/T/C/S + number, side_abbr = L or R
+    const patternWithoutSeparator = /^([LTCS]\d+)([LR])$/i;
+    const matchWithoutSeparator = trimmedLabel.match(patternWithoutSeparator);
+    
+    if (matchWithoutSeparator) {
+      const level = matchWithoutSeparator[1].toUpperCase(); // L3, T5, C7, S1, etc.
+      const sideAbbr = matchWithoutSeparator[2].toUpperCase(); // L or R
       const side = sideAbbr === 'L' ? 'left' : 'right';
       return { level, side };
     }
@@ -1850,6 +1924,27 @@ export default function ScrewManagementPanel({ servicesManager }) {
       } else {
         // Activate: Set tool active with primary mouse button
         console.log('🟢 [ScrewManagement] Activating ScrewInteraction tool');
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Explicitly deactivate Crosshairs tool (before activating ScrewInteraction)
+        // ═══════════════════════════════════════════════════════════════════════════
+        const activeToolName = toolGroup.getActivePrimaryMouseButtonTool();
+        if (activeToolName === 'Crosshairs') {
+          console.log('🔴 [ScrewManagement] Explicitly deactivating Crosshairs before activating ScrewInteraction');
+          try {
+            // Check Crosshairs configuration and decide whether to disable or set to passive based on config
+            const crosshairsConfig = toolGroup.getToolConfiguration('Crosshairs');
+            if (crosshairsConfig?.disableOnPassive) {
+              toolGroup.setToolDisabled('Crosshairs');
+              console.log('✅ [ScrewManagement] Crosshairs disabled (disableOnPassive=true)');
+            } else {
+              toolGroup.setToolPassive('Crosshairs');
+              console.log('✅ [ScrewManagement] Crosshairs set to passive');
+            }
+          } catch (crosshairsError) {
+            console.warn('⚠️ [ScrewManagement] Could not deactivate Crosshairs:', crosshairsError);
+            // Continue even if failed, as setToolActive will automatically handle tool switching
+          }
+        }
         console.log(`   ToolGroup ID: ${toolGroup.id}`);
         console.log(`   ToolGroup viewportsInfo:`, toolGroup.viewportsInfo);
 
@@ -2606,6 +2701,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('   No need to load models separately here');
       console.log('═══════════════════════════════════════════════════════');
 
+      // Persist new session_id to localStorage
+      localStorage.setItem('ohif_planning_session_id', response.session_id);
+      console.log('✅ Persisted new session_id to localStorage:', response.session_id);
+
       // Load screws from restored session (this will also load 3D models via restoreScrew)
       await loadScrews(response.session_id);
 
@@ -2816,7 +2915,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
               onView={restoreScrew}
               onEdit={editScrew}
               onDelete={deleteScrew}
-              showEditButton={true}
+              showEditButton={false}
             />
           )}
         </ScrewListScrollArea>
