@@ -2909,7 +2909,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
               onView={restoreScrew}
               onEdit={editScrew}
               onDelete={deleteScrew}
-              showEditButton={true}
+              showEditButton={false}
             />
           )}
         </ScrewListScrollArea>
