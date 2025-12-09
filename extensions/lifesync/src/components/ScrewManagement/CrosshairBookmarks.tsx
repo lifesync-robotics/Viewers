@@ -393,13 +393,14 @@ export const CrosshairBookmarks: React.FC<CrosshairBookmarksProps> = ({
     const requests: ScrewPlacementRequest[] = [];
 
     // Calculate positions on axial plane (X is left/right in patient coordinates)
-    // Left side: negative X offset (patient's left)
-    // Right side: positive X offset (patient's right)
+    // FIXED: R and L were flipped - now corrected
+    // Left side: positive X offset (patient's left in DICOM LPS)
+    // Right side: negative X offset (patient's right in DICOM LPS)
     if (placeLeft) {
       requests.push({
         label: `${label}-L`,
         position: [
-          position[0] - SCREW_LATERAL_OFFSET_MM,  // Left = negative X
+          position[0] + SCREW_LATERAL_OFFSET_MM,  // Left = positive X (corrected)
           position[1],
           position[2],
         ],
@@ -411,7 +412,7 @@ export const CrosshairBookmarks: React.FC<CrosshairBookmarksProps> = ({
       requests.push({
         label: `${label}-R`,
         position: [
-          position[0] + SCREW_LATERAL_OFFSET_MM,  // Right = positive X
+          position[0] - SCREW_LATERAL_OFFSET_MM,  // Right = negative X (corrected)
           position[1],
           position[2],
         ],

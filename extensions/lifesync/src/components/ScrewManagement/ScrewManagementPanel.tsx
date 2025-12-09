@@ -37,6 +37,7 @@ import type { CrosshairBookmark, ScrewPlacementRequest } from './ScrewManagement
 import { jumpToPosition } from '../Registration/utils/fiducialUtils';
 import { ToolGroupManager, addTool, state as cornerstoneToolsState } from '@cornerstonejs/tools';
 import ScrewInteractionTool from '../../tools/ScrewInteractionTool';
+import { vec3 } from 'gl-matrix';
 
 // Register ScrewInteractionTool globally (only once)
 let screwToolRegistered = false;
@@ -150,52 +151,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   }, [sessionId]);
 
-  // useEffect(() => {
-  //   initializeSession();
-  // }, []);
-  // Add this useEffect to clear flag on refresh/close
   useEffect(() => {
-    const clearFlagOnUnload = () => {
-      sessionStorage.removeItem('ohif_new_plan_load');  // Clear flag on refresh/close
-    };
-
-    window.addEventListener('beforeunload', clearFlagOnUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', clearFlagOnUnload);
-    };
+    initializeSession();
   }, []);
 
   /**
    * Initialize planning session and load existing screws
    */
   const initializeSession = async () => {
-    const CACHED_SESSION_KEY = 'ohif_planning_session_id';
-    const NEW_LOAD_FLAG = 'ohif_new_plan_load';
-    const FROM_CASE_FLAG = 'ohif_from_case';  // Flag set in WorkList
+    try {
+      setIsLoading(true);
+      setSessionStatus('initializing');
 
-    // Check if coming from case
-    const fromCase = localStorage.getItem(FROM_CASE_FLAG);
-
-    if (fromCase === 'true') {
-      // From case to plan: force new session
-      sessionStorage.removeItem(NEW_LOAD_FLAG);  // Clear to trigger generation
-      localStorage.removeItem(FROM_CASE_FLAG);  // Clear after use
-
-      // 保留核心渲染清除（去除不需要的逻辑，如额外日志）
-      modelStateService.clearAllModels();
-      viewportStateService.clearAll();
-    }
-
-    // Existing flag check for refresh
-    const isNewLoad = !sessionStorage.getItem(NEW_LOAD_FLAG);
-    if (isNewLoad) {
-      sessionStorage.setItem(NEW_LOAD_FLAG, 'true');
-
-      // Generate new session_id
-      localStorage.removeItem(CACHED_SESSION_KEY);
-
-      // Get DICOM UIDs (existing logic)
+      // Get real DICOM UIDs from active viewport
       const { displaySetService, viewportGridService } = servicesManager.services;
       const { activeViewportId, viewports } = viewportGridService.getState();
       const viewport = viewports.get(activeViewportId);
@@ -206,20 +174,44 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (viewport && viewport.displaySetInstanceUIDs && viewport.displaySetInstanceUIDs.length > 0) {
         const displaySetInstanceUID = viewport.displaySetInstanceUIDs[0];
         const displaySet = displaySetService.getDisplaySetByUID(displaySetInstanceUID);
+
         if (displaySet) {
           newStudyUID = displaySet.StudyInstanceUID;
           newSeriesUID = displaySet.SeriesInstanceUID;
+          console.log('✅ Got real DICOM UIDs from active viewport:');
+          console.log(`   Study UID: ${newStudyUID}`);
+          console.log(`   Series UID: ${newSeriesUID}`);
         }
       }
 
+      // Fallback if no viewport data available
       if (!newStudyUID || !newSeriesUID) {
+        console.warn('⚠️ Could not get DICOM UIDs from viewport, using placeholders');
+        console.warn('   Make sure a study is loaded before using planning features');
         newStudyUID = 'NO_STUDY_LOADED';
         newSeriesUID = 'NO_SERIES_LOADED';
       }
 
-      const newCaseId = urlCaseId;
-      const newSurgeon = 'OHIF User';
+      // Get case information from URL params (set during navigation from WorkList)
+      const newCaseId = urlCaseId; // Read from URL query parameter
+      const newSurgeon = 'OHIF User'; // TODO: Get from user service
 
+      // Store in state for later use in save/load (redundant if already set, but kept for clarity)
+      if (newCaseId && newCaseId !== caseId) {
+        setCaseId(newCaseId);
+      }
+      setStudyInstanceUID(newStudyUID);
+      setSeriesInstanceUID(newSeriesUID);
+      setSurgeon(newSurgeon);
+
+      console.log('🔄 Initializing planning session...');
+      console.log(`   Case ID: ${newCaseId || 'none (session without case)'}`);
+
+      // Check for old session_id before creating new session
+      const CACHED_SESSION_KEY = 'ohif_planning_session_id';
+      const oldSessionId = localStorage.getItem(CACHED_SESSION_KEY);
+
+      // Start planning session using backend service
       const response = await planningBackendService.startSession({
         studyInstanceUID: newStudyUID,
         seriesInstanceUID: newSeriesUID,
@@ -229,88 +221,51 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       if (response.success && response.session_id) {
         const newSessionId = response.session_id;
+
+        // If new session_id is different from old one, clear old models
+        if (oldSessionId && oldSessionId !== newSessionId) {
+          console.log('🔄 New session detected - clearing old session data');
+          console.log(`   Old session: ${oldSessionId.substring(0, 8)}...`);
+          console.log(`   New session: ${newSessionId.substring(0, 8)}...`);
+
+          // Clear old 3D models
+          modelStateService.clearAllModels();
+          // Clear old viewport snapshots
+          viewportStateService.clearAll();
+          // Clear old screws state
+          setScrews([]);
+          console.log('🧹 Cleared old session data (models, snapshots, screws)');
+        }
+
+        setSessionId(newSessionId);
+        setSessionStatus('ready');
+        console.log('✅ Planning session started:', newSessionId);
+
+        // Save new session_id to localStorage
         localStorage.setItem(CACHED_SESSION_KEY, newSessionId);
-        console.log('✅ New session generated on new load:', newSessionId);
+        console.log(`💾 Saved session_id to localStorage: ${newSessionId.substring(0, 8)}...`);
+
+        // Load existing screws for this session
+        await loadScrews(newSessionId);
       } else {
-        console.error('❌ Failed to generate new session');
+        throw new Error(response.error || 'Session creation failed');
       }
-    }
-
-    // Load from cache
-    setIsLoading(true);
-    setSessionStatus('initializing');
-
-    // Get real DICOM UIDs from active viewport (keep this part as is)
-    const { displaySetService: dsService, viewportGridService: vgService } = servicesManager.services;  // Rename to avoid conflict if needed
-    const { activeViewportId: avId, viewports: vps } = vgService.getState();
-    const vp = vps.get(avId);
-
-    let newStudyUID = null;
-    let newSeriesUID = null;
-
-    if (vp && vp.displaySetInstanceUIDs && vp.displaySetInstanceUIDs.length > 0) {
-      const dsUid = vp.displaySetInstanceUIDs[0];
-      const ds = dsService.getDisplaySetByUID(dsUid);
-
-      if (ds) {
-        newStudyUID = ds.StudyInstanceUID;
-        newSeriesUID = ds.SeriesInstanceUID;
-        console.log('✅ Got real DICOM UIDs from active viewport:');
-        console.log(`   Study UID: ${newStudyUID}`);
-        console.log(`   Series UID: ${newSeriesUID}`);
-      }
-    }
-
-    // Fallback if no viewport data available
-    if (!newStudyUID || !newSeriesUID) {
-      console.warn('⚠️ Could not get DICOM UIDs from viewport, using placeholders');
-      console.warn('   Make sure a study is loaded before using planning features');
-      newStudyUID = 'NO_STUDY_LOADED';
-      newSeriesUID = 'NO_SERIES_LOADED';
-    }
-
-    // Get case information from URL params
-    const newCaseId = urlCaseId;
-    const newSurgeon = 'OHIF User';
-
-    // Store in state
-    if (newCaseId && newCaseId !== caseId) {
-      setCaseId(newCaseId);
-    }
-    setStudyInstanceUID(newStudyUID);
-    setSeriesInstanceUID(newSeriesUID);
-    setSurgeon(newSurgeon);
-
-    console.log('🔄 Loading planning session from cache...');
-    console.log(`   Case ID: ${newCaseId || 'none (session without case)'}`);
-
-    const cachedSessionId = localStorage.getItem(CACHED_SESSION_KEY);
-
-    if (cachedSessionId) {
-      setSessionId(cachedSessionId);
-      setSessionStatus('ready');
-      console.log('✅ Loaded session from cache:', cachedSessionId);
-      await loadScrews(cachedSessionId);
-    } else {
-      console.warn('❌ No cached session_id found. Please initialize from plan interface.');
+    } catch (error) {
+      console.error('❌ Error initializing session:', error);
       setSessionStatus('error');
+
+      // Show user-friendly error
+      console.warn('⚠️ Falling back to localStorage-only mode');
+      console.warn('   Planning API may not be available. Check:');
+      console.warn('   1. Is SyncForge API running on port 3001?');
+      console.warn('   2. Is Planning Service running on port 6000?');
+
+      // Fallback to localStorage
       loadScrewsLocal();
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
-
-  useEffect(() => {
-    initializeSession();
-  }, []);
-
-  // Add this new useEffect to reload screws on mount or sessionId change
-  useEffect(() => {
-    if (sessionId) {
-      console.log('🔄 Reloading screws on mount or sessionId change');
-      loadScrews(sessionId);
-    }
-  }, [sessionId]);
 
   /**
    * Load screws from planning API
@@ -329,19 +284,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (response.success) {
         setScrews(response.screws || []);
         console.log(`✅ Loaded ${response.screws?.length || 0} screws from API`);
-
-        // Load screws into the viewport
-        if (response.screws && response.screws.length > 0) {
-          console.log('🔄 Auto-loading 3D models for all screws...');
-          for (const screw of response.screws) {
-            try {
-              await restoreScrew(screw);
-            } catch (error) {
-              console.error(`❌ Failed to restore screw ${screw.screw_id || screw.id}:`, error);
-            }
-          }
-          console.log('✅ All 3D models loaded');
-        }
       } else {
         console.error('❌ Failed to load screws:', response.error);
         // Fallback to localStorage
@@ -409,9 +351,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`🎨 Using color [${screwColor}] for screw "${screwLabel || 'default'}"`);
 
       // Query model from planning API using backend service
-      // ⚠️ FORCE PROCEDURAL: Add parameter to force procedural generation instead of asset library
-      // This avoids issues where asset library models have screw and cap in the same OBJ file
-      const queryResponse = await planningBackendService.queryModel(radius, length, true); // true = force procedural
+      const queryResponse = await planningBackendService.queryModel(radius, length);
 
       if (!queryResponse.success || !queryResponse.model) {
         throw new Error('Model query failed');
@@ -419,12 +359,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
       const modelInfo = queryResponse.model;
       console.log(`📦 Model found: ${modelInfo.model_id} (${modelInfo.source})`);
-
-      // Store model source for later use (to decide if we need to load cap separately)
-      // Check model path/URL to determine if it's from asset library
-      const modelPath = modelInfo.file_path || '';
-      const isAssetLibrary = modelPath.includes('asset_library') || modelPath.includes('lsr-rgs') || modelInfo.model_id.includes('lsr-rgs');
-      const isProcedural = modelInfo.source === 'generated' || modelInfo.model_id.startsWith('generated-');
 
       // Ensure plane cutters are initialized and enabled
       if (planeCutterService) {
@@ -539,73 +473,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
    */
   const loadCapModel = async (transform, length, screwLabel = null, screwId = null) => {
     try {
-      // ⚠️ CRITICAL: Check if this screw is from asset library BEFORE loading cap
-      // Asset library models have screw and cap in the same OBJ file, so no separate cap needed
-      console.log('═══════════════════════════════════════════════════════');
-      console.log(`🔍 [loadCapModel] Checking if cap loading is needed for: "${screwLabel}"`);
-      console.log('═══════════════════════════════════════════════════════');
-
-      const loadedModels = modelStateService.getAllModels();
-      console.log(`   Total loaded models: ${loadedModels.length}`);
-
-      // Try multiple ways to find the screw model
-      let screwModel = null;
-      if (screwLabel) {
-        screwModel = loadedModels.find(m => m.metadata.name === screwLabel);
-        if (!screwModel) {
-          screwModel = loadedModels.find(m =>
-            m.metadata.name && m.metadata.name.includes(screwLabel)
-          );
-        }
-      }
-      if (!screwModel && screwId) {
-        screwModel = loadedModels.find(m => m.metadata.id === screwId);
-      }
-      // Fallback: use the latest non-cap model
-      if (!screwModel) {
-        const nonCapModels = loadedModels.filter(m => {
-          const name = m.metadata.name || '';
-          return !name.endsWith('-Cap') && name !== 'Screw Cap';
-        });
-        screwModel = nonCapModels[nonCapModels.length - 1];
-      }
-
-      if (screwModel) {
-        const modelPath = screwModel.metadata.fileUrl || screwModel.metadata.filePath || '';
-        const modelId = screwModel.metadata.id || '';
-        const modelName = screwModel.metadata.name || '';
-
-        console.log(`   Found screw model: ${modelId} (${modelName})`);
-        console.log(`   Model path: ${modelPath.substring(0, 150)}${modelPath.length > 150 ? '...' : ''}`);
-        console.log(`   Model ID: ${modelId}`);
-
-        const isAssetLibraryModel = modelPath.includes('asset_library') ||
-                                    modelPath.includes('lsr-rgs') ||
-                                    modelId.includes('lsr-rgs') ||
-                                    modelName.includes('lsr-rgs') ||
-                                    modelPath.toLowerCase().includes('assetlibrary');
-
-        console.log(`   Is asset library model: ${isAssetLibraryModel}`);
-
-        if (isAssetLibraryModel) {
-          console.log('═══════════════════════════════════════════════════════');
-          console.log('ℹ️ [loadCapModel] SKIPPING - ASSET LIBRARY MODEL');
-          console.log('═══════════════════════════════════════════════════════');
-          console.log(`   Screw: "${screwLabel}"`);
-          console.log(`   Model ID: ${modelId}`);
-          console.log(`   Model Name: ${modelName}`);
-          console.log(`   Model path: ${modelPath.substring(0, 100)}${modelPath.length > 100 ? '...' : ''}`);
-          console.log(`   Asset library models have screw and cap in the same OBJ file`);
-          console.log(`   No need to load separate cap model`);
-          console.log('═══════════════════════════════════════════════════════');
-          return; // Early return - don't load cap for asset library models
-        } else {
-          console.log(`   ✅ Not asset library model - proceeding with cap load`);
-        }
-      } else {
-        console.warn(`   ⚠️ Could not find screw model to check - proceeding with cap load anyway`);
-      }
-
       // CRITICAL: Store original transform values IMMEDIATELY to detect any modifications
       const originalTransformValues = {
         x: transform[3],
@@ -723,67 +590,15 @@ export default function ScrewManagementPanel({ servicesManager }) {
         const latestModel = loadedModels[loadedModels.length - 1];
 
         if (latestModel) {
-          console.log(`   🔍 [loadCapModel] Found cap model to apply transform:`);
-          console.log(`      Model ID: ${latestModel.metadata.id}`);
-          console.log(`      Model Name: ${latestModel.metadata.name}`);
-          console.log(`      Model Path: ${latestModel.metadata.fileUrl || latestModel.metadata.filePath || 'N/A'}`);
-
-          // Check if this cap model already has a transform applied
-          const existingTransform = latestModel.actor.getUserMatrix();
-          if (existingTransform) {
-            const existingTranslation = [existingTransform[12], existingTransform[13], existingTransform[14]];
-            console.log(`   ⚠️ WARNING: Cap model already has a transform!`);
-            console.log(`      Existing translation: [${existingTranslation[0].toFixed(2)}, ${existingTranslation[1].toFixed(2)}, ${existingTranslation[2].toFixed(2)}]`);
-            console.log(`      New translation: [${capTransform[3].toFixed(2)}, ${capTransform[7].toFixed(2)}, ${capTransform[11].toFixed(2)}]`);
-            const diff = Math.sqrt(
-              Math.pow(existingTranslation[0] - capTransform[3], 2) +
-              Math.pow(existingTranslation[1] - capTransform[7], 2) +
-              Math.pow(existingTranslation[2] - capTransform[11], 2)
-            );
-            if (diff > 0.1) {
-              console.error(`   ❌ ERROR: Cap model transform will be overwritten! Difference: ${diff.toFixed(2)}mm`);
-            }
-          }
-
-          // Verify original transform was not modified before calling setModelTransform
-          console.log(`   🔍 DEBUG: Before setModelTransform for cap:`);
-          console.log(`      Original transform[7] = ${originalTransformValues.y} (should be unchanged)`);
-          console.log(`      Current transform[7] = ${transform[7]} (should match original)`);
-          if (Math.abs(transform[7] - originalTransformValues.y) > 0.001) {
-            console.error(`   ❌ ERROR: Transform was modified before setModelTransform!`);
-            console.error(`      Original: ${originalTransformValues.y}`);
-            console.error(`      Current: ${transform[7]}`);
-            console.error(`      Difference: ${transform[7] - originalTransformValues.y}`);
-          } else {
-            console.log(`   ✅ Original transform preserved correctly before setModelTransform`);
-          }
-
           // Apply offset transform (don't pass length parameter, as OBJ model won't auto-offset)
-          console.log(`   🔧 [loadCapModel] Calling setModelTransform for cap model...`);
           await modelStateService.setModelTransform(
             latestModel.metadata.id,
             capTransform
             // Note: OBJ model doesn't apply length offset in setModelTransform, so manual calculation is needed
           );
-
-          // Verify original transform was not modified after calling setModelTransform
-          console.log(`   🔍 DEBUG: After setModelTransform for cap:`);
-          console.log(`      Original transform[7] = ${originalTransformValues.y} (should be unchanged)`);
-          console.log(`      Current transform[7] = ${transform[7]} (should match original)`);
-          if (Math.abs(transform[7] - originalTransformValues.y) > 0.001) {
-            console.error(`   ❌ ERROR: Transform was modified by setModelTransform!`);
-            console.error(`      Original: ${originalTransformValues.y}`);
-            console.error(`      Current: ${transform[7]}`);
-            console.error(`      Difference: ${transform[7] - originalTransformValues.y}`);
-          } else {
-            console.log(`   ✅ Original transform preserved correctly after setModelTransform`);
-          }
-
           console.log(`✅ Applied transform to cap model: ${latestModel.metadata.id} with offset: ${capOffset}mm`);
         } else {
           console.error('❌ No cap model found to apply transform to!');
-          console.error(`   Total loaded models: ${loadedModels.length}`);
-          console.error(`   Model IDs: ${loadedModels.map(m => m.metadata.id).join(', ')}`);
         }
       } else {
         console.warn(`⚠️ No valid transform or length to apply to cap (transform length: ${transform?.length || 0}, length: ${length})`);
@@ -814,6 +629,139 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
 
     return 'volume3d-viewport'; // Default fallback
+  };
+
+  /**
+   * Set viewport camera orientations based on screw axis directions
+   * Called when user clicks "View" button to align viewports with screw orientation
+   *
+   * Screw transform matrix structure (4x4 in row-major order):
+   * - X-axis (indices 0, 4, 8): Axial plane normal
+   * - Y-axis (indices 1, 5, 9): Coronal plane normal (stored negated)
+   * - Z-axis (indices 2, 6, 10): Sagittal plane normal
+   *
+   * @param transform - Screw transform matrix (16 elements, row-major)
+   * @param screwPosition - Screw position [x, y, z] for camera focal point
+   */
+  const setViewportOrientationsFromScrew = (transform: number[], screwPosition: [number, number, number]) => {
+    try {
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🎯 [setViewportOrientationsFromScrew] Setting viewport orientations from screw axes');
+      console.log('═══════════════════════════════════════════════════════');
+
+      if (!transform || transform.length !== 16) {
+        console.warn('⚠️ Invalid transform matrix provided');
+        return;
+      }
+
+      // Extract axis directions from transform matrix (row-major format)
+      // X-axis: Column 0 (indices 0, 4, 8) → Axial plane normal
+      // Y-axis: Column 1 (indices 1, 5, 9) → Coronal plane normal (stored negated, so we need to negate it back)
+      // Z-axis: Column 2 (indices 2, 6, 10) → Sagittal plane normal
+      const axialNormal: [number, number, number] = [
+        transform[0],
+        transform[4],
+        transform[8]
+      ];
+      // IMPORTANT: Coronal normal is stored negated in the transform matrix
+      // (see constructScrewTransform where it's negated before storage)
+      // So we need to negate it back to get the original viewport direction
+      const coronalNormal: [number, number, number] = [
+        -transform[1],
+        -transform[5],
+        -transform[9]
+      ];
+      const sagittalNormal: [number, number, number] = [
+        transform[2],
+        transform[6],
+        transform[10]
+      ];
+
+      // Normalize the vectors
+      vec3.normalize(axialNormal, axialNormal);
+      vec3.normalize(coronalNormal, coronalNormal);
+      vec3.normalize(sagittalNormal, sagittalNormal);
+
+      console.log(`📐 Axial normal (X-axis): [${axialNormal.map(v => v.toFixed(3)).join(', ')}]`);
+      console.log(`📐 Coronal normal (Y-axis): [${coronalNormal.map(v => v.toFixed(3)).join(', ')}]`);
+      console.log(`📐 Sagittal normal (Z-axis): [${sagittalNormal.map(v => v.toFixed(3)).join(', ')}]`);
+
+      const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+      if (!renderingEngine) {
+        console.warn('⚠️ No rendering engine found');
+        return;
+      }
+
+      const viewports = renderingEngine.getViewports();
+      if (viewports.length === 0) {
+        console.warn('⚠️ No viewports found');
+        return;
+      }
+
+      // Find and update each MPR viewport
+      for (const viewport of viewports) {
+        try {
+          const viewportId = viewport.id.toLowerCase();
+          const camera = viewport.getCamera();
+          const { position: cameraPosition } = camera;
+
+          // Calculate new camera position maintaining distance from focal point
+          const viewDirection = vec3.sub(
+            vec3.create(),
+            cameraPosition as [number, number, number],
+            camera.focalPoint as [number, number, number]
+          );
+          const distance = vec3.length(viewDirection);
+
+          // Keep the original viewUp from DICOM series loading to avoid confusion and flipping
+          const originalViewUp = camera.viewUp as [number, number, number];
+
+          let newViewPlaneNormal: [number, number, number] | null = null;
+
+          // Set viewPlaneNormal based on viewport type
+          // viewUp is kept as the original value from DICOM series loading
+          if (viewportId.includes('axial')) {
+            newViewPlaneNormal = axialNormal;
+            console.log(`✅ Setting axial viewport (${viewport.id}) orientation`);
+            console.log(`   viewUp: Keeping original [${originalViewUp.map(v => v.toFixed(3)).join(', ')}]`);
+          } else if (viewportId.includes('sagittal')) {
+            newViewPlaneNormal = sagittalNormal;
+            console.log(`✅ Setting sagittal viewport (${viewport.id}) orientation`);
+            console.log(`   viewUp: Keeping original [${originalViewUp.map(v => v.toFixed(3)).join(', ')}]`);
+          } else if (viewportId.includes('coronal')) {
+            newViewPlaneNormal = coronalNormal;
+            console.log(`✅ Setting coronal viewport (${viewport.id}) orientation`);
+            console.log(`   viewUp: Keeping original [${originalViewUp.map(v => v.toFixed(3)).join(', ')}]`);
+          }
+
+          if (newViewPlaneNormal) {
+            // Calculate new camera position
+            const newPosition = vec3.add(
+              vec3.create(),
+              screwPosition,
+              vec3.scale(vec3.create(), newViewPlaneNormal, distance)
+            ) as [number, number, number];
+
+            // Update camera - keep original viewUp to maintain DICOM series orientation
+            viewport.setCamera({
+              focalPoint: screwPosition,
+              position: newPosition,
+              viewPlaneNormal: newViewPlaneNormal,
+              viewUp: originalViewUp,  // Keep original viewUp from DICOM loading
+            });
+
+            viewport.render();
+            console.log(`   ✓ Updated camera for ${viewport.id}`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Error updating viewport ${viewport.id}:`, error);
+        }
+      }
+
+      console.log('✅ [setViewportOrientationsFromScrew] Completed');
+    } catch (error) {
+      console.error('❌ Error setting viewport orientations from screw:', error);
+    }
   };
 
   /**
@@ -1241,63 +1189,41 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
         // ═════════════════════════════════════════════════════════
         // Load cap model after loading screw body (cap doesn't count toward model limit)
-        // ⚠️ SKIP CAP FOR ASSET LIBRARY: Asset library models have screw and cap in the same OBJ file
-        // Only load separate cap for procedural/generated screws
+        // CRITICAL: Use original transform (not the copy) for cap positioning
         // ═════════════════════════════════════════════════════════
         if (transform && transform.length === 16) {
-          // Check if we loaded an asset library model (screw and cap are in the same OBJ)
-          const loadedModels = modelStateService.getAllModels();
-          const latestScrewModel = loadedModels[loadedModels.length - 1];
-          const modelPath = latestScrewModel?.metadata?.fileUrl || latestScrewModel?.metadata?.filePath || '';
-          const isAssetLibraryModel = modelPath.includes('asset_library') ||
-                                      modelPath.includes('lsr-rgs') ||
-                                      (latestScrewModel?.metadata?.name && latestScrewModel.metadata.name.includes('lsr-rgs'));
-
-          if (isAssetLibraryModel) {
-            console.log('═══════════════════════════════════════════════════════');
-            console.log('ℹ️ [saveScrew] SKIPPING CAP MODEL LOAD');
-            console.log('═══════════════════════════════════════════════════════');
-            console.log(`   Model source: ASSET_LIBRARY`);
-            console.log(`   Model path: ${modelPath.substring(0, 100)}${modelPath.length > 100 ? '...' : ''}`);
-            console.log(`   Asset library models have screw and cap in the same OBJ file`);
-            console.log(`   No need to load separate cap model`);
-            console.log('═══════════════════════════════════════════════════════');
-          } else {
-            // Procedural/generated screws need separate cap model
-            console.log('═══════════════════════════════════════════════════════');
-            console.log('🔍 [saveScrew] BEFORE LOADING CAP MODEL');
-            console.log('═══════════════════════════════════════════════════════');
-            console.log(`   Model source: PROCEDURAL/GENERATED`);
-            console.log(`   Current transform[7]: ${(transform[7] as number)?.toFixed(2) || 'N/A'}`);
-            if (originalTransformForCap) {
-              console.log(`   Original transform[7] (stored): ${originalTransformForCap.y.toFixed(2)}`);
-              const currentY = transform[7] as number;
-              if (Math.abs(currentY - originalTransformForCap.y) > 0.001) {
-                console.error(`   ❌ ERROR: Transform[7] was modified before loading cap!`);
-                console.error(`      Original: ${originalTransformForCap.y.toFixed(2)}`);
-                console.error(`      Current: ${currentY.toFixed(2)}`);
-                console.error(`      Difference: ${(currentY - originalTransformForCap.y).toFixed(2)}`);
-              } else {
-                console.log(`   ✅ Transform[7] preserved correctly`);
-              }
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('🔍 [saveScrew] BEFORE LOADING CAP MODEL');
+          console.log('═══════════════════════════════════════════════════════');
+          console.log(`   Current transform[7]: ${(transform[7] as number)?.toFixed(2) || 'N/A'}`);
+          if (originalTransformForCap) {
+            console.log(`   Original transform[7] (stored): ${originalTransformForCap.y.toFixed(2)}`);
+            const currentY = transform[7] as number;
+            if (Math.abs(currentY - originalTransformForCap.y) > 0.001) {
+              console.error(`   ❌ ERROR: Transform[7] was modified before loading cap!`);
+              console.error(`      Original: ${originalTransformForCap.y.toFixed(2)}`);
+              console.error(`      Current: ${currentY.toFixed(2)}`);
+              console.error(`      Difference: ${(currentY - originalTransformForCap.y).toFixed(2)}`);
+            } else {
+              console.log(`   ✅ Transform[7] preserved correctly`);
             }
-            console.log('═══════════════════════════════════════════════════════');
+          }
+          console.log('═══════════════════════════════════════════════════════');
 
-            // CRITICAL: Use the stored original transform, not the current transform variable
-            const capTransformCopy: number[] = originalTransformForCap
-              ? originalTransformForCap.fullArray
-              : (transform instanceof Float32Array ? Array.from(transform) : [...transform] as number[]);
+          // CRITICAL: Use the stored original transform, not the current transform variable
+          const capTransformCopy: number[] = originalTransformForCap
+            ? originalTransformForCap.fullArray
+            : (transform instanceof Float32Array ? Array.from(transform) : [...transform] as number[]);
 
-            console.log(`   Using cap transform: [${capTransformCopy[3].toFixed(2)}, ${capTransformCopy[7].toFixed(2)}, ${capTransformCopy[11].toFixed(2)}]`);
+          console.log(`   Using cap transform: [${capTransformCopy[3].toFixed(2)}, ${capTransformCopy[7].toFixed(2)}, ${capTransformCopy[11].toFixed(2)}]`);
 
-            try {
-              await loadCapModel(capTransformCopy, lengthValue, screwLabel, savedScrewId);
-              console.log(`✅ Cap model loaded successfully for screw "${screwLabel}"`);
-            } catch (capError) {
-              console.warn('⚠️ Could not load cap model:', capError.message);
-              console.warn('⚠️ Cap model failed but screw model loaded successfully');
-              // Don't throw - cap is optional, continue execution
-            }
+          try {
+            await loadCapModel(capTransformCopy, lengthValue, screwLabel, savedScrewId);
+            console.log(`✅ Cap model loaded successfully for screw "${screwLabel}"`);
+          } catch (capError) {
+            console.warn('⚠️ Could not load cap model:', capError.message);
+            console.warn('⚠️ Cap model failed but screw model loaded successfully');
+            // Don't throw - cap is optional, continue execution
           }
         } else {
           console.warn('⚠️ Skipping cap model load - no valid transform available');
@@ -1390,13 +1316,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
       // Check if model already exists for this screw
       const loadedModels = modelStateService.getAllModels();
       let modelExists = false;
-      let existingModel = null;  // ✅ 保存找到的模型引用
 
       for (const model of loadedModels) {
         // PRIORITY 1: Check by name (which stores screwLabel) - most reliable exact match
         if (model.metadata.name && model.metadata.name === displayInfo.label) {
           modelExists = true;
-          existingModel = model;  // ✅ 保存模型引用
           console.log(`ℹ️ Model already exists for screw "${displayInfo.label}"`);
           console.log(`   Existing model: ${model.metadata.id} (${model.metadata.name})`);
           console.log(`   Matched by name (exact match)`);
@@ -1410,7 +1334,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
             (displayInfo.radius && modelName.includes(displayInfo.radius.toString())) ||
             (displayInfo.length && modelName.includes(displayInfo.length.toString()))) {
           modelExists = true;
-          existingModel = model;  // ✅ 保存模型引用
           console.log(`ℹ️ Model already exists for screw "${displayInfo.label}"`);
           console.log(`   Existing model: ${model.metadata.id} (${model.metadata.name})`);
           console.log(`   Matched by dimensions/filename (legacy)`);
@@ -1484,38 +1407,17 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
         // ═════════════════════════════════════════════════════════
         // Load cap model after loading screw body (cap doesn't count toward model limit)
-        // ⚠️ SKIP CAP FOR ASSET LIBRARY: Asset library models have screw and cap in the same OBJ file
-        // Only load separate cap for procedural/generated screws
+        // CRITICAL: Use original transform (not the copy) for cap positioning
         // ═════════════════════════════════════════════════════════
         if (transformArray && transformArray.length === 16) {
-          // Check if we loaded an asset library model (screw and cap are in the same OBJ)
-          const loadedModels = modelStateService.getAllModels();
-          const latestScrewModel = loadedModels[loadedModels.length - 1];
-          const modelPath = latestScrewModel?.metadata?.fileUrl || latestScrewModel?.metadata?.filePath || '';
-          const isAssetLibraryModel = modelPath.includes('asset_library') ||
-                                      modelPath.includes('lsr-rgs') ||
-                                      (latestScrewModel?.metadata?.name && latestScrewModel.metadata.name.includes('lsr-rgs'));
-
-          if (isAssetLibraryModel) {
-            console.log('═══════════════════════════════════════════════════════');
-            console.log('ℹ️ [restoreScrew] SKIPPING CAP MODEL LOAD');
-            console.log('═══════════════════════════════════════════════════════');
-            console.log(`   Model source: ASSET_LIBRARY`);
-            console.log(`   Model path: ${modelPath.substring(0, 100)}${modelPath.length > 100 ? '...' : ''}`);
-            console.log(`   Asset library models have screw and cap in the same OBJ file`);
-            console.log(`   No need to load separate cap model`);
-            console.log('═══════════════════════════════════════════════════════');
-          } else {
-            // Procedural/generated screws need separate cap model
-            // Create a fresh copy for cap model to ensure it uses the original transform
-            const capTransformCopy = transformArray instanceof Float32Array ? Array.from(transformArray) : [...transformArray];
-            try {
-              await loadCapModel(capTransformCopy, displayInfo.length, displayInfo.label, screwId);
-              console.log(`✅ Cap model loaded successfully for screw "${displayInfo.label}"`);
-            } catch (capError) {
-              console.warn('⚠️ Could not load cap model:', capError.message);
-              // Don't throw - cap is optional, continue execution
-            }
+          // Create a fresh copy for cap model to ensure it uses the original transform
+          const capTransformCopy = transformArray instanceof Float32Array ? Array.from(transformArray) : [...transformArray];
+          try {
+            await loadCapModel(capTransformCopy, displayInfo.length, displayInfo.label, screwId);
+            console.log(`✅ Cap model loaded successfully for screw "${displayInfo.label}"`);
+          } catch (capError) {
+            console.warn('⚠️ Could not load cap model:', capError.message);
+            // Don't throw - cap is optional, continue execution
           }
         } else {
           console.warn(`⚠️ Skipping cap model load for "${displayInfo.label}" - no valid transform available`);
@@ -1548,28 +1450,34 @@ export default function ScrewManagementPanel({ servicesManager }) {
       }
 
       // ═══════════════════════════════════════════════════════════
-      // Jump crosshairs to screw center position
+      // Jump crosshairs to screw center position and update viewport cameras
       // ═══════════════════════════════════════════════════════════
 
       let screwPosition: [number, number, number] | null = null;
+      let screwTransform: number[] | null = null;
 
-      // ✅ PRIORITY 1: If model exists, use its current position
+      // ✅ PRIORITY 1: If model exists, use its current position and transform
+      const existingModel = modelStateService.getAllModels().find(
+        (m: any) => m.metadata.name === displayInfo.label
+      );
+
       if (existingModel) {
         const currentTransform = modelStateService.getScrewTransform(existingModel.metadata.id);
         if (currentTransform && currentTransform.length === 16) {
+          screwTransform = currentTransform;
           screwPosition = [
             currentTransform[3],
             currentTransform[7],
             currentTransform[11]
           ];
           console.log(`🎯 Using current model position: [${screwPosition.map(v => v.toFixed(2)).join(', ')}]`);
-          console.log(`   (Model may have been moved, using actual position instead of backend data)`);
         }
       }
 
       // ✅ PRIORITY 2: Fallback to backend data if model doesn't exist
-      if (!screwPosition) {
+      if (!screwPosition || !screwTransform) {
         if (transformArray && transformArray.length === 16) {
+          screwTransform = Array.from(transformArray);
           screwPosition = [
             transformArray[3],
             transformArray[7],
@@ -1597,6 +1505,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
           }
         } catch (jumpError) {
           console.warn('⚠️ Could not jump crosshairs to screw position:', jumpError);
+        }
+
+        // Update viewport camera orientations based on screw axes
+        if (screwTransform && screwTransform.length === 16) {
+          console.log(`🎯 Setting viewport orientations from screw axes`);
+          try {
+            setViewportOrientationsFromScrew(screwTransform, screwPosition);
+            console.log(`✅ Viewport camera orientations set from screw axes`);
+          } catch (orientationError) {
+            console.warn('⚠️ Could not set viewport orientations from screw:', orientationError);
+          }
+        } else {
+          console.warn('⚠️ Cannot set viewport orientations - no transform data available');
         }
       } else {
         console.warn('⚠️ Cannot jump crosshairs - no position data available');
@@ -1929,29 +1850,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
       } else {
         // Activate: Set tool active with primary mouse button
         console.log('🟢 [ScrewManagement] Activating ScrewInteraction tool');
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // Explicitly deactivate Crosshairs tool (before activating ScrewInteraction)
-        // ═══════════════════════════════════════════════════════════════════════════
-        const activeToolName = toolGroup.getActivePrimaryMouseButtonTool();
-        if (activeToolName === 'Crosshairs') {
-          console.log('🔴 [ScrewManagement] Explicitly deactivating Crosshairs before activating ScrewInteraction');
-          try {
-            // Check Crosshairs configuration and decide whether to disable or set to passive based on config
-            const crosshairsConfig = toolGroup.getToolConfiguration('Crosshairs');
-            if (crosshairsConfig?.disableOnPassive) {
-              toolGroup.setToolDisabled('Crosshairs');
-              console.log('✅ [ScrewManagement] Crosshairs disabled (disableOnPassive=true)');
-            } else {
-              toolGroup.setToolPassive('Crosshairs');
-              console.log('✅ [ScrewManagement] Crosshairs set to passive');
-            }
-          } catch (crosshairsError) {
-            console.warn('⚠️ [ScrewManagement] Could not deactivate Crosshairs:', crosshairsError);
-            // Continue even if failed, as setToolActive will automatically handle tool switching
-          }
-        }
-
         console.log(`   ToolGroup ID: ${toolGroup.id}`);
         console.log(`   ToolGroup viewportsInfo:`, toolGroup.viewportsInfo);
 
@@ -2708,10 +2606,6 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log('   No need to load models separately here');
       console.log('═══════════════════════════════════════════════════════');
 
-      // Persist new session_id to localStorage
-      localStorage.setItem('ohif_planning_session_id', response.session_id);
-      console.log('✅ Persisted new session_id to localStorage:', response.session_id);
-
       // Load screws from restored session (this will also load 3D models via restoreScrew)
       await loadScrews(response.session_id);
 
@@ -2922,7 +2816,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
               onView={restoreScrew}
               onEdit={editScrew}
               onDelete={deleteScrew}
-              showEditButton={false}
+              showEditButton={true}
             />
           )}
         </ScrewListScrollArea>

@@ -235,8 +235,29 @@ class ScrewInteractionTool extends BaseTool {
     // Visual feedback - highlight screw
     this._highlightScrew(pickResult.modelId, true);
 
+    // Update viewport cameras to align with screw orientation (like clicking "View")
+    // Use requestAnimationFrame to ensure update happens after event processing
+    requestAnimationFrame(() => {
+      this._updateViewportCamerasFromScrew(pickResult.modelId);
+    });
+
     // Return true to indicate we handled the event
     return true;
+  };
+
+  /**
+   * Called on mouse down - additional callback after preMouseDownCallback
+   * This ensures viewport update happens even if preMouseDownCallback returns early
+   */
+  mouseDownCallback = (evt: any): void => {
+    // Only update viewport if we have a selected screw
+    if (this.state.selectedScrewId && this.state.isDragging) {
+      console.log('🎯 [ScrewInteractionTool] mouseDownCallback - updating viewport cameras');
+      // Use setTimeout to ensure this happens after all event processing
+      setTimeout(() => {
+        this._updateViewportCamerasFromScrew(this.state.selectedScrewId);
+      }, 0);
+    }
   };
 
   /**
@@ -327,79 +348,29 @@ class ScrewInteractionTool extends BaseTool {
       return;
     }
 
-    // CRITICAL: Apply the final position update before saving
-    // The last mouseDragCallback may have missed the final mouse position
-    const eventDetail = evt.detail;
-    const currentPoints = eventDetail?.currentPoints;
-    const finalWorld = currentPoints?.world;
-
-    if (finalWorld && this.state.lastWorldPosition) {
-      // Calculate final delta from last known position
-      const finalDelta: [number, number, number] = [
-        finalWorld[0] - this.state.lastWorldPosition[0],
-        finalWorld[1] - this.state.lastWorldPosition[1],
-        finalWorld[2] - this.state.lastWorldPosition[2]
-      ];
-
-      // Constrain to viewport plane
-      let constrainedDelta = finalDelta;
-      if (this.state.viewportPlaneNormal && this.modelStateService?.projectDeltaOntoPlane) {
-        constrainedDelta = this.modelStateService.projectDeltaOntoPlane(
-          finalDelta,
-          this.state.viewportPlaneNormal
-        );
-      }
-
-      // Apply if significant
-      const deltaMagnitude = Math.sqrt(
-        constrainedDelta[0] ** 2 +
-        constrainedDelta[1] ** 2 +
-        constrainedDelta[2] ** 2
-      );
-
-      if (deltaMagnitude >= 0.01) {
-        console.log(`   🎯 Applying final delta: [${constrainedDelta[0].toFixed(2)}, ${constrainedDelta[1].toFixed(2)}, ${constrainedDelta[2].toFixed(2)}]`);
-
-        // Apply final transformation
-        if (this.state.interactionMode === 'rotate') {
-          if (this.modelStateService?.rotateScrew && this.state.viewportPlaneNormal) {
-            this.modelStateService.rotateScrew(
-              this.state.selectedScrewId,
-              constrainedDelta,
-              this.state.viewportPlaneNormal
-            );
-          }
-        } else {
-          if (this.modelStateService?.translateScrew) {
-            this.modelStateService.translateScrew(this.state.selectedScrewId, constrainedDelta);
-          }
-        }
-      }
-    }
-
     this._log(`Drag completed for screw: ${this.state.selectedScrewLabel}`);
-
-    // Capture the screw ID before resetting state (for async operation)
-    const screwIdToSave = this.state.selectedScrewId;
-
-    // Remove highlight
-    this._highlightScrew(this.state.selectedScrewId, false);
-
-    // Reset state BEFORE async save to prevent race conditions
-    this.state = this._getInitialState();
 
     // Save the updated transform to backend session
     console.log('   📤 Calling _saveTransformToBackend...');
-    console.log('   📤 screwIdToSave:', screwIdToSave);
+    console.log('   📤 selectedScrewId:', this.state.selectedScrewId);
     console.log('   📤 sessionId:', this.sessionId);
     console.log('   📤 planningBackendService:', !!this.planningBackendService);
 
-    // Call async save with captured screw ID
-    this._saveTransformToBackend(screwIdToSave).then(() => {
+    // Call async save and log result
+    this._saveTransformToBackend(this.state.selectedScrewId).then(() => {
       console.log('   ✅ _saveTransformToBackend completed');
     }).catch((err) => {
       console.error('   ❌ _saveTransformToBackend failed:', err);
     });
+
+    // Update viewport cameras again (like clicking "View") after drag completes
+    this._updateViewportCamerasFromScrew(this.state.selectedScrewId);
+
+    // Remove highlight
+    this._highlightScrew(this.state.selectedScrewId, false);
+
+    // Reset state
+    this.state = this._getInitialState();
   };
 
   /**
@@ -447,19 +418,12 @@ class ScrewInteractionTool extends BaseTool {
         return;
       }
 
-      console.log('═══════════════════════════════════════════════════════');
-      console.log('📤 [_saveTransformToBackend] TRANSFORM FROM getScrewTransform');
-      console.log(`   Transform (row-major): [${transformMatrix[3].toFixed(2)}, ${transformMatrix[7].toFixed(2)}, ${transformMatrix[11].toFixed(2)}, ...]`);
-      console.log('   ⚠️ SIMPLIFIED LOGIC: This is MODEL ORIGIN position (no compensation)');
-      console.log('═══════════════════════════════════════════════════════');
-
       // Build update data with transform matrix
       // Transform matrix contains all position/orientation info
       const updateData: any = {
         transformMatrix: Array.from(transformMatrix),
       };
 
-      // ⚠️ SIMPLIFIED LOGIC: entryPoint = model origin (same as transform translation)
       // Extract entry point from transform matrix (translation is at indices 3, 7, 11 in row-major)
       // getScrewTransform returns row-major format
       updateData.entryPoint = {
@@ -467,27 +431,6 @@ class ScrewInteractionTool extends BaseTool {
         y: transformMatrix[7],
         z: transformMatrix[11],
       };
-
-      console.log('📊 [_saveTransformToBackend] UPDATE DATA:');
-      console.log(`   entryPoint: [${updateData.entryPoint.x.toFixed(2)}, ${updateData.entryPoint.y.toFixed(2)}, ${updateData.entryPoint.z.toFixed(2)}]`);
-      console.log(`   transformMatrix translation: [${transformMatrix[3].toFixed(2)}, ${transformMatrix[7].toFixed(2)}, ${transformMatrix[11].toFixed(2)}]`);
-
-      // ⚠️ CRITICAL CHECK: In simplified logic, these MUST be equal
-      const match = updateData.entryPoint.x === transformMatrix[3] &&
-                    updateData.entryPoint.y === transformMatrix[7] &&
-                    updateData.entryPoint.z === transformMatrix[11];
-      console.log(`   ✅ They match (both are model origin): ${match}`);
-
-      if (!match) {
-        const diffX = updateData.entryPoint.x - transformMatrix[3];
-        const diffY = updateData.entryPoint.y - transformMatrix[7];
-        const diffZ = updateData.entryPoint.z - transformMatrix[11];
-        const magnitude = Math.sqrt(diffX*diffX + diffY*diffY + diffZ*diffZ);
-        console.error(`   ❌ CRITICAL ERROR: entryPoint != transformMatrix!`);
-        console.error(`      Difference: [${diffX.toFixed(2)}, ${diffY.toFixed(2)}, ${diffZ.toFixed(2)}]`);
-        console.error(`      Magnitude: ${magnitude.toFixed(2)}mm`);
-        console.error(`      This should NEVER happen in simplified logic!`);
-      }
 
       // Extract trajectory direction from transform matrix
       // Z-axis direction (third column) indicates screw direction
@@ -515,35 +458,11 @@ class ScrewInteractionTool extends BaseTool {
       console.log('   📤 Calling planningBackendService.updateScrew...');
       console.log('      screwId:', modelId);
       console.log('      sessionId:', this.sessionId);
-      console.log('      updateData.transformMatrix:', JSON.stringify(updateData.transformMatrix).substring(0, 200));
-      console.log('      updateData.entryPoint:', JSON.stringify(updateData.entryPoint));
+      console.log('      updateData:', JSON.stringify(updateData, null, 2).substring(0, 500));
 
       const result = await this.planningBackendService.updateScrew(modelId, this.sessionId, updateData);
 
-      console.log('═══════════════════════════════════════════════════════');
-      console.log('   📤 updateScrew RESPONSE:');
-      console.log('      success:', result.success);
-      if (result.screw) {
-        console.log('      returned screw.entry_point:', result.screw.entry_point);
-        console.log('      returned screw.transform_matrix (first 4):', result.screw.transform_matrix?.slice(0, 4));
-        console.log('      returned screw.transform_matrix translation:',
-          result.screw.transform_matrix ?
-          `[${result.screw.transform_matrix[3]?.toFixed(2)}, ${result.screw.transform_matrix[7]?.toFixed(2)}, ${result.screw.transform_matrix[11]?.toFixed(2)}]` :
-          'N/A');
-
-        // Check if backend modified the data
-        if (result.screw.transform_matrix) {
-          const sentY = updateData.transformMatrix[7];
-          const returnedY = result.screw.transform_matrix[7];
-          if (Math.abs(sentY - returnedY) > 0.01) {
-            console.error('   ❌ BACKEND MODIFIED transform_matrix!');
-            console.error(`      Sent Y: ${sentY.toFixed(2)}`);
-            console.error(`      Returned Y: ${returnedY.toFixed(2)}`);
-            console.error(`      Difference: ${(returnedY - sentY).toFixed(2)}mm`);
-          }
-        }
-      }
-      console.log('═══════════════════════════════════════════════════════');
+      console.log('   📤 updateScrew result:', result);
 
       if (result.success) {
         console.log('✅ [ScrewInteractionTool] Transform saved to backend session');
@@ -626,6 +545,131 @@ class ScrewInteractionTool extends BaseTool {
       }
     } catch (error) {
       this._log('Error highlighting screw:', error);
+    }
+  }
+
+  /**
+   * Update viewport cameras to align with screw orientation
+   * Called when clicking on a screw (mouse down) and when releasing (mouse up)
+   * Similar to clicking the "View" button in ScrewManagementPanel
+   */
+  private _updateViewportCamerasFromScrew(modelId: string): void {
+    if (!modelId || !this.modelStateService) {
+      console.warn('⚠️ [ScrewInteractionTool] Cannot update viewport cameras - missing modelId or modelStateService');
+      return;
+    }
+
+    try {
+      console.log('🎯 [ScrewInteractionTool] Updating viewport cameras from screw:', modelId);
+      // Get current screw transform matrix
+      const transform = this.modelStateService.getScrewTransform(modelId);
+      if (!transform || transform.length !== 16) {
+        return;
+      }
+
+      // Get screw position from transform (translation column)
+      const screwPosition: [number, number, number] = [
+        transform[3],
+        transform[7],
+        transform[11]
+      ];
+
+      // Extract axis directions from transform matrix (row-major format)
+      // X-axis: Column 0 (indices 0, 4, 8) → Axial plane normal
+      // Y-axis: Column 1 (indices 1, 5, 9) → Coronal plane normal (stored negated)
+      // Z-axis: Column 2 (indices 2, 6, 10) → Sagittal plane normal
+      const axialNormal: [number, number, number] = [
+        transform[0],
+        transform[4],
+        transform[8]
+      ];
+      // Coronal normal is stored negated, so negate it back
+      const coronalNormal: [number, number, number] = [
+        -transform[1],
+        -transform[5],
+        -transform[9]
+      ];
+      const sagittalNormal: [number, number, number] = [
+        transform[2],
+        transform[6],
+        transform[10]
+      ];
+
+      // Normalize the vectors
+      vec3.normalize(axialNormal, axialNormal);
+      vec3.normalize(coronalNormal, coronalNormal);
+      vec3.normalize(sagittalNormal, sagittalNormal);
+
+      const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+      if (!renderingEngine) {
+        return;
+      }
+
+      const viewports = renderingEngine.getViewports();
+      if (viewports.length === 0) {
+        return;
+      }
+
+      // Update each MPR viewport camera
+      for (const viewport of viewports) {
+        try {
+          const viewportId = viewport.id.toLowerCase();
+          const camera = viewport.getCamera();
+          const { position: cameraPosition } = camera;
+
+          // Calculate new camera position maintaining distance from focal point
+          const viewDirection = vec3.sub(
+            vec3.create(),
+            cameraPosition as [number, number, number],
+            camera.focalPoint as [number, number, number]
+          );
+          const distance = vec3.length(viewDirection);
+
+          // Keep the original viewUp from DICOM series loading
+          const originalViewUp = camera.viewUp as [number, number, number];
+
+          let newViewPlaneNormal: [number, number, number] | null = null;
+
+          // Set viewPlaneNormal based on viewport type
+          if (viewportId.includes('axial')) {
+            newViewPlaneNormal = axialNormal;
+          } else if (viewportId.includes('sagittal')) {
+            newViewPlaneNormal = sagittalNormal;
+          } else if (viewportId.includes('coronal')) {
+            newViewPlaneNormal = coronalNormal;
+          }
+
+          if (newViewPlaneNormal) {
+            // Calculate new camera position
+            const newPosition = vec3.add(
+              vec3.create(),
+              screwPosition,
+              vec3.scale(vec3.create(), newViewPlaneNormal, distance)
+            ) as [number, number, number];
+
+            // Update camera - keep original viewUp to maintain DICOM series orientation
+            viewport.setCamera({
+              focalPoint: screwPosition,
+              position: newPosition,
+              viewPlaneNormal: newViewPlaneNormal,
+              viewUp: originalViewUp,
+            });
+
+            viewport.render();
+            console.log(`✅ Updated camera for ${viewport.id}`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Error updating viewport ${viewport.id}:`, error);
+        }
+      }
+
+      // Force rendering engine to render all viewports (renderingEngine already declared above)
+      if (renderingEngine) {
+        renderingEngine.renderViewports(renderingEngine.getViewportIds());
+        console.log('✅ Forced rendering engine to render all viewports');
+      }
+    } catch (error) {
+      console.error('❌ Error updating viewport cameras from screw:', error);
     }
   }
 
