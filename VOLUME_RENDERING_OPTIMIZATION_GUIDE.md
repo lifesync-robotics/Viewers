@@ -103,7 +103,7 @@ The `navigation-3d` mode automatically applies performance optimizations when it
    ```javascript
    window.commandsManager.runCommand('setVolumeRenderingImageSampleDistance', {
      viewportId: viewportId,
-     imageSampleDistance: 2.0
+     imageSampleDistance: 32.0
    });
    ```
 

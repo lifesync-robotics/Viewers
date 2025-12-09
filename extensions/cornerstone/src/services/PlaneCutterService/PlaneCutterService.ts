@@ -4,6 +4,7 @@ import vtkPlane from '@kitware/vtk.js/Common/DataModel/Plane';
 import vtkCutter from '@kitware/vtk.js/Filters/Core/Cutter';
 import vtkMapper from '@kitware/vtk.js/Rendering/Core/Mapper';
 import vtkActor from '@kitware/vtk.js/Rendering/Core/Actor';
+import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
 import { crosshairsHandler } from '../../utils/crosshairsHandler';
 
 /**
@@ -28,6 +29,7 @@ interface PlaneCutterData {
   modelCutters: Map<string, ModelCutterData>; // modelId -> ModelCutterData
   updateCallback?: any; // Callback for viewport updates
   eventListenerElement?: any; // Element for event listeners
+  slabThickness?: number; // Slab thickness for multi-slice cutting
 }
 
 /**
@@ -88,6 +90,9 @@ class PlaneCutterService extends PubSubService {
 
     // Subscribe to ModelStateService events
     this._subscribeToModelEvents();
+
+    // Subscribe to viewport property changes for slab thickness
+    this._subscribeToViewportProperties();
   }
 
   /**
@@ -120,6 +125,25 @@ class PlaneCutterService extends PubSubService {
     );
 
     console.log('✅ [PlaneCutterService] Subscribed to ModelStateService events');
+  }
+
+  /**
+   * Subscribe to viewport property changes (slab thickness, blend mode)
+   */
+  private _subscribeToViewportProperties(): void {
+    const { cornerstoneViewportService } = this.servicesManager.services;
+
+    if (!cornerstoneViewportService) {
+      console.warn('⚠️ [PlaneCutterService] CornerstoneViewportService not available');
+      return;
+    }
+
+    cornerstoneViewportService.subscribe(
+      cornerstoneViewportService.EVENTS.VIEWPORT_PROPERTIES_CHANGED,
+      this._handleViewportPropertiesChanged.bind(this)
+    );
+
+    console.log('✅ [PlaneCutterService] Subscribed to viewport property changes');
   }
 
   /**
@@ -174,6 +198,38 @@ class PlaneCutterService extends PubSubService {
 
     // Update the model's cutters with latest polyData
     this.updateModelCutters(modelId);
+  }
+
+  /**
+   * Handle VIEWPORT_PROPERTIES_CHANGED event (slab thickness changes)
+   */
+  private _handleViewportPropertiesChanged(event: { viewportId: string; properties: any; volumeId?: string }): void {
+    const { viewportId, properties } = event;
+
+    if (!properties.slabThickness && properties.slabThickness !== 0) {
+      return; // Only handle slab thickness changes
+    }
+
+    const planeCutter = this.planeCutters.find(pc => pc.viewportId === viewportId);
+    if (!planeCutter) {
+      return; // Viewport not managed by this service
+    }
+
+    console.log(`📏 [PlaneCutterService] Slab thickness changed for ${planeCutter.orientation}: ${properties.slabThickness}`);
+
+    // Store the new slab thickness
+    planeCutter.slabThickness = properties.slabThickness;
+
+    // Rebuild all model cutters for this viewport with the new slab thickness
+    for (const modelCutterData of planeCutter.modelCutters.values()) {
+      this._rebuildSlabCut(modelCutterData, planeCutter);
+    }
+
+    // Trigger re-render
+    const viewport = this._getViewportById(viewportId);
+    if (viewport) {
+      viewport.render();
+    }
   }
 
   /**
@@ -437,10 +493,9 @@ class PlaneCutterService extends PubSubService {
       planeCutter.plane.setOrigin(planeOrigin[0], planeOrigin[1], planeOrigin[2]);
       planeCutter.plane.setNormal(planeNormal[0], planeNormal[1], planeNormal[2]);
 
-      // Update all model cutters in this plane
+      // Update all model cutters in this plane with slab thickness support
       for (const modelCutterData of planeCutter.modelCutters.values()) {
-        modelCutterData.cutter.modified();
-        modelCutterData.cutter.update();
+        this._rebuildSlabCut(modelCutterData, planeCutter);
       }
     } catch (error) {
       console.warn(`⚠️ [${planeCutter.orientation}] Error updating plane:`, error.message);
@@ -607,15 +662,24 @@ class PlaneCutterService extends PubSubService {
       if (modelCutterData) {
         console.log(`  🔄 Updating ${planeCutter.orientation} cutter`);
 
-        // Update the cutter with latest polyData
-        modelCutterData.cutter.setInputData(loadedModel.polyData);
-        modelCutterData.cutter.modified();
-        modelCutterData.cutter.update();
+        // Update polyData reference
+        modelCutterData.polyData = loadedModel.polyData;
+
+        // Rebuild the slab cut with updated polyData
+        this._rebuildSlabCut(modelCutterData, planeCutter);
 
         // Check output
-        const cutterOutput = modelCutterData.cutter.getOutputData();
-        if (cutterOutput) {
-          const numCutPoints = cutterOutput.getPoints()?.getNumberOfPoints() || 0;
+        let outputData = null;
+        if ((planeCutter.slabThickness ?? 0) > 0) {
+          // For slabs, check the mapper input
+          outputData = modelCutterData.mapper.getInputData();
+        } else {
+          // For thin slices, check the cutter output
+          outputData = modelCutterData.cutter.getOutputData();
+        }
+
+        if (outputData) {
+          const numCutPoints = outputData.getPoints()?.getNumberOfPoints() || 0;
           console.log(`  ✅ ${planeCutter.orientation} cut produced ${numCutPoints} points`);
         } else {
           console.warn(`  ⚠️ ${planeCutter.orientation} cutter output is null`);
@@ -630,6 +694,69 @@ class PlaneCutterService extends PubSubService {
     }
 
     this._broadcastEvent(EVENTS.PLANE_CUTTER_UPDATED, { modelId, action: 'updated' });
+  }
+
+  /**
+   * Rebuild cutter output for slab thickness by sampling multiple parallel planes
+   * @param modelCutterData - The model cutter data to update
+   * @param planeCutter - The parent plane cutter containing slab thickness
+   */
+  private _rebuildSlabCut(modelCutterData: ModelCutterData, planeCutter: PlaneCutterData): void {
+    const thickness = planeCutter.slabThickness ?? 0;
+
+    // If no thickness (thin slice), use standard single-plane cutting
+    if (thickness <= 0) {
+      modelCutterData.cutter.modified();
+      modelCutterData.cutter.update();
+      modelCutterData.mapper.setInputConnection(modelCutterData.cutter.getOutputPort());
+      return;
+    }
+
+    // For thick slabs, sample multiple planes and merge their outputs
+    const append = vtkAppendPolyData.newInstance();
+    const steps = Math.max(3, Math.min(10, Math.ceil(thickness / 2))); // Adaptive step count based on thickness
+    const stepSize = thickness / steps;
+
+    const origin = planeCutter.plane.getOrigin();
+    const normal = planeCutter.plane.getNormal();
+
+    console.log(`  📏 Building ${steps}-step slab cut (thickness: ${thickness.toFixed(2)}mm)`);
+
+    // Sample planes throughout the slab thickness
+    for (let i = -steps / 2; i <= steps / 2; i++) {
+      const offset = i * stepSize;
+      const offsetOrigin = [
+        origin[0] + normal[0] * offset,
+        origin[1] + normal[1] * offset,
+        origin[2] + normal[2] * offset,
+      ];
+
+      // Create temporary plane at this offset
+      const tempPlane = vtkPlane.newInstance();
+      tempPlane.setOrigin(offsetOrigin[0], offsetOrigin[1], offsetOrigin[2]);
+      tempPlane.setNormal(normal[0], normal[1], normal[2]);
+
+      // Create temporary cutter
+      const tempCutter = vtkCutter.newInstance();
+      tempCutter.setCutFunction(tempPlane);
+      tempCutter.setInputData(modelCutterData.polyData);
+      tempCutter.update();
+
+      // Add this slice to the combined output
+      const sliceOutput = tempCutter.getOutputData();
+      if (sliceOutput && sliceOutput.getPoints()?.getNumberOfPoints() > 0) {
+        append.addInputData(sliceOutput);
+      }
+
+      // Clean up temporary objects
+      tempCutter.delete();
+      tempPlane.delete();
+    }
+
+    // Update the mapper with the combined slab output
+    append.update();
+    modelCutterData.mapper.setInputData(append.getOutputData());
+    append.delete();
   }
 
   /**
@@ -747,14 +874,32 @@ class PlaneCutterService extends PubSubService {
     vtkRenderer.addActor(actor);
     console.log(`  📐 Actor added to renderer for viewport ${planeCutter.viewportId}`);
 
-    // Force immediate cutter update
-    cutter.modified();
-    cutter.update();
+    // Store model cutter data first
+    const modelCutterData: ModelCutterData = {
+      cutter,
+      mapper,
+      actor,
+      modelId,
+      polyData: loadedModel.polyData,
+    };
 
-    // Check cutter output immediately
-    const initialOutput = cutter.getOutputData();
-    if (initialOutput) {
-      const numCutPoints = initialOutput.getPoints()?.getNumberOfPoints() || 0;
+    planeCutter.modelCutters.set(modelId, modelCutterData);
+
+    // Apply slab cutting (will handle both thin slice and thick slab cases)
+    this._rebuildSlabCut(modelCutterData, planeCutter);
+
+    // Check cutter output
+    let outputData = null;
+    if ((planeCutter.slabThickness ?? 0) > 0) {
+      // For slabs, check the mapper input (vtkAppendPolyData output)
+      outputData = mapper.getInputData();
+    } else {
+      // For thin slices, check the cutter output
+      outputData = cutter.getOutputData();
+    }
+
+    if (outputData) {
+      const numCutPoints = outputData.getPoints()?.getNumberOfPoints() || 0;
       console.log(`  🔍 Initial cutter output: ${numCutPoints} cut points`);
       if (numCutPoints === 0) {
         console.warn(`  ⚠️ Cutter produced 0 points - plane may not intersect model`);
@@ -765,17 +910,6 @@ class PlaneCutterService extends PubSubService {
     } else {
       console.warn(`  ⚠️ Cutter output is null`);
     }
-
-    // Store model cutter data
-    const modelCutterData: ModelCutterData = {
-      cutter,
-      mapper,
-      actor,
-      modelId,
-      polyData: loadedModel.polyData,
-    };
-
-    planeCutter.modelCutters.set(modelId, modelCutterData);
 
     // Render viewport
     viewport.render();

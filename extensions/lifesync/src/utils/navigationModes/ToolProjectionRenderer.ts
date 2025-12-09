@@ -21,6 +21,7 @@ export class ToolProjectionRenderer {
   private extensionLength: number = 50; // 50mm = 5cm default
   private instrumentLength: number = 200; // 200mm = 20cm default (instrument body length in -z direction)
   private debugCount: Map<string, number> = new Map(); // Per-viewport debug counter
+  private readonly LOG_PREFIX = '[ToolProj]';
 
   constructor(servicesManager: any, extensionLength: number = 50, instrumentLength: number = 200) {
     this.servicesManager = servicesManager;
@@ -112,32 +113,77 @@ export class ToolProjectionRenderer {
   }
 
   /**
-   * Calculate instrument base point: origin - zAxis * instrumentLength
-   * This represents the back end of the instrument body (in -z direction)
+   * Prefixed log helpers for easy filtering
    */
-  private _calculateInstrumentBase(toolRep: ToolRepresentation): number[] {
-    const zAxis = vec3.fromValues(
-      toolRep.zAxis[0],
-      toolRep.zAxis[1],
-      toolRep.zAxis[2]
-    );
+  private _log(...args: any[]): void {
+    console.log(this.LOG_PREFIX, ...args);
+  }
 
-    // Scale zAxis by instrument length (negative direction)
-    vec3.scale(zAxis, zAxis, -this.instrumentLength);
+  private _warn(...args: any[]): void {
+    console.warn(this.LOG_PREFIX, ...args);
+  }
 
-    return [
-      toolRep.origin[0] + zAxis[0],
-      toolRep.origin[1] + zAxis[1],
-      toolRep.origin[2] + zAxis[2]
-    ];
+  private _error(...args: any[]): void {
+    console.error(this.LOG_PREFIX, ...args);
+  }
+
+  /**
+   * Identify viewport type by name (axial, coronal, sagittal)
+   * Returns the viewport type or null if unknown
+   */
+  private _identifyViewportType(viewport: any): 'axial' | 'coronal' | 'sagittal' | null {
+    const viewportId = viewport.id.toLowerCase();
+    
+    if (viewportId.includes('axial')) {
+      return 'axial';
+    } else if (viewportId.includes('coronal')) {
+      return 'coronal';
+    } else if (viewportId.includes('sagittal')) {
+      return 'sagittal';
+    }
+    
+    return null;
+  }
+
+  /**
+   * Get the expected plane normal for a viewport type.
+   *
+   * We use axis-aligned unit vectors in patient space. Whether the
+   * underlying volume is LPS (DICOM default) or RAS, the plane orientation
+   * is defined by which axis is dominant, not the sign. Cross‑validation
+   * with the camera normal handles sign/direction; we just need the axis.
+   * - Axial: Z axis (superior–inferior)
+   * - Sagittal: X axis (left–right)
+   * - Coronal: Y axis (anterior–posterior)
+   */
+
+  private _getStandardPlaneNormal(viewportType: 'axial' | 'coronal' | 'sagittal'): vec3 {
+    const standardNormals = {
+      'axial': vec3.fromValues(0, 0, 1),      // Z-axis (superior-inferior)
+      'sagittal': vec3.fromValues(1, 0, 0),   // X-axis (left-right)
+      'coronal': vec3.fromValues(0, 1, 0)     // Y-axis (anterior-posterior)
+    };
+    
+    return standardNormals[viewportType];
+  }
+
+  /**
+   * Check if two normals are approximately equal (within tolerance)
+   */
+  private _normalsMatch(normal1: vec3, normal2: vec3, tolerance: number = 0.1): boolean {
+    const diff = vec3.subtract(vec3.create(), normal1, normal2);
+    const distance = vec3.length(diff);
+    return distance < tolerance;
   }
 
   /**
    * Render projection on a single viewport with correct plane intersection math
    *
    * For MPR viewports, we need to:
-   * 1. Calculate if/where the tool intersects the MPR slice plane
-   * 2. Draw the intersection correctly, not just project 3D points
+   * 1. Identify viewport type by name (axial, coronal, sagittal)
+   * 2. Use standard plane normal for each viewport type (axis-aligned)
+   * 3. Calculate if/where the tool intersects the MPR slice plane
+   * 4. Draw the intersection correctly, not just project 3D points
    */
   private _renderProjectionOnViewport(
     viewport: any,
@@ -151,20 +197,21 @@ export class ToolProjectionRenderer {
     const shouldLog = currentCount < 5; // Log first 5 times per viewport
 
     try {
-      // Get viewport name for debugging
+      // Step 1: Identify viewport type by name
+      const viewportType = this._identifyViewportType(viewport);
       const viewportName = viewport.id || 'unknown';
 
       if (shouldLog) {
-        console.log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
-        console.log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
-        console.log(`📍 Tool Tip: [${tipPoint.map(v => v.toFixed(1)).join(', ')}]`);
-        console.log(`📍 Tool Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
-        console.log(`📏 Extension Length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
+        this._log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
+        this._log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
+        this._log(`📍 Tool Tip: [${tipPoint.map(v => v.toFixed(1)).join(', ')}]`);
+        this._log(`📍 Tool Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
+        this._log(`📏 Extension Length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
       }
 
-      // Get viewport camera info
+      // Step 2: Get viewport camera info
       const camera = viewport.getCamera();
-      const planeNormal = vec3.fromValues(
+      const cameraNormal = vec3.fromValues(
         camera.viewPlaneNormal[0],
         camera.viewPlaneNormal[1],
         camera.viewPlaneNormal[2]
@@ -175,17 +222,50 @@ export class ToolProjectionRenderer {
         camera.focalPoint[2]
       );
 
+      // Step 3: Determine which normal to use
+      let planeNormal: vec3;
+      let normalSource: string;
+      
+      if (viewportType) {
+        // Use axis-aligned normal for known viewport types (sign handled via validation)
+        const standardNormal = this._getStandardPlaneNormal(viewportType);
+        planeNormal = standardNormal;
+        normalSource = `standard ${viewportType}`;
+        
+        // Cross-validate camera normal with expected normal
+        if (!this._normalsMatch(cameraNormal, standardNormal, 0.2)) {
+          if (shouldLog) {
+            this._warn(`⚠️ Camera normal mismatch for ${viewportType} viewport!`);
+            this._warn(`   Camera normal: [${cameraNormal[0].toFixed(3)}, ${cameraNormal[1].toFixed(3)}, ${cameraNormal[2].toFixed(3)}]`);
+            this._warn(`   Expected normal: [${standardNormal[0].toFixed(3)}, ${standardNormal[1].toFixed(3)}, ${standardNormal[2].toFixed(3)}]`);
+            this._warn(`   Using standard normal for intersection calculation`);
+          }
+        }
+      } else {
+        // Fall back to camera normal for unknown viewport types
+        planeNormal = cameraNormal;
+        normalSource = 'camera (unknown viewport type)';
+        
+        if (shouldLog) {
+          this._warn(`⚠️ Unknown viewport type for ${viewportName}, using camera normal`);
+        }
+      }
+
       if (shouldLog) {
-        console.log(`\n📐 Viewport Plane Info:`);
-        console.log(`   Plane Normal: [${planeNormal[0].toFixed(3)}, ${planeNormal[1].toFixed(3)}, ${planeNormal[2].toFixed(3)}]`);
-        console.log(`   Plane Point (focal): [${planePoint[0].toFixed(1)}, ${planePoint[1].toFixed(1)}, ${planePoint[2].toFixed(1)}]`);
+        this._log(`\n📐 Viewport Plane Info:`);
+        this._log(`   Viewport ID: ${viewportName}`);
+        this._log(`   Viewport Type: ${viewportType || 'Unknown'}`);
+        this._log(`   Normal Source: ${normalSource}`);
+        this._log(`   Plane Normal: [${planeNormal[0].toFixed(3)}, ${planeNormal[1].toFixed(3)}, ${planeNormal[2].toFixed(3)}]`);
+        this._log(`   Camera Normal: [${cameraNormal[0].toFixed(3)}, ${cameraNormal[1].toFixed(3)}, ${cameraNormal[2].toFixed(3)}]`);
+        this._log(`   Plane Point (focal): [${planePoint[0].toFixed(1)}, ${planePoint[1].toFixed(1)}, ${planePoint[2].toFixed(1)}]`);
 
         // Identify plane type based on normal
         let planeType = 'Unknown';
         if (Math.abs(planeNormal[2]) > 0.9) planeType = 'Axial (Z-normal)';
         else if (Math.abs(planeNormal[0]) > 0.9) planeType = 'Sagittal (X-normal)';
         else if (Math.abs(planeNormal[1]) > 0.9) planeType = 'Coronal (Y-normal)';
-        console.log(`   Plane Type: ${planeType}`);
+        this._log(`   Plane Type (by normal): ${planeType}`);
       }
 
       // Calculate tool line intersection with MPR plane
@@ -196,9 +276,9 @@ export class ToolProjectionRenderer {
       vec3.normalize(toolDirection, toolDirection);
 
       if (shouldLog) {
-        console.log(`\n🔧 Tool Line Info:`);
-        console.log(`   Direction (normalized): [${toolDirection[0].toFixed(3)}, ${toolDirection[1].toFixed(3)}, ${toolDirection[2].toFixed(3)}]`);
-        console.log(`   Length: ${toolLength.toFixed(2)}mm`);
+        this._log(`\n🔧 Tool Line Info:`);
+        this._log(`   Direction (normalized): [${toolDirection[0].toFixed(3)}, ${toolDirection[1].toFixed(3)}, ${toolDirection[2].toFixed(3)}]`);
+        this._log(`   Length: ${toolLength.toFixed(2)}mm`);
       }
 
       // Line-plane intersection math:
@@ -211,9 +291,9 @@ export class ToolProjectionRenderer {
       const denominator = vec3.dot(planeNormal, toolDirection);
 
       if (shouldLog) {
-        console.log(`\n🧮 Intersection Math:`);
-        console.log(`   Numerator (n · (P0 - origin)): ${numerator.toFixed(4)}`);
-        console.log(`   Denominator (n · direction): ${denominator.toFixed(4)}`);
+        this._log(`\n🧮 Intersection Math:`);
+        this._log(`   Numerator (n · (P0 - origin)): ${numerator.toFixed(4)}`);
+        this._log(`   Denominator (n · direction): ${denominator.toFixed(4)}`);
       }
 
       // Check if line is parallel to plane
@@ -224,9 +304,9 @@ export class ToolProjectionRenderer {
         const distanceToPlane = Math.abs(vec3.dot(planeNormal, originToPlane));
 
         if (shouldLog) {
-          console.log(`   ⚠️ Tool is PARALLEL to plane`);
-          console.log(`   Distance to plane: ${distanceToPlane.toFixed(2)}mm`);
-          console.log(`   ✅ Always showing projected line (dashed) regardless of distance`);
+          this._log(`   ⚠️ Tool is PARALLEL to plane`);
+          this._log(`   Distance to plane: ${distanceToPlane.toFixed(2)}mm`);
+          this._log(`   ✅ Always showing projected line (dashed) regardless of distance`);
         }
 
         // Always show projection, even if far from plane
@@ -239,8 +319,8 @@ export class ToolProjectionRenderer {
       const t = numerator / denominator;
 
       if (shouldLog) {
-        console.log(`   t parameter: ${t.toFixed(4)}`);
-        console.log(`   t range: [0, ${toolLength.toFixed(2)}]`);
+        this._log(`   t parameter: ${t.toFixed(4)}`);
+        this._log(`   t range: [0, ${toolLength.toFixed(2)}]`);
       }
 
       // Check if intersection is within tool segment
@@ -250,10 +330,10 @@ export class ToolProjectionRenderer {
         const minDistance = Math.min(originDistance, tipDistance);
 
         if (shouldLog) {
-          console.log(`   ⚠️ Intersection OUTSIDE tool segment`);
-          console.log(`   Origin distance from plane: ${originDistance.toFixed(2)}mm`);
-          console.log(`   Tip distance from plane: ${tipDistance.toFixed(2)}mm`);
-          console.log(`   ✅ Always showing projected line (dashed) regardless of distance`);
+          this._log(`   ⚠️ Intersection OUTSIDE tool segment`);
+          this._log(`   Origin distance from plane: ${originDistance.toFixed(2)}mm`);
+          this._log(`   Tip distance from plane: ${tipDistance.toFixed(2)}mm`);
+          this._log(`   ✅ Always showing projected line (dashed) regardless of distance`);
           }
 
         // Always show projection, even if far from plane
@@ -270,18 +350,18 @@ export class ToolProjectionRenderer {
       const distanceToPlane = 0.0;
 
       if (shouldLog) {
-        console.log(`   ✅ INTERSECTION FOUND!`);
-        console.log(`   Intersection point: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
-        console.log(`   Line-to-plane distance: ${distanceToPlane.toFixed(2)}mm (line intersects plane)`);
-        console.log(`   → Drawing SOLID line from origin to intersection`);
+        this._log(`   ✅ INTERSECTION FOUND!`);
+        this._log(`   Intersection point: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
+        this._log(`   Line-to-plane distance: ${distanceToPlane.toFixed(2)}mm (line intersects plane)`);
+        this._log(`   → Drawing SOLID line from origin to intersection`);
       }
 
       this._renderIntersectionLine(viewport, originVec, intersectionPoint, distanceToPlane);
 
     } catch (error) {
-      console.error(`❌ Error rendering projection on ${viewport.id}:`, error);
-      // Fallback to simple worldToCanvas projection if complex math fails
-      this._renderSimpleProjectionFallback(viewport, origin, tipPoint);
+      this._error(`❌ Error rendering projection on ${viewport.id}:`, error);
+      // Clear projection on error to avoid showing incorrect visualization
+      this._clearViewportProjection(viewport.id);
     }
   }
 
@@ -302,14 +382,14 @@ export class ToolProjectionRenderer {
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
       // Draw instrument body as solid line (always visible, represents physical instrument)
       this._drawInstrumentBodyLine(svgElement, viewport.id, baseCanvas, originCanvas);
     } catch (error) {
-      console.error(`❌ Error rendering instrument body on ${viewport.id}:`, error);
+      this._error(`❌ Error rendering instrument body on ${viewport.id}:`, error);
     }
   }
 
@@ -329,7 +409,7 @@ export class ToolProjectionRenderer {
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
@@ -344,7 +424,7 @@ export class ToolProjectionRenderer {
       this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true, opacity, distanceToPlane);
       this._drawOriginCircle(svgElement, viewport.id, originCanvas, opacity);
     } catch (error) {
-      console.error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
+      this._error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
     }
   }
 
@@ -364,7 +444,7 @@ export class ToolProjectionRenderer {
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
@@ -374,7 +454,7 @@ export class ToolProjectionRenderer {
       this._drawOriginCircle(svgElement, viewport.id, originCanvas);
       this._drawIntersectionMarker(svgElement, viewport.id, intersectionCanvas);
     } catch (error) {
-      console.error(`❌ Error in _renderIntersectionLine for ${viewport.id}:`, error);
+      this._error(`❌ Error in _renderIntersectionLine for ${viewport.id}:`, error);
     }
   }
 

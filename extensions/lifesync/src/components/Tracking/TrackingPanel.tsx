@@ -180,10 +180,19 @@ function PanelTracking() {
   ];
 
   // we have already registered it for development , let fix it for current development mode
+  // const [prToDicomMatrix, setPrToDicomMatrix] = React.useState<number[][]>([
+  //   [-0.9967, -0.0487, 0.0647, -17.2],
+  //   [0.00471, 0.7623, 0.6403, 187.5],
+  //   [-0.0811, 0.6454, -0.7593, 62.0],
+  //   [0.0000, 0.0000, 0.0000, 1.0000]
+
+
+
+  // ]);
   const [prToDicomMatrix, setPrToDicomMatrix] = React.useState<number[][]>([
-    [-0.9967, -0.0487, 0.0647, -17.2],
-    [0.00471, 0.7623, 0.6403, 187.5],
-    [-0.0811, 0.6454, -0.7593, 62.0],
+    [-0.9814, -0.0938, 0.1673, -20.46],
+    [0.0522, 0.7083, 0.7039, 159.9],
+    [-0.1846, 0.6996, -0.69, 219.2],
     [0.0000, 0.0000, 0.0000, 1.0000]
 
 

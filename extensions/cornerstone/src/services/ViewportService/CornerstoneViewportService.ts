@@ -40,6 +40,7 @@ import { useSegmentationPresentationStore } from '../../stores/useSegmentationPr
 const EVENTS = {
   VIEWPORT_DATA_CHANGED: 'event::cornerstoneViewportService:viewportDataChanged',
   VIEWPORT_VOLUMES_CHANGED: 'event::cornerstoneViewportService:viewportVolumesChanged',
+  VIEWPORT_PROPERTIES_CHANGED: 'event::cornerstoneViewportService:viewportPropertiesChanged',
 };
 
 const MIN_STACK_VIEWPORTS_TO_ENQUEUE_RESIZE = 12;
@@ -1111,6 +1112,14 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
         // If preset was set, immediately fix the maximum samples
         if (properties && properties.preset) {
           this._ensureSafeMaximumSamplesPerRay(viewport);
+        }
+        // Emit event for slab thickness changes
+        if (properties && (properties.slabThickness !== undefined || properties.blendMode !== undefined)) {
+          this._broadcastEvent(this.EVENTS.VIEWPORT_PROPERTIES_CHANGED, {
+            viewportId: viewport.id,
+            properties,
+            volumeId,
+          });
         }
         return result;
       };

@@ -8,7 +8,38 @@ window.config = {
   modes: [],
   // =========================================================================
   // CRITICAL CORRECTION APPLIED HERE
-  customizationService: {}, // =========================================================================
+  customizationService: {
+    // // Define the 3D Volume Rendering Customization
+    // 'cornerstone.3dVolumeRendering': {
+    //   volumeRenderingPresets: [
+    //     // ... keep existing presets if you want
+    //     {
+    //       name: 'CT-Low-HU-Visible', // Name displayed in the UI
+    //       gradientOpacity: [
+    //         { value: 0, opacity: 0 },
+    //         { value: 100, opacity: 1 }
+    //       ],
+    //       scalarOpacity: [
+    //         // MAPPING: { value: HU, opacity: 0.0 to 1.0 }
+    //         // Start visible range at -1000 HU (Air/Lung)
+    //         { value: -1000, opacity: 0 },     // Completely transparent at -1000
+    //         { value: -500, opacity: 0.2 },    // 20% opaque at -500 (Lung/Low density)
+    //         { value: -100, opacity: 0.3 },    // 30% opaque at -100 (Fat)
+    //         { value: 40, opacity: 0.6 },      // 60% opaque at 40 (Soft tissue)
+    //         { value: 400, opacity: 1 }        // Fully opaque at 400 (Bone)
+    //       ],
+    //       colorTransfer: [
+    //         // MAPPING: { value: HU, red: 0-1, green: 0-1, blue: 0-1 }
+    //         { value: -1000, red: 0, green: 0, blue: 0 },      // Black/Air
+    //         { value: -500, red: 0.8, green: 0.5, blue: 0.2 }, // Brownish/Lung
+    //         { value: 40, red: 0.8, green: 0.2, blue: 0.2 },   // Red/Organ
+    //         { value: 400, red: 1, green: 1, blue: 1 }         // White/Bone
+    //       ]
+    //     }
+    //   ]
+    // }
+    
+  }, // =========================================================================
   showStudyList: true,
   // Disable investigational use dialog banner
   investigationalUseDialog: {
