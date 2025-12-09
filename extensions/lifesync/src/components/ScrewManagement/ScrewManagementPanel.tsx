@@ -329,6 +329,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
       if (response.success) {
         setScrews(response.screws || []);
         console.log(`✅ Loaded ${response.screws?.length || 0} screws from API`);
+
+        // Load screws into the viewport
+        if (response.screws && response.screws.length > 0) {
+          console.log('🔄 Auto-loading 3D models for all screws...');
+          for (const screw of response.screws) {
+            try {
+              await restoreScrew(screw);
+            } catch (error) {
+              console.error(`❌ Failed to restore screw ${screw.screw_id || screw.id}:`, error);
+            }
+          }
+          console.log('✅ All 3D models loaded');
+        }
       } else {
         console.error('❌ Failed to load screws:', response.error);
         // Fallback to localStorage
