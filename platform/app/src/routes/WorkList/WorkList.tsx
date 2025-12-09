@@ -524,6 +524,7 @@ function WorkList({
   dataPath,
   onRefresh,
   servicesManager,
+  extensionManager,
 }: withAppTypes) {
   const { show, hide } = useModal();
   const { t } = useTranslation();
@@ -858,15 +859,15 @@ function WorkList({
   // TODO: Search functionality temporarily commented, to be implemented later
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFilter, setSearchFilter] = useState('studyUID'); // 'studyUID' | 'patientName' | 'mrn' | 'studyDate'
-  
+
   // Filter studies based on search query (placeholder - will implement later)
   const filteredOrthancStudies = useMemo(() => {
     if (!searchQuery.trim()) {
       return orthancStudies;
     }
-    
+
     const query = searchQuery.toLowerCase().trim();
-    
+
     return orthancStudies.filter(study => {
       switch (searchFilter) {
         case 'studyUID':
@@ -886,11 +887,11 @@ function WorkList({
   // Select Study dialog state
   const [selectedStudy, setSelectedStudy] = useState(null);
   const [showEnrollDialog, setShowEnrollDialog] = useState(false);
-  
+
   // Clinical phase state - two different purposes
   const [clinicalPhase, setClinicalPhase] = useState('PreOperativePlanning'); // For upload file clinical phase
   const [selectedClinicalPhase, setSelectedClinicalPhase] = useState('PreOperativePlanning'); // For clinical phase after selecting study for enrollment
-  
+
   const [isEnrolling, setIsEnrolling] = useState(false);
   const [enrollError, setEnrollError] = useState(null);
 
@@ -988,20 +989,20 @@ function WorkList({
       if (result.success) {
         // Build success message
         let message = `✅ Upload successful! ${result.studiesUploaded} study(ies) uploaded to Orthanc`;
-        
+
         // If there are enrollment results, show enrollment information
         if (result.enrollmentResults && result.enrollmentResults.length > 0) {
           const successCount = result.enrollmentResults.filter(r => r.success).length;
           const totalSeries = result.enrollmentResults.reduce(
-            (sum, r) => sum + (r.enrolledSeriesCount || 0), 
+            (sum, r) => sum + (r.enrolledSeriesCount || 0),
             0
           );
-          
+
           message = `✅ Upload and enrollment successful!\n\n` +
             `- ${result.studiesUploaded} study(ies) uploaded\n` +
             `- ${successCount} study(ies) successfully enrolled to Case ${addStudyToCaseId}\n` +
             `- Total ${totalSeries} series enrolled\n`;
-          
+
           // Show detailed enrollment information
           if (result.enrollmentResults.length > 0) {
             const details = result.enrollmentResults.map(r => {
@@ -1011,11 +1012,11 @@ function WorkList({
                 return `  ✗ ${r.studyUID || r.orthancStudyId}: ${r.error}`;
               }
             }).join('\n');
-            
+
             console.log('Enrollment details:\n' + details);
           }
         }
-        
+
         alert(message);
 
         // Refresh studies list
@@ -1203,7 +1204,7 @@ function WorkList({
     try {
       const updatedCase = await caseService.updateCase(selectedCase.caseId, updates);
       await loadCases(); // Reload cases list
-      
+
       // Update selectedCase with the latest data from server
       // This ensures the edit dialog shows updated data if reopened
       setSelectedCase({
@@ -1215,7 +1216,7 @@ function WorkList({
         },
         status: updatedCase.status || selectedCase.status || 'created',
       });
-      
+
       console.log(`✅ Case ${selectedCase.caseId} updated successfully`);
     } catch (err) {
       console.error('Failed to update case:', err);
@@ -1396,7 +1397,7 @@ function WorkList({
 
     // Create a mapping: studyRowKey -> studyInstanceUID
     const studyRowKeyToUID = new Map();
-    
+
     if (viewMode === 'cases' && cases.length > 0) {
       // Case-centric view: iterate through all cases and studies to build mapping
       // Note: this logic must be exactly consistent with rowIndex assignment logic in createTableDataSource
@@ -1454,12 +1455,12 @@ function WorkList({
 
         // Add case row with active case highlighting
         const isActiveCase = activeCaseId && caseItem.caseId === activeCaseId;
-        
+
         rows.push({
           dataCY: `caseRow-${caseItem.caseId}`,
           clickableCY: caseItem.caseId,
-          className: isActiveCase 
-            ? 'bg-blue-900/20 border-l-4 border-blue-500 hover:bg-blue-900/30' 
+          className: isActiveCase
+            ? 'bg-blue-900/20 border-l-4 border-blue-500 hover:bg-blue-900/30'
             : 'hover:bg-primary-dark',
           row: [
             {
@@ -1557,7 +1558,7 @@ function WorkList({
                       console.log('🔍 caseItem.patientMRN:', caseItem.patientMRN);
                       console.log('🔍 caseItem.patientName:', caseItem.patientName);
                       console.log('🔍 ===========================================');
-                      
+
                       // Transform case data to match EditCaseDialog's expected structure
                       // Use patientInfo as primary source, fallback to case-level fields for backward compatibility
                       const caseDataForDialog = {
@@ -1570,11 +1571,11 @@ function WorkList({
                         },
                         status: caseItem.status || 'created',
                       };
-                      
+
                       // 🔍 DEBUG: Check transformed data
                       console.log('🔍 WorkList: caseDataForDialog:', JSON.stringify(caseDataForDialog, null, 2));
                       console.log('🔍 WorkList: caseDataForDialog.patientInfo?.dateOfBirth:', caseDataForDialog.patientInfo?.dateOfBirth);
-                      
+
                       setSelectedCase(caseDataForDialog);
                       setIsEditDialogOpen(true);
                     }}
@@ -1652,12 +1653,12 @@ function WorkList({
             if (!fullStudy) {
               // Study not loaded yet - show placeholder with remove button
               const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
-              
+
               rows.push({
                 dataCY: `studyPlaceholder-${study.studyInstanceUID}`,
                 clickableCY: study.studyInstanceUID,
-                className: isActiveCaseStudy 
-                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40' 
+                className: isActiveCaseStudy
+                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40'
                   : 'hover:bg-primary-dark',
                 row: [
                   {
@@ -1785,12 +1786,12 @@ function WorkList({
 
               // 🎨 Highlight active case studies with different background color
               const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
-              
+
               rows.push({
                 dataCY: `studyRow-${studyInstanceUid}`,
                 clickableCY: studyInstanceUid,
-                className: isActiveCaseStudy 
-                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40' 
+                className: isActiveCaseStudy
+                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40'
                   : 'hover:bg-primary-dark',
                 row: [
                   {
@@ -2048,7 +2049,7 @@ function WorkList({
                                 }
                                 onClick={() => {}}
                                 dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
-                                className={!isValidMode ? 'bg-[#222d44]' : ''}
+                                className={!isValidMode ? 'bg-[#222d44]' : undefined}
                               >
                                 {mode.displayName}
                               </Button>
@@ -2466,6 +2467,30 @@ function WorkList({
   const dataSourceConfigurationComponent = customizationService.getCustomization(
     'ohif.dataSourceConfigurationComponent'
   );
+
+  // 示例：假设有一个函数处理跳转到plan（根据您的代码调整）
+  const handleOpenPlanning = (caseId) => {
+    // 设置标志
+    localStorage.setItem('ohif_from_case', 'true');
+
+    // 新增：尝试预清理渲染缓存（如果extensionManager有访问servicesManager）
+    const servicesManager = extensionManager.getActiveServicesManager(); // 基于第527行extensionManager
+    if (servicesManager) {
+      const { modelStateService, viewportStateService } = servicesManager.services;
+      modelStateService.clearAllModels();
+      viewportStateService.clearAll();
+      console.log('🧹 Pre-cleared rendering cache before navigating to plan');
+    }
+
+    // 执行导航
+    navigate(`/plan?caseId=${caseId}`);
+  };
+
+  // 在useEffect中保持设置标志（第2470-2474行）
+  useEffect(() => {
+    localStorage.setItem('ohif_from_case', 'true');  // Set flag when in WorkList (case)
+  }, []);
+
 
   return (
     <div className="flex h-screen flex-col bg-black">
@@ -2955,7 +2980,7 @@ function WorkList({
                     >
                       Search
                     </button> */}
-                  </div> 
+                  </div>
 
                   {/* Study List */}
                   <div className="p-6">

@@ -7,6 +7,10 @@
 
 import React from 'react';
 
+// Re-export CrosshairBookmarks component and types
+export { CrosshairBookmarks } from './CrosshairBookmarks';
+export type { CrosshairBookmark, ScrewPlacementRequest } from './CrosshairBookmarks';
+
 // ═══════════════════════════════════════════════════════
 // Header Components
 // ═══════════════════════════════════════════════════════
@@ -141,6 +145,77 @@ export const LoadingScreen: React.FC = () => (
 );
 
 // ═══════════════════════════════════════════════════════
+// Screw Interaction Toolbar
+// ═══════════════════════════════════════════════════════
+
+interface ScrewToolbarProps {
+  isMoveToolActive: boolean;
+  onToggleMoveTool: () => void;
+  hasScrews: boolean;
+  selectedScrew?: { label: string } | null;
+  modelCount?: number;
+  screwCount?: number;
+  onDebug?: () => void;
+}
+
+export const ScrewToolbar: React.FC<ScrewToolbarProps> = ({
+  isMoveToolActive,
+  onToggleMoveTool,
+  hasScrews,
+  selectedScrew,
+  modelCount = 0,
+  screwCount = 0,
+  onDebug,
+}) => (
+  <div className="space-y-2 border border-purple-600 rounded p-3 bg-purple-900 bg-opacity-20">
+    <div className="flex items-center justify-between">
+      <h3 className="font-bold text-white text-sm">🛠️ Screw Tools</h3>
+      <div className="flex items-center gap-2">
+        {selectedScrew && (
+          <span className="text-xs text-green-400">
+            Selected: {selectedScrew.label}
+          </span>
+        )}
+        <span className="text-xs text-gray-500">
+          Models: {modelCount} | Screws: {screwCount}
+        </span>
+        {onDebug && (
+          <button
+            onClick={onDebug}
+            className="px-1 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs"
+            title="Debug screw interaction"
+          >
+            🔍
+          </button>
+        )}
+      </div>
+    </div>
+
+    <div className="flex gap-2">
+      {/* Move Tool Toggle Button - Always enabled for testing */}
+      <button
+        onClick={onToggleMoveTool}
+        className={`flex-1 px-4 py-2 rounded font-bold text-sm transition flex items-center justify-center gap-2 ${
+          isMoveToolActive
+            ? 'bg-purple-600 text-white ring-2 ring-purple-400'
+            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+        }`}
+        title={isMoveToolActive ? 'Deactivate Move Tool' : 'Activate Move Tool - Click and drag screws on MPR'}
+      >
+        <span className="text-lg">✋</span>
+        <span>{isMoveToolActive ? 'Move Active' : 'Move Screw'}</span>
+      </button>
+    </div>
+
+    <p className="text-xs text-gray-400">
+      {isMoveToolActive
+        ? '✅ Click on a screw in MPR view, then drag to move it on the plane'
+        : `💡 Click to enable Move Tool (Screws: ${screwCount}, Models: ${modelCount})`}
+    </p>
+  </div>
+);
+
+// ═══════════════════════════════════════════════════════
 // Save Screw Section
 // ═══════════════════════════════════════════════════════
 
@@ -245,7 +320,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
   onView,
   onEdit,
   onDelete,
-  showEditButton = false, 
+  showEditButton = false,
 }) => {
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-700">
