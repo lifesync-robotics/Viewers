@@ -13,6 +13,7 @@ import {
   BaseTool,
   Enums as csToolsEnums,
   getToolGroup,
+  ToolGroupManager,
 } from '@cornerstonejs/tools';
 import {
   getRenderingEngine,
@@ -22,6 +23,7 @@ import {
 } from '@cornerstonejs/core';
 import type { ScrewPickResult } from '../components/CustomizedModels/modelStateService';
 import { planningBackendService } from '../services';
+import { vec3 } from 'gl-matrix';
 
 const { MouseBindings } = csToolsEnums;
 
@@ -235,33 +237,24 @@ class ScrewInteractionTool extends BaseTool {
     // Visual feedback - highlight screw
     this._highlightScrew(pickResult.modelId, true);
 
+    // Get the viewport ID where the click occurred (to exclude it from updates)
+    const clickedViewportId = this._getViewportId(element);
+
     // Update viewport cameras to align with screw orientation (like clicking "View")
-    // Use requestAnimationFrame to ensure update happens after event processing
-    requestAnimationFrame(() => {
-      this._updateViewportCamerasFromScrew(pickResult.modelId);
-    });
+    // METHOD A: Synchronous update - immediate and reliable
+    // IMPORTANT: Exclude the viewport where the click occurred to avoid disrupting the interaction
+    this._updateViewportCamerasFromScrew(pickResult.modelId, clickedViewportId);
 
     // Return true to indicate we handled the event
     return true;
   };
 
   /**
-   * Called on mouse down - additional callback after preMouseDownCallback
-   * This ensures viewport update happens even if preMouseDownCallback returns early
-   */
-  mouseDownCallback = (evt: any): void => {
-    // Only update viewport if we have a selected screw
-    if (this.state.selectedScrewId && this.state.isDragging) {
-      console.log('🎯 [ScrewInteractionTool] mouseDownCallback - updating viewport cameras');
-      // Use setTimeout to ensure this happens after all event processing
-      setTimeout(() => {
-        this._updateViewportCamerasFromScrew(this.state.selectedScrewId);
-      }, 0);
-    }
-  };
-
-  /**
    * Called on mouse drag - required by BaseTool
+   *
+   * IMPORTANT: This function does NOT update viewport cameras during drag.
+   * Viewport cameras are only updated on mouseDown (click) and mouseUp (release).
+   * This ensures smooth dragging without viewport jumping.
    */
   mouseDragCallback = (evt: any): void => {
     if (!this.state.isDragging || !this.state.selectedScrewId) {
@@ -284,6 +277,8 @@ class ScrewInteractionTool extends BaseTool {
     ];
 
     // Constrain movement to viewport plane
+    // NOTE: We use the viewportPlaneNormal from when drag started (stored in state)
+    // This ensures consistent dragging behavior and prevents viewport camera updates
     let constrainedDelta = worldDelta;
     if (this.state.viewportPlaneNormal && this.modelStateService.projectDeltaOntoPlane) {
       constrainedDelta = this.modelStateService.projectDeltaOntoPlane(
@@ -314,6 +309,7 @@ class ScrewInteractionTool extends BaseTool {
     }
 
     // Apply transformation based on interaction mode
+    // NOTE: Only updates the screw model transform, does NOT update viewport cameras
     if (this.state.interactionMode === 'rotate') {
       // Rotate the screw around its origin
       if (this.modelStateService.rotateScrew && this.state.viewportPlaneNormal) {
@@ -329,6 +325,9 @@ class ScrewInteractionTool extends BaseTool {
         this.modelStateService.translateScrew(this.state.selectedScrewId, constrainedDelta);
       }
     }
+
+    // NOTE: Viewport cameras are NOT updated here during drag.
+    // They are only updated on mouseDown (click) and mouseUp (release).
   };
 
   private _dragLogCounter: number = 0;
@@ -552,8 +551,11 @@ class ScrewInteractionTool extends BaseTool {
    * Update viewport cameras to align with screw orientation
    * Called when clicking on a screw (mouse down) and when releasing (mouse up)
    * Similar to clicking the "View" button in ScrewManagementPanel
+   *
+   * @param modelId - Screw model ID
+   * @param excludeViewportId - Optional viewport ID to exclude from updates (e.g., the viewport where user clicked)
    */
-  private _updateViewportCamerasFromScrew(modelId: string): void {
+  private _updateViewportCamerasFromScrew(modelId: string, excludeViewportId?: string): void {
     if (!modelId || !this.modelStateService) {
       console.warn('⚠️ [ScrewInteractionTool] Cannot update viewport cameras - missing modelId or modelStateService');
       return;
@@ -613,6 +615,12 @@ class ScrewInteractionTool extends BaseTool {
       // Update each MPR viewport camera
       for (const viewport of viewports) {
         try {
+          // Skip the viewport where user clicked (if specified)
+          if (excludeViewportId && viewport.id === excludeViewportId) {
+            console.log(`⏭️ [${viewport.id}] Skipping viewport update - user clicked on this viewport`);
+            continue;
+          }
+
           const viewportId = viewport.id.toLowerCase();
           const camera = viewport.getCamera();
           const { position: cameraPosition } = camera;
@@ -633,13 +641,23 @@ class ScrewInteractionTool extends BaseTool {
           // Set viewPlaneNormal based on viewport type
           if (viewportId.includes('axial')) {
             newViewPlaneNormal = axialNormal;
+            console.log(`📐 [${viewport.id}] Setting axial viewPlaneNormal: [${newViewPlaneNormal.map(v => v.toFixed(3)).join(', ')}]`);
           } else if (viewportId.includes('sagittal')) {
             newViewPlaneNormal = sagittalNormal;
+            console.log(`📐 [${viewport.id}] Setting sagittal viewPlaneNormal: [${newViewPlaneNormal.map(v => v.toFixed(3)).join(', ')}]`);
           } else if (viewportId.includes('coronal')) {
             newViewPlaneNormal = coronalNormal;
+            console.log(`📐 [${viewport.id}] Setting coronal viewPlaneNormal: [${newViewPlaneNormal.map(v => v.toFixed(3)).join(', ')}]`);
           }
 
           if (newViewPlaneNormal) {
+            // Ensure viewUp is orthogonal to viewPlaneNormal (Gram-Schmidt orthogonalization)
+            // This is critical for proper camera orientation
+            const dot = vec3.dot(originalViewUp, newViewPlaneNormal);
+            const projection = vec3.scale(vec3.create(), newViewPlaneNormal, dot);
+            const orthogonalViewUp = vec3.subtract(vec3.create(), originalViewUp, projection);
+            vec3.normalize(orthogonalViewUp, orthogonalViewUp);
+
             // Calculate new camera position
             const newPosition = vec3.add(
               vec3.create(),
@@ -647,13 +665,24 @@ class ScrewInteractionTool extends BaseTool {
               vec3.scale(vec3.create(), newViewPlaneNormal, distance)
             ) as [number, number, number];
 
-            // Update camera - keep original viewUp to maintain DICOM series orientation
+            console.log(`📷 [${viewport.id}] Camera update:`);
+            console.log(`   focalPoint: [${screwPosition.map(v => v.toFixed(2)).join(', ')}]`);
+            console.log(`   position: [${newPosition.map(v => v.toFixed(2)).join(', ')}]`);
+            console.log(`   viewPlaneNormal: [${newViewPlaneNormal.map(v => v.toFixed(3)).join(', ')}]`);
+            console.log(`   viewUp (original): [${originalViewUp.map(v => v.toFixed(3)).join(', ')}]`);
+            console.log(`   viewUp (orthogonal): [${orthogonalViewUp.map(v => v.toFixed(3)).join(', ')}]`);
+
+            // Update camera with orthogonal viewUp
             viewport.setCamera({
               focalPoint: screwPosition,
               position: newPosition,
               viewPlaneNormal: newViewPlaneNormal,
-              viewUp: originalViewUp,
+              viewUp: [orthogonalViewUp[0], orthogonalViewUp[1], orthogonalViewUp[2]],
             });
+
+            // Verify the update
+            const updatedCamera = viewport.getCamera();
+            console.log(`   ✓ Camera updated - viewPlaneNormal: [${updatedCamera.viewPlaneNormal.map(v => v.toFixed(3)).join(', ')}]`);
 
             viewport.render();
             console.log(`✅ Updated camera for ${viewport.id}`);
@@ -663,10 +692,38 @@ class ScrewInteractionTool extends BaseTool {
         }
       }
 
-      // Force rendering engine to render all viewports (renderingEngine already declared above)
+      // STEP 2: Update crosshairs position to match screw position (like "View" button)
+      // This ensures crosshairs align with the screw center
+      let crosshairsUpdated = false;
+      for (const viewport of viewports) {
+        try {
+          const toolGroup = ToolGroupManager.getToolGroupForViewport(
+            viewport.id,
+            renderingEngine.id
+          );
+
+          if (!toolGroup) continue;
+
+          const crosshairsTool = toolGroup.getToolInstance('Crosshairs');
+
+          if (crosshairsTool && typeof crosshairsTool.setToolCenter === 'function') {
+            // Use the tool's API to properly move crosshairs
+            // Second parameter (false) means don't trigger an event
+            crosshairsTool.setToolCenter(screwPosition, false);
+            crosshairsUpdated = true;
+            console.log(`✅ [ScrewInteractionTool] Crosshairs setToolCenter called`);
+            break; // Only need to call once, crosshairs are shared
+          }
+        } catch (e) {
+          console.debug(`⚠️ Could not use setToolCenter in viewport ${viewport.id}:`, e);
+        }
+      }
+
+      // STEP 3: Force rendering engine to render all viewports
       if (renderingEngine) {
         renderingEngine.renderViewports(renderingEngine.getViewportIds());
         console.log('✅ Forced rendering engine to render all viewports');
+        console.log(`✅ [ScrewInteractionTool] Viewport update completed - camera: ✓, crosshairs: ${crosshairsUpdated ? '✓' : '✗'}`);
       }
     } catch (error) {
       console.error('❌ Error updating viewport cameras from screw:', error);
