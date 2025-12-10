@@ -5,6 +5,7 @@ import vtkCutter from '@kitware/vtk.js/Filters/Core/Cutter';
 import vtkMapper from '@kitware/vtk.js/Rendering/Core/Mapper';
 import vtkActor from '@kitware/vtk.js/Rendering/Core/Actor';
 import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
+import { crosshairsHandler } from '../../utils/crosshairsHandler';
 // Note: Plane cutters now use camera.focalPoint directly instead of crosshairs center
 // This ensures proper synchronization when scrolling MPR slices
 
@@ -552,13 +553,15 @@ class PlaneCutterService extends PubSubService {
         return;
       }
 
+      let planeOrigin: [number, number, number] | undefined;
+
       // Use provided crosshair center; if absent, fetch from handler; fallback to legacy imageData only if unavailable
       if (crosshairCenter) {
         planeOrigin = crosshairCenter;
       } else {
         const handlerCenter = crosshairsHandler.getCrosshairCenter?.();
         if (handlerCenter && Array.isArray(handlerCenter) && handlerCenter.length === 3) {
-          planeOrigin = handlerCenter;
+          planeOrigin = [handlerCenter[0], handlerCenter[1], handlerCenter[2]];
         } else {
           // Legacy fallback: derive from imageData if crosshair center unavailable
           try {
@@ -599,11 +602,12 @@ class PlaneCutterService extends PubSubService {
             return;
           }
         }
+      }
 
-      // Use camera focalPoint directly as the plane origin
-      // This is the correct approach - the cutting plane should be at the camera's focal point
-      // which corresponds to the current slice being viewed
-      const planeOrigin = [focalPoint[0], focalPoint[1], focalPoint[2]];
+      // Fallback: use camera focalPoint directly as the plane origin
+      if (!planeOrigin) {
+        planeOrigin = [focalPoint[0], focalPoint[1], focalPoint[2]];
+      }
 
       // Update plane origin and normal
       planeCutter.plane.setOrigin(planeOrigin[0], planeOrigin[1], planeOrigin[2]);
