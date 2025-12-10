@@ -144,8 +144,7 @@ function PanelTracking() {
   
   // Dictionary: tool_id → InstrumentModel3D (for 3D model tracking)
   const instrumentModelsRef = React.useRef<Map<string, InstrumentModel3D>>(new Map());
-  const [wsConnected, setWsConnected] = React.useState(false);
-  const [coordinateSystem, setCoordinateSystem] = React.useState<'tracker' | 'patient_reference'>('patient_reference');
+  const coordinateSystem: 'tracker' | 'patient_reference' = 'patient_reference';
   const [alerts, setAlerts] = React.useState<Array<{id: string; message: string; severity: string; timestamp: string}>>([]);
 
   // Navigation state
@@ -154,19 +153,9 @@ function PanelTracking() {
   // Selected tracking mode for navigation (simulation or hardware)
   const [selectedMode, setSelectedMode] = React.useState<'simulation' | 'hardware'>('simulation');
 
-  // Orientation tracking (6-DOF vs 3-DOF)
-  const [enableOrientation, setEnableOrientation] = React.useState<boolean>(true);
-
-  // Navigation mode (camera-follow vs instrument-projection)
-  const [navigationMode, setNavigationMode] = React.useState<'camera-follow' | 'instrument-projection'>(() => {
-    // Load from localStorage or default
-    const saved = localStorage.getItem('lifesync_navigation_mode');
-    return (saved === 'instrument-projection' ? 'instrument-projection' : 'camera-follow');
-  });
-  const [actualNavigationMode, setActualNavigationMode] = React.useState<string | null>(null);
-
-  // Extension length for instrument projection mode
-  const [extensionLength, setExtensionLength] = React.useState(50); // Default 50mm (5cm)
+  // Navigation mode is fixed to instrument projection for instrument tracking
+  const navigationMode: 'instrument-projection' = 'instrument-projection';
+  const enableOrientation: boolean = true;
 
   // Selected tool for visualization
   const [selectedToolId, setSelectedToolId] = React.useState<string | null>(null);
@@ -217,55 +206,18 @@ function PanelTracking() {
   const [matricesExpanded, setMatricesExpanded] = React.useState(false);
   const [matricesApplied, setMatricesApplied] = React.useState(true); // Mark as applied since it's hardcoded in service
   
-  // Debug panel state
-  const [debugExpanded, setDebugExpanded] = React.useState(false);
-  const [debugData, setDebugData] = React.useState<{
-    prRelativeMatrix?: number[][];
-    rMatrix?: number[][];
-    dicomMatrix?: number[][];
-    rToDicomMatrix?: number[][];
-    prRelativeMatrix_marker?: number[][];
-    prRelativeMatrix_tooltip?: number[][];
-    currentPrToDicom?: number[][];
-    currentMarkerToTooltip?: number[][];
-  } | null>(null);
-
   // Initialize NavigationController early so mode switching works even when navigation is not started
   React.useEffect(() => {
     const initNavigationController = async () => {
-      if (!window.__navigationController && servicesManager) {
-        try {
-          console.log('🔧 [TrackingPanel] Initializing NavigationController for mode switching...');
+      if (!servicesManager) return;
+      try {
+        if (!window.__navigationController) {
           const { default: NavigationController } = await import('../../utils/navigationController');
           window.__navigationController = new NavigationController(servicesManager);
-
-          // Set the mode that was saved
-          const savedMode = localStorage.getItem('lifesync_navigation_mode') as 'camera-follow' | 'instrument-projection' | null;
-          if (savedMode) {
-            window.__navigationController.setNavigationMode(savedMode);
-            setActualNavigationMode(savedMode);
-          } else {
-            setActualNavigationMode(window.__navigationController.getNavigationMode());
-          }
-
-          // Load extension length if instrument projection mode is active
-          const currentMode = window.__navigationController.getNavigationMode();
-          if (currentMode === 'instrument-projection') {
-            const modeInstance = window.__navigationController.getInstrumentProjectionMode();
-            if (modeInstance) {
-              const currentLength = modeInstance.getExtensionLength();
-              setExtensionLength(currentLength);
-            }
-          }
-
-          console.log('✅ [TrackingPanel] NavigationController initialized');
-        } catch (error) {
-          console.error('❌ [TrackingPanel] Failed to initialize NavigationController:', error);
         }
-      } else if (window.__navigationController) {
-        // Already exists, just sync the mode
-        const currentMode = window.__navigationController.getNavigationMode();
-        setActualNavigationMode(currentMode);
+        window.__navigationController.setNavigationMode('instrument-projection');
+      } catch (error) {
+        console.error('❌ [TrackingPanel] Failed to initialize NavigationController:', error);
       }
     };
 
@@ -276,10 +228,6 @@ function PanelTracking() {
   const [configDialogOpen, setConfigDialogOpen] = React.useState(false);
   const [currentTrackingConfig, setCurrentTrackingConfig] = React.useState<any>(null);
 
-  // Update rate tracking (Hz)
-  const [updateHz, setUpdateHz] = React.useState<number>(0);
-  const frameTimestampsRef = React.useRef<number[]>([]);
-  
   // 📍 [PR-DEBUG] Time-based PR logging
   const lastPrDebugLogRef = React.useRef<number>(0);
   const prDebugInterval = 5000; // 5 seconds
@@ -437,26 +385,9 @@ function PanelTracking() {
   React.useEffect(() => {
     if (trackingService) {
       trackingService.setCoordinateSystem(coordinateSystem);
-      console.log(`🧭 TrackingPanel: Coordinate system changed to ${coordinateSystem}`);
+      console.log(`🧭 TrackingPanel: Coordinate system set to ${coordinateSystem}`);
     }
-  }, [coordinateSystem, trackingService]);
-
-  // Auto-refresh debug data when debug panel is expanded
-  React.useEffect(() => {
-    if (!debugExpanded || !trackingService || !trackingFrame) return;
-
-    // Refresh debug data every 2 seconds
-    const interval = setInterval(() => {
-      const debug = trackingService.getTransformDebugInfo();
-      setDebugData(debug);
-    }, 2000);
-
-    // Initial refresh
-    const debug = trackingService.getTransformDebugInfo();
-    setDebugData(debug);
-
-    return () => clearInterval(interval);
-  }, [debugExpanded, trackingService, trackingFrame]);
+  }, [trackingService]);
 
   // Load tracking configuration
   const loadConfig = React.useCallback(async () => {
@@ -575,9 +506,6 @@ function PanelTracking() {
       // Clear UI data buffers before starting navigation
       console.log('  - Clearing UI data buffers');
       setTrackingFrame(null);
-      setUpdateHz(0);
-      frameTimestampsRef.current = [];
-      setWsConnected(false);
 
       // TrackingService.connect() will now automatically:
       // 1. Check if tracking is already active
@@ -603,7 +531,6 @@ function PanelTracking() {
       setTimeout(() => {
         if (window.__navigationController) {
           const actualMode = window.__navigationController.getNavigationMode();
-          setActualNavigationMode(actualMode);
           console.log('✅ Navigation started successfully');
           console.log(`   Requested mode: ${navigationMode}`);
           console.log(`   Actual mode: ${actualMode}`);
@@ -628,9 +555,6 @@ function PanelTracking() {
         // Clear UI data buffers when stopping navigation
         console.log('  - Clearing UI data buffers on stop');
         setTrackingFrame(null);
-        setUpdateHz(0);
-        frameTimestampsRef.current = [];
-        setWsConnected(false);
 
         // Remove all instrument 3D models
         const modelStateService = (servicesManager?.services as any)?.modelStateService;
@@ -719,32 +643,10 @@ function PanelTracking() {
 
     console.log('📡 TrackingPanel: Subscribing to TrackingService events');
 
-    // Subscribe to connection status
-    const connectionSub = trackingService.subscribe(
-      'event::connection_status',
-      (data) => {
-        console.log('📡 TrackingPanel: Connection status:', data.connected);
-        setWsConnected(data.connected);
-      }
-    );
-
     // Subscribe to tracking updates
     const trackingSub = trackingService.subscribe(
       'event::tracking_update',
       async (data) => {
-        // Calculate update Hz
-        const now = Date.now();
-        frameTimestampsRef.current.push(now);
-
-        // Keep only last 2 seconds of timestamps
-        const twoSecondsAgo = now - 2000;
-        frameTimestampsRef.current = frameTimestampsRef.current.filter(t => t > twoSecondsAgo);
-
-        // Calculate Hz (frames in last 2 seconds / 2)
-        if (frameTimestampsRef.current.length > 1) {
-          const hz = frameTimestampsRef.current.length / 2;
-          setUpdateHz(Math.round(hz * 10) / 10); // Round to 1 decimal
-        }
         // this is an advanced feature, we will add it later, NOT USED FOR NOW
         // // Auto-load 3D models for newly visible tools (non-blocking)
         // if (data.tools) {
@@ -885,17 +787,16 @@ function PanelTracking() {
           console.log('📊 TrackingPanel: Tracking data received:', {
             frame: data.frame_number,
             tools: Object.keys(data.tools || {}),
-            hz: updateHz
+            hz: 'pr-relative'
           });
         }
       }
     );
 
     return () => {
-      connectionSub?.unsubscribe();
       trackingSub?.unsubscribe();
     };
-  }, [trackingService, updateHz]);
+  }, [trackingService]);
 
   // Auto-register loaded 3D models that match tracking tool IDs
   React.useEffect(() => {
@@ -941,33 +842,37 @@ function PanelTracking() {
     loadConfig();
   }, [loadConfig]);
 
-  // Sync with NavigationController to show actual active mode
-  React.useEffect(() => {
-    const updateActualMode = () => {
-      if (window.__navigationController) {
-        const currentMode = window.__navigationController.getNavigationMode();
-        setActualNavigationMode(currentMode);
+  const primaryButtonLabel = !currentTrackingConfig
+    ? 'Select Configuration'
+    : isNavigating
+      ? 'Stop Navigation'
+      : 'Start Navigation';
 
-        // Also sync UI selection if different
-        if (currentMode && currentMode !== navigationMode) {
-          setNavigationMode(currentMode as 'camera-follow' | 'instrument-projection');
-        }
-      }
-    };
+  const primaryButtonAction = () => {
+    if (!currentTrackingConfig) {
+      handleOpenConfigDialog();
+      return;
+    }
+    if (isNavigating) {
+      handleStopNavigation();
+      return;
+    }
+    handleStartNavigation();
+  };
 
-    // Check immediately
-    updateActualMode();
+  const primaryButtonDisabled =
+    (!!currentTrackingConfig && !isNavigating && (!trackingService || !commandsManager));
 
-    // Check periodically (every 2 seconds)
-    const interval = setInterval(updateActualMode, 2000);
-
-    return () => clearInterval(interval);
-  }, [navigationMode]);
+  const primaryButtonClass = !currentTrackingConfig
+    ? 'bg-blue-600 hover:bg-blue-700'
+    : isNavigating
+      ? 'bg-red-600 hover:bg-red-700'
+      : 'bg-green-600 hover:bg-green-700';
 
   return (
     <div className="h-full overflow-hidden bg-black p-4">
       <div className="h-full overflow-auto">
-        <h2 className="text-2xl font-bold text-white mb-4">Tracking Control</h2>
+        <h2 className="text-2xl font-bold text-white mb-4">Navigation Control</h2>
 
         {error && (
           <div className="mb-4 p-3 bg-red-900 border border-red-700 rounded text-red-200">
@@ -1036,17 +941,18 @@ function PanelTracking() {
         {trackingFrame && trackingFrame.patient_reference && (
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-white mb-3">Patient Reference</h3>
-            <div className={`p-4 rounded border ${
+            <div className={`p-3 rounded border ${
               !trackingFrame.patient_reference.visible
                 ? 'bg-red-900 border-red-700'
                 : trackingFrame.patient_reference.moved
                 ? 'bg-yellow-900 border-yellow-700'
                 : 'bg-green-900 border-green-700'
             }`}>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-white font-mono text-lg font-bold">
-                    📍 {trackingFrame.patient_reference.id?.toUpperCase() || 'PR'}
+                  <div className="flex items-center gap-2 text-white font-mono text-lg font-bold">
+                    <span>{trackingFrame.patient_reference.visible ? '🟢' : '🔴'}</span>
+                    <span>{trackingFrame.patient_reference.id?.toUpperCase() || 'PR'}</span>
                   </div>
                   {trackingFrame.patient_reference.name && (
                     <div className="text-xs text-gray-400 mt-1">
@@ -1054,40 +960,12 @@ function PanelTracking() {
                     </div>
                   )}
                 </div>
-                <div className={`text-sm font-medium ${
-                  trackingFrame.patient_reference.visible ? 'text-green-300' : 'text-red-300'
-                }`}>
-                  {trackingFrame.patient_reference.visible ? '● Visible' : '● Not Visible'}
+                <div className="text-right text-xs text-gray-200 space-y-1 font-mono">
+                  <div>Quality: {(trackingFrame.patient_reference.quality * 100).toFixed(0)}%</div>
+                  <div className={trackingFrame.patient_reference.moved ? 'text-yellow-200 font-semibold' : ''}>
+                    Move: {trackingFrame.patient_reference.movement_mm.toFixed(2)} mm {trackingFrame.patient_reference.moved ? '⚠️' : ''}
+                  </div>
                 </div>
-              </div>
-
-              {/* Quality Bar */}
-              <div className="mb-2">
-                <div className="flex justify-between text-xs text-gray-300 mb-1">
-                  <span>Quality</span>
-                  <span>{(trackingFrame.patient_reference.quality * 100).toFixed(0)}%</span>
-                </div>
-                <div className="w-full bg-gray-700 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full transition-all ${
-                      trackingFrame.patient_reference.quality > 0.8
-                        ? 'bg-green-500'
-                        : trackingFrame.patient_reference.quality > 0.5
-                        ? 'bg-yellow-500'
-                        : 'bg-red-500'
-                    }`}
-                    style={{ width: `${trackingFrame.patient_reference.quality * 100}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Movement Status */}
-              <div className="flex justify-between text-xs text-gray-300">
-                <span>Movement</span>
-                <span className={trackingFrame.patient_reference.moved ? 'text-red-300 font-bold' : ''}>
-                  {trackingFrame.patient_reference.movement_mm.toFixed(2)} mm
-                  {trackingFrame.patient_reference.moved && ' ⚠️ MOVED!'}
-                </span>
               </div>
             </div>
           </div>
@@ -1266,174 +1144,11 @@ function PanelTracking() {
           )}
         </div>
 
-        {/* Transformation Debug Panel */}
-        {trackingFrame && (
-          <div className="mb-6">
-            <div
-              className="flex items-center justify-between mb-3 cursor-pointer p-2 rounded hover:bg-gray-800 transition-colors"
-              onClick={() => setDebugExpanded(!debugExpanded)}
-            >
-              <h3 className="text-lg font-semibold text-white">🐛 Transformation Debug</h3>
-              <span className="text-gray-400 text-sm">{debugExpanded ? '▼' : '▶'}</span>
-            </div>
-
-            {debugExpanded && (
-              <div className="p-4 bg-gray-900 border border-gray-700 rounded space-y-4">
-                <div className="text-xs text-gray-400 mb-3">
-                  Pipeline: Marker Array (PR-relative) → Tooltip (PR-relative) → DICOM Space
-                </div>
-
-                <button
-                  onClick={() => {
-                    if (trackingService) {
-                      const debug = trackingService.getTransformDebugInfo();
-                      setDebugData(debug);
-                      console.log('🐛 Debug Info:', debug);
-                    }
-                  }}
-                  disabled={!trackingService}
-                  className="w-full py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
-                >
-                  Refresh Debug Data
-                </button>
-
-                {debugData && (
-                  <div className="space-y-3 text-xs">
-                    {/* Configuration Matrices */}
-                    <div className="p-3 bg-gray-800 rounded">
-                      <div className="font-semibold text-blue-400 mb-2">Transformation Matrices (Configuration)</div>
-                      
-                      <div className="mb-3">
-                        <div className="text-gray-400 mb-1">PR to DICOM (Registration):</div>
-                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
-                          {debugData.currentPrToDicom?.map((row, i) => (
-                            <div key={i}>
-                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-gray-400 mb-1">Marker to Tooltip (Calibration):</div>
-                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
-                          {debugData.currentMarkerToTooltip?.map((row, i) => (
-                            <div key={i}>
-                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
-                            </div>
-                          ))}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          📏 Tooltip offset: ~157.8mm from marker array
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Step 1: Marker Array Position (PR-relative) */}
-                    {debugData.prRelativeMatrix_marker && (
-                      <div className="p-3 bg-gray-800 rounded">
-                        <div className="font-semibold text-green-400 mb-2">
-                          Step 1: Marker Array Position (PR-relative)
-                        </div>
-                        <div className="text-xs text-gray-400 mb-1">
-                          Input from NDI tracking system
-                        </div>
-                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
-                          {debugData.prRelativeMatrix_marker.map((row, i) => (
-                            <div key={i}>
-                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
-                            </div>
-                          ))}
-                        </div>
-                        <div className="text-gray-400 mt-2">
-                          Marker Position: [{debugData.prRelativeMatrix_marker[0][3].toFixed(2)}, {debugData.prRelativeMatrix_marker[1][3].toFixed(2)}, {debugData.prRelativeMatrix_marker[2][3].toFixed(2)}] mm
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Step 2: Tooltip Position (PR-relative) */}
-                    {debugData.prRelativeMatrix_tooltip && (
-                      <div className="p-3 bg-gray-800 rounded">
-                        <div className="font-semibold text-orange-400 mb-2">
-                          Step 2: Tooltip Position (PR-relative)
-                        </div>
-                        <div className="text-xs text-gray-400 mb-1">
-                          = markerMatrix × markerToTooltipMatrix
-                        </div>
-                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
-                          {debugData.prRelativeMatrix_tooltip.map((row, i) => (
-                            <div key={i}>
-                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
-                            </div>
-                          ))}
-                        </div>
-                        <div className="text-gray-400 mt-2">
-                          Tooltip Position: [{debugData.prRelativeMatrix_tooltip[0][3].toFixed(2)}, {debugData.prRelativeMatrix_tooltip[1][3].toFixed(2)}, {debugData.prRelativeMatrix_tooltip[2][3].toFixed(2)}] mm
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Step 3: Tooltip Position (DICOM Space) */}
-                    {debugData.dicomMatrix && (
-                      <div className="p-3 bg-gray-800 rounded">
-                        <div className="font-semibold text-red-400 mb-2">
-                          Step 3: Tooltip Position (DICOM Space)
-                        </div>
-                        <div className="text-xs text-gray-400 mb-1">
-                          = prToDicomMatrix × tooltipMatrix_PR
-                        </div>
-                        <div className="font-mono text-gray-300 bg-black p-2 rounded overflow-x-auto">
-                          {debugData.dicomMatrix.map((row, i) => (
-                            <div key={i}>
-                              [{row.map(val => val.toFixed(3).padStart(8)).join(', ')}]
-                            </div>
-                          ))}
-                        </div>
-                        <div className="text-gray-400 mt-2">
-                          Final Tooltip Position: [{debugData.dicomMatrix[0][3].toFixed(2)}, {debugData.dicomMatrix[1][3].toFixed(2)}, {debugData.dicomMatrix[2][3].toFixed(2)}] mm
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {!debugData && (
-                  <div className="text-center text-gray-400 text-sm py-4">
-                    Click "Refresh Debug Data" to see transformation steps
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Phase 4: Real-time Tool Tracking */}
         {trackingFrame && trackingFrame.tools && Object.keys(trackingFrame.tools).length > 0 && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-white">Tool Coordinates</h3>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setCoordinateSystem('patient_reference')}
-                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                    coordinateSystem === 'patient_reference'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
-                >
-                  PR-Relative
-                </button>
-                <button
-                  onClick={() => setCoordinateSystem('tracker')}
-                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                    coordinateSystem === 'tracker'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
-                >
-                  Tracker
-                </button>
-              </div>
             </div>
 
             <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -1535,338 +1250,23 @@ function PanelTracking() {
               })}
             </div>
 
-            <div className="mt-2 p-2 bg-gray-900 border border-gray-700 rounded">
-              <div className="text-xs text-gray-400 text-center font-mono">
-                📡 TRACKING FRAME {trackingFrame.frame_number} - {Object.keys(trackingFrame.tools).filter(id => !trackingFrame.tools[id].is_patient_reference).length} handles detected
-              </div>
-              <div className="text-xs text-center mt-1">
-                {wsConnected ? '🟢 Live' : '🔴 Disconnected'}
-              </div>
-            </div>
           </div>
         )}
 
         {/* Mode Selection - REMOVED: Now controlled by configuration only */}
 
-        {/* Navigation Controls */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-white mb-3">🧭 Navigation Control</h3>
-
-          {/* Tracking Mode - DISABLED: Now controlled by loaded configuration */}
-
-          {/* Navigation Mode Selection */}
-          <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm text-gray-300 font-medium">Navigation Mode</div>
-              {actualNavigationMode && (
-                <div className={`text-xs px-2 py-1 rounded font-medium ${
-                  actualNavigationMode === 'instrument-projection'
-                    ? 'bg-green-900 text-green-300'
-                    : 'bg-blue-900 text-blue-300'
-                }`}>
-                  {actualNavigationMode === 'instrument-projection' ? '🎯 Active' : '📹 Active'}
-                </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <label className={`flex items-center space-x-2 cursor-pointer p-2 rounded hover:bg-gray-700 ${
-                actualNavigationMode === 'camera-follow' ? 'bg-gray-700' : ''
-              }`}>
-                <input
-                  type="radio"
-                  name="navigationMode"
-                  value="camera-follow"
-                  checked={navigationMode === 'camera-follow'}
-                  onChange={(e) => {
-                    const newMode = e.target.value as 'camera-follow';
-                    setNavigationMode(newMode);
-                    console.log(`🔄 [TrackingPanel] Setting navigation mode to: ${newMode}`);
-
-                    // Ensure NavigationController exists
-                    const ensureController = async () => {
-                      if (!window.__navigationController && servicesManager) {
-                        try {
-                          const { default: NavigationController } = await import('../../utils/navigationController');
-                          window.__navigationController = new NavigationController(servicesManager);
-                          console.log('   ✅ NavigationController created for mode switching');
-                        } catch (error) {
-                          console.error('   ❌ Failed to create NavigationController:', error);
-                          return;
-                        }
-                      }
-
-                      // Now switch mode
-                      if (window.__navigationController) {
-                        console.log(`   Switching mode now...`);
-                        window.__navigationController.setNavigationMode(newMode);
-                        // Update actual mode immediately
-                        setTimeout(() => {
-                          const currentMode = window.__navigationController?.getNavigationMode();
-                          setActualNavigationMode(currentMode || null);
-                          console.log(`   ✅ Mode switched to: ${currentMode}`);
-
-                          // Update extension length if switching to instrument projection mode
-                          if (currentMode === 'instrument-projection') {
-                            const modeInstance = window.__navigationController?.getInstrumentProjectionMode();
-                            if (modeInstance) {
-                              const currentLength = modeInstance.getExtensionLength();
-                              setExtensionLength(currentLength);
-                            }
-                          }
-
-                          if (currentMode !== newMode) {
-                            console.error(`   ⚠️ Mode mismatch! Requested ${newMode} but got ${currentMode}`);
-                          }
-                        }, 100);
-                      } else {
-                        console.error('   ❌ NavigationController not available');
-                      }
-                    };
-
-                    ensureController();
-                  }}
-                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
-                />
-                <div className="flex-1">
-                  <span className="text-sm text-gray-300">📹 Camera Follow</span>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Viewport camera follows tool movement and rotation
-                  </div>
-                </div>
-              </label>
-              <label className={`flex items-center space-x-2 cursor-pointer p-2 rounded hover:bg-gray-700 ${
-                actualNavigationMode === 'instrument-projection' ? 'bg-gray-700' : ''
-              }`}>
-                <input
-                  type="radio"
-                  name="navigationMode"
-                  value="instrument-projection"
-                  checked={navigationMode === 'instrument-projection'}
-                  onChange={(e) => {
-                    const newMode = e.target.value as 'instrument-projection';
-                    setNavigationMode(newMode);
-                    console.log(`🔄 [TrackingPanel] Setting navigation mode to: ${newMode}`);
-
-                    // Ensure NavigationController exists
-                    const ensureController = async () => {
-                      if (!window.__navigationController && servicesManager) {
-                        try {
-                          const { default: NavigationController } = await import('../../utils/navigationController');
-                          window.__navigationController = new NavigationController(servicesManager);
-                          console.log('   ✅ NavigationController created for mode switching');
-                        } catch (error) {
-                          console.error('   ❌ Failed to create NavigationController:', error);
-                          return;
-                        }
-                      }
-
-                      // Now switch mode
-                      if (window.__navigationController) {
-                        console.log(`   Switching mode now...`);
-                        window.__navigationController.setNavigationMode(newMode);
-                        // Update actual mode immediately
-                        setTimeout(() => {
-                          const currentMode = window.__navigationController?.getNavigationMode();
-                          setActualNavigationMode(currentMode || null);
-                          console.log(`   ✅ Mode switched to: ${currentMode}`);
-
-                          // Update extension length if switching to instrument projection mode
-                          if (currentMode === 'instrument-projection') {
-                            const modeInstance = window.__navigationController?.getInstrumentProjectionMode();
-                            if (modeInstance) {
-                              const currentLength = modeInstance.getExtensionLength();
-                              setExtensionLength(currentLength);
-                            }
-                          }
-
-                          if (currentMode !== newMode) {
-                            console.error(`   ⚠️ Mode mismatch! Requested ${newMode} but got ${currentMode}`);
-                          }
-                        }, 100);
-                      } else {
-                        console.error('   ❌ NavigationController not available');
-                      }
-                    };
-
-                    ensureController();
-                  }}
-                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
-                />
-                <div className="flex-1">
-                  <span className="text-sm text-gray-300">🎯 Instrument Projection</span>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Tool projected on viewport - camera free to move
-                  </div>
-                </div>
-              </label>
-            </div>
-            {isNavigating && (
-              <div className="text-xs text-green-400 mt-2">
-                ✅ Mode can be changed during navigation
-              </div>
-            )}
-            {actualNavigationMode && (
-              <div className="text-xs text-blue-400 mt-2 font-mono">
-                Current: {actualNavigationMode} {actualNavigationMode === navigationMode ? '✓' : '⚠️ Mismatch!'}
-              </div>
-            )}
-          </div>
-
-          {/* Extension Length Control - Only for Instrument Projection mode */}
-          {actualNavigationMode === 'instrument-projection' && (
-            <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
-              <div className="text-sm text-gray-300 mb-2 font-medium">Extension Length</div>
-              <div className="text-xs text-gray-500 mb-3">
-                Set the length of the extension line for active tools (projection part)
-              </div>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min="10"
-                  max="500"
-                  step="5"
-                  value={extensionLength}
-                  onChange={(e) => {
-                    const value = Number(e.target.value);
-                    setExtensionLength(value);
-                    if ((window as any).__navigationController) {
-                      const modeInstance = (window as any).__navigationController.getInstrumentProjectionMode();
-                      if (modeInstance) {
-                        modeInstance.setExtensionLength(value);
-                        console.log(`📏 Extension length set to: ${value}mm (${value / 10}cm)`);
-                      }
-                    }
-                  }}
-                  className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                />
-                <input
-                  type="number"
-                  min="10"
-                  max="500"
-                  step="5"
-                  value={extensionLength}
-                  onChange={(e) => {
-                    const value = Number(e.target.value);
-                    if (value >= 10 && value <= 500) {
-                      setExtensionLength(value);
-                      if ((window as any).__navigationController) {
-                        const modeInstance = (window as any).__navigationController.getInstrumentProjectionMode();
-                        if (modeInstance) {
-                          modeInstance.setExtensionLength(value);
-                          console.log(`📏 Extension length set to: ${value}mm (${value / 10}cm)`);
-                        }
-                      }
-                    }
-                  }}
-                  className="w-20 px-2 py-1 text-sm text-white bg-gray-700 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
-                />
-                <span className="text-sm text-gray-400 w-12 text-right">
-                  {extensionLength / 10}cm
-                </span>
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Range: 10mm - 500mm (1cm - 50cm)
-              </div>
-            </div>
-          )}
-
-          {/* Orientation Tracking (6-DOF) - Only for Camera Follow mode */}
-          {navigationMode === 'camera-follow' && (
-            <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
-              <div className="text-sm text-gray-300 mb-2 font-medium">Degrees of Freedom</div>
-              <label className={`flex items-center space-x-2 cursor-pointer ${isNavigating ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                <input
-                  type="checkbox"
-                  checked={enableOrientation}
-                  onChange={(e) => setEnableOrientation(e.target.checked)}
-                  disabled={isNavigating}
-                  className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                />
-                <span className="text-sm text-gray-300">
-                  🔄 Enable Orientation Tracking (6-DOF)
-                </span>
-              </label>
-              <div className="text-xs text-gray-500 mt-2">
-                {enableOrientation ? (
-                  <div className="text-green-400">
-                    ✅ 6-DOF: Position + Orientation (MPR views will rotate with tool)
-                  </div>
-                ) : (
-                  <div className="text-blue-400">
-                    📍 3-DOF: Position only (MPR views will pan only)
-                  </div>
-                )}
-              </div>
-              {isNavigating && (
-                <div className="text-xs text-yellow-400 mt-1">
-                  ⚠️ Setting locked during navigation
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Status Display */}
-          <div className="mb-4 p-3 rounded border border-gray-600 bg-gray-800">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-300 text-sm">Update Rate</span>
-              <span className={`text-xs font-mono font-medium ${updateHz > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-                {updateHz > 0 ? `${updateHz} Hz` : '-- Hz'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-gray-300 text-sm">Navigation</span>
-              <span className={`text-xs font-medium ${isNavigating ? 'text-green-400' : 'text-gray-500'}`}>
-                {isNavigating ? '● Active' : '● Inactive'}
-              </span>
-            </div>
-          </div>
-
-          {/* Navigation Buttons */}
-          <div className="space-y-2">
-            {!isNavigating ? (
-              <button
-                onClick={handleStartNavigation}
-                disabled={!trackingService || !commandsManager || !currentTrackingConfig}
-                className="w-full p-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors flex items-center justify-center gap-2"
-                title={!currentTrackingConfig ? 'Please select a configuration first' : 'Start navigation with current configuration'}
-              >
-                <span className="text-lg">▶️</span>
-                <span>Start</span>
-                {currentTrackingConfig && (
-                  <span className="text-xs opacity-75">
-                    ({currentTrackingConfig.tracking_mode === 'simulation' ? 'SIM' : 'HW'})
-                  </span>
-                )}
-              </button>
-            ) : (
-              <button
-                onClick={handleStopNavigation}
-                className="w-full p-3 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition-colors flex items-center justify-center gap-2"
-              >
-                <span className="text-lg">⏹️</span>
-                <span>Stop</span>
-              </button>
-            )}
-
-            {/* Set Center button - Hidden */}
-            {/* <button
-              onClick={handleSetCenter}
-              disabled={!isNavigating}
-              className="w-full p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded text-sm transition-colors"
-            >
-              📍 Set Center
-            </button> */}
-          </div>
-        </div>
-
         {/* Actions */}
         <div className="space-y-3">
           {/* Current Configuration Display */}
           {currentTrackingConfig ? (
-            <div className="p-3 bg-gray-800 border border-gray-600 rounded">
+            <button
+              type="button"
+              onClick={handleOpenConfigDialog}
+              className="w-full text-left p-3 bg-gray-800 border border-gray-600 rounded hover:border-blue-500 transition-colors"
+            >
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  <div className="text-xs text-gray-400">Active Configuration</div>
+                  <div className="text-xs text-gray-400">Active Configuration (click to change)</div>
                   <div className="text-white font-medium">{currentTrackingConfig.name}</div>
                   {currentTrackingConfig.description && (
                     <div className="text-xs text-gray-500 mt-1">{currentTrackingConfig.description}</div>
@@ -1880,76 +1280,34 @@ function PanelTracking() {
                   {currentTrackingConfig.tracking_mode === 'simulation' ? '🖥️ SIM' : '🔧 HW'}
                 </div>
               </div>
-            </div>
+            </button>
           ) : (
             <div className="p-3 bg-yellow-900 border border-yellow-700 rounded">
               <div className="text-yellow-200 text-sm">
                 ⚠️ No configuration loaded
               </div>
               <div className="text-xs text-yellow-300 mt-1">
-                Please select a configuration below
+                Please load a configuration to start navigation
               </div>
             </div>
           )}
 
-          {/* Select Configuration Button */}
           <button
-            onClick={handleOpenConfigDialog}
-            className="w-full p-3 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors flex items-center justify-center gap-2"
+            onClick={primaryButtonAction}
+            disabled={primaryButtonDisabled}
+            className={`w-full p-3 ${primaryButtonClass} disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors flex items-center justify-center gap-2`}
           >
-            <span className="text-lg">⚙️</span>
-            <span>Select Configuration</span>
+            <span className="text-lg">
+              {!currentTrackingConfig ? '⚙️' : isNavigating ? '⏹️' : '▶️'}
+            </span>
+            <span>{primaryButtonLabel}</span>
+            {currentTrackingConfig && !isNavigating && (
+              <span className="text-xs opacity-75">
+                ({currentTrackingConfig.tracking_mode === 'simulation' ? 'SIM' : 'HW'})
+              </span>
+            )}
           </button>
-
-          {/* Refresh Configuration button - Hidden */}
-          {/* <button
-            onClick={loadConfig}
-            disabled={loading}
-            className="w-full p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded transition-colors"
-          >
-            Refresh Configuration
-          </button> */}
-
-          {/* Reload Tracking Servers button - Hidden */}
-          {/* <button
-            onClick={async () => {
-              try{
-                const response = await fetch('/api/tracking/reload-config', {
-                  method: 'POST'
-                });
-                const result = await response.json();
-                if (result.success) {
-                  setError(null);
-                  await loadConfig(); // Reload config after server reload
-                } else {
-                  setError('Failed to reload configuration');
-                }
-              } catch (err) {
-                setError('Failed to reload configuration');
-              }
-            }}
-            disabled={loading}
-            className="w-full p-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 text-white rounded transition-colors"
-          >
-            Reload Tracking Servers
-          </button> */}
         </div>
-
-        {/* Footer - Minimal Info */}
-        {trackingFrame && (
-        <div className="mt-6 pt-4 border-t border-gray-700">
-          <div className="text-xs text-gray-500 space-y-1">
-              <div className="flex justify-between text-blue-400 font-mono">
-                <span>Last Update:</span>
-                <span>{new Date(trackingFrame.timestamp).toLocaleTimeString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Frame #:</span>
-                <span className="font-mono">{trackingFrame.frame_number}</span>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Phase 7: Tracking Configuration Dialog */}

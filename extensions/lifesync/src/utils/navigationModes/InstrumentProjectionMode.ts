@@ -393,9 +393,12 @@ export class InstrumentProjectionMode extends NavigationMode {
    * Set extension length
    */
   public setExtensionLength(length: number): void {
-    this.extensionLength = length;
+    // Enforce non-negative values to prevent inverted or undefined projections
+    const safeLength = Number.isFinite(length) ? Math.max(0, length) : 0;
+    this.extensionLength = safeLength;
+
     if (this.toolProjectionRenderer) {
-      this.toolProjectionRenderer.setExtensionLength(length);
+      this.toolProjectionRenderer.setExtensionLength(safeLength);
     }
   }
 

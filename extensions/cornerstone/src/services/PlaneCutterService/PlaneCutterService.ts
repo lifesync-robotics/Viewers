@@ -23,6 +23,22 @@ interface ModelCutterData {
   slabPlanesReverse?: any[]; // Second pass planes for flipped-normal sweep
 }
 
+type PlaneCutterMode = 'thin' | 'slab';
+
+/**
+ * Template pattern for cutter behaviors. Strategy is selected at runtime
+ * based on the requested slab thickness and delegates the per-model update.
+ */
+interface PlaneCutterTemplate {
+  mode: PlaneCutterMode;
+  shouldUse: (thickness: number) => boolean;
+  updateModelCut: (
+    modelCutterData: ModelCutterData,
+    planeCutter: PlaneCutterData,
+    thickness: number
+  ) => void;
+}
+
 /**
  * Plane cutter data for a single viewport
  * Each viewport has ONE plane cutter that cuts ALL models
@@ -35,6 +51,7 @@ interface PlaneCutterData {
   updateCallback?: any; // Callback for viewport updates
   eventListenerElement?: any; // Element for event listeners
   slabThickness?: number; // Slab thickness for multi-slice cutting
+  mode: PlaneCutterMode;
 }
 
 /**
@@ -81,17 +98,38 @@ class PlaneCutterService extends PubSubService {
 
   private readonly servicesManager: any;
   private planeCutters: PlaneCutterData[];
+  private viewportDescriptors: { viewportId: string; orientation: 'axial' | 'coronal' | 'sagittal' }[];
   private isEnabled: boolean;
   private colorIndex: number;
   private modelColors: Map<string, [number, number, number]>; // Map modelId -> color
+  private cutterTemplates: PlaneCutterTemplate[];
 
   constructor({ servicesManager }) {
     super(EVENTS);
     this.servicesManager = servicesManager;
     this.planeCutters = [];
+    this.viewportDescriptors = [];
     this.isEnabled = true; // Enable plane cutters by default for 2D cross-sections
     this.colorIndex = 0;
     this.modelColors = new Map();
+    this.cutterTemplates = [
+      {
+        mode: 'thin',
+        shouldUse: thickness => thickness <= 0,
+        updateModelCut: () => {
+          /* thin mode does not rebuild on camera changes */
+        },
+      },
+      {
+        mode: 'slab',
+        shouldUse: thickness => thickness > 0,
+        updateModelCut: (modelCutterData, planeCutter, thickness) => {
+          if (thickness > 0) {
+            this._rebuildSlabCut(modelCutterData, planeCutter, { log: true });
+          }
+        },
+      },
+    ];
 
     // Subscribe to ModelStateService events
     this._subscribeToModelEvents();
@@ -167,13 +205,8 @@ class PlaneCutterService extends PubSubService {
       return;
     }
 
-    if (this.planeCutters.length === 0) {
-      // console.log(`   ℹ️ Plane cutters not initialized yet, skipping (model will be added when enable() is called)`);
-      return;
-    }
-
-    // Add model to all plane cutters
-    this.addModelToCutters(modelId);
+    // Add model to plane cutters (will lazily create cutters as needed)
+    void this.addModelToCutters(modelId);
   }
 
   /**
@@ -211,7 +244,7 @@ class PlaneCutterService extends PubSubService {
   /**
    * Handle VIEWPORT_PROPERTIES_CHANGED event (slab thickness changes)
    */
-  private _handleViewportPropertiesChanged(event: { viewportId: string; properties: any; volumeId?: string }): void {
+  private async _handleViewportPropertiesChanged(event: { viewportId: string; properties: any; volumeId?: string }): Promise<void> {
     const { viewportId, properties } = event;
 
     // console.log(`📨 [PlaneCutterService] Received VIEWPORT_PROPERTIES_CHANGED`, {
@@ -226,46 +259,73 @@ class PlaneCutterService extends PubSubService {
       return; // Only handle slab thickness changes
     }
 
-    const planeCutter = this.planeCutters.find(pc => pc.viewportId === viewportId);
-    if (!planeCutter) {
-      // console.log(`   ℹ️ Viewport ${viewportId} not managed by PlaneCutterService (3D viewport?)`);
-      return; // Viewport not managed by this service
-    }
-
-    const oldThickness = planeCutter.slabThickness ?? 0;
-    const newThickness = properties.slabThickness;
-    // console.log(`📏 [PlaneCutterService] Slab thickness changed for ${planeCutter.orientation}: ${oldThickness}mm → ${newThickness}mm`);
-    // console.log(`   Viewport: ${viewportId}, Models to rebuild: ${planeCutter.modelCutters.size}`);
-    
-    // Get viewport properties for debugging
     const viewport = this._getViewportById(viewportId);
-    if (viewport) {
-      const viewportProps = viewport.getProperties?.();
-      // console.log(`   Viewport properties:`, viewportProps);
+    if (!viewport) {
+      return;
     }
 
-    // Store the new slab thickness
-    planeCutter.slabThickness = newThickness;
+    const orientation = this._resolveViewportOrientation(viewport);
+    if (!orientation) {
+      return;
+    }
 
-    // Rebuild all model cutters for this viewport with the new slab thickness
-    for (const [modelId, modelCutterData] of planeCutter.modelCutters.entries()) {
-      // console.log(`   🔄 Rebuilding model ${modelId} with thickness ${newThickness}mm`);
-      this._rebuildSlabCut(modelCutterData, planeCutter, { log: true });
+    const newThickness = properties.slabThickness;
+    const targetMode: PlaneCutterMode = newThickness > 0 ? 'slab' : 'thin';
+    const { modelStateService } = this.servicesManager.services;
+    const models = modelStateService?.getAllModels?.() || [];
+
+    if (!models.length) {
+      return; // Do not create cutters until a model exists
+    }
+
+    const planeCutter = await this._getOrCreatePlaneCutterForViewport(viewport, orientation, targetMode);
+
+    if (!planeCutter) {
+      return;
+    }
+
+    planeCutter.slabThickness = targetMode === 'slab' ? newThickness : 0;
+
+    // Ensure all models are present on the active cutter
+    for (const model of models) {
+      const modelId = model?.metadata?.id;
+      if (!modelId) {
+        continue;
+      }
+
+      if (!planeCutter.modelCutters.has(modelId)) {
+        this._addModelToPlaneCutter(planeCutter, model);
+      }
+      this._setModelVisibility(planeCutter, modelId, true);
+    }
+
+    // Hide the inactive mode to prevent double rendering
+    const otherMode = this._getOppositeMode(targetMode);
+    const otherCutter = await this._getOrCreatePlaneCutterForViewport(viewport, orientation, otherMode);
+    if (otherCutter) {
+      if (targetMode === 'thin') {
+        otherCutter.slabThickness = 0;
+      }
+      for (const modelId of otherCutter.modelCutters.keys()) {
+        this._setModelVisibility(otherCutter, modelId, false);
+      }
+    }
+
+    // Rebuild slab cuts only when in slab mode with a positive thickness
+    if (targetMode === 'slab' && planeCutter.slabThickness && planeCutter.slabThickness > 0) {
+      for (const [modelId, modelCutterData] of planeCutter.modelCutters.entries()) {
+        // console.log(`   🔄 Rebuilding model ${modelId} with thickness ${newThickness}mm`);
+        this._rebuildSlabCut(modelCutterData, planeCutter, { log: true });
+      }
     }
 
     // Trigger re-render
     if (viewport) {
-      // console.log(`   🎨 Rendering viewport ${viewportId}`);
-      
-      // Force VTK renderer to update actors
-      const vtkRenderer = viewport.getRenderer();
-      if (vtkRenderer) {
+      const vtkRenderer = viewport.getRenderer?.();
+      if (vtkRenderer?.resetCameraClippingRange) {
         vtkRenderer.resetCameraClippingRange();
-        // console.log(`   ✅ VTK renderer updated for ${viewportId}`);
       }
-      
-      viewport.render();
-      // console.log(`   ✅ Viewport ${viewportId} rendered`);
+      viewport.render?.();
     }
   }
 
@@ -361,36 +421,29 @@ class PlaneCutterService extends PubSubService {
 
       // console.log(`✅ [PlaneCutterService] Found all 3 orthographic viewports:`, orthographicViewports.map(v => v.viewport.id));
 
-      // Clear any existing plane cutters before creating new ones
+      // Clear any existing plane cutters before caching new viewport descriptors
       if (this.planeCutters.length > 0) {
         // console.log('🔄 [PlaneCutterService] Clearing existing plane cutters before re-initialization');
         // Disable and cleanup old plane cutters (but don't reset isEnabled flag)
         const wasEnabled = this.isEnabled;
         this.cleanup();
         this.isEnabled = wasEnabled; // Restore the enabled state after cleanup
+      } else {
+        // Even if no cutters exist yet, reset descriptors to avoid stale entries
+        this.viewportDescriptors = [];
       }
 
-      // Create a plane cutter for each orthographic viewport
-      for (const { viewport, orientation } of orthographicViewports) {
-        // console.log(`───────────────────────────────────────────────────────`);
-        // console.log(`🔪 [PlaneCutterService] Creating ${orientation} plane cutter`);
-
-        const planeCutter = await this._createPlaneCutterForViewport(viewport, orientation);
-
-        if (planeCutter) {
-          this.planeCutters.push(planeCutter);
-          // console.log(`  ✅ ${orientation} plane cutter created for viewport: ${viewport.id}`);
-        }
-      }
+      // Cache viewport descriptors; actual cutters are created lazily once a model arrives
+      this.viewportDescriptors = orthographicViewports.map(({ viewport, orientation }) => ({
+        viewportId: viewport.id,
+        orientation,
+      }));
 
       // console.log('═══════════════════════════════════════════════════════');
-      // console.log(`✅ [PlaneCutterService] Created ${this.planeCutters.length} plane cutters`);
+      // console.log(`✅ [PlaneCutterService] Cached ${this.viewportDescriptors.length} orthographic viewports for cutter creation`);
       // console.log('═══════════════════════════════════════════════════════');
 
-      // Set up synchronized updates across all viewports
-      this._setupSynchronizedUpdates();
-
-      return this.planeCutters.length > 0;
+      return this.viewportDescriptors.length > 0;
 
     } catch (error) {
       // console.error('❌ [PlaneCutterService] Error initializing plane cutters:', error);
@@ -403,7 +456,7 @@ class PlaneCutterService extends PubSubService {
    * Set up synchronized updates across all viewports
    * When any viewport changes, all plane cutters update and all viewports render
    */
-  private async _setupSynchronizedUpdates(): Promise<void> {
+  private async _setupSynchronizedUpdates(targetCutters: PlaneCutterData[] = this.planeCutters): Promise<void> {
     // console.log('🔗 [PlaneCutterService] Setting up synchronized updates');
 
     // Per-viewport updater (isolated VTK objects per viewport)
@@ -416,7 +469,8 @@ class PlaneCutterService extends PubSubService {
         }
 
         const crosshairCenter = crosshairsHandler.getCrosshairCenter();
-        this._updateSinglePlaneCutter(planeCutter, crosshairCenter);
+        const thickness = this._readViewportThickness(planeCutter.viewportId);
+        this._updateSinglePlaneCutter(planeCutter, crosshairCenter, thickness);
 
         const viewport = this._getViewportById(planeCutter.viewportId);
         if (viewport) {
@@ -427,54 +481,18 @@ class PlaneCutterService extends PubSubService {
       }
     };
 
-    // Check for slab thickness changes for a specific viewport (no throttling to catch slow scroll updates)
-    const checkSlabThickness = (planeCutter: PlaneCutterData) => {
-      const viewport = this._getViewportById(planeCutter.viewportId);
-      if (!viewport) return;
-
-      try {
-        const props = viewport.getProperties?.();
-        const currentThickness = props?.slabThickness ?? 0;
-        const storedThickness = planeCutter.slabThickness ?? 0;
-
-        if (currentThickness !== storedThickness) {
-          // console.log(`📏 [PlaneCutterService] Detected slab thickness change for ${planeCutter.orientation}: ${storedThickness}mm → ${currentThickness}mm`);
-          
-          // Store new thickness
-          planeCutter.slabThickness = currentThickness;
-
-          // Rebuild all model cutters for THIS viewport only
-          for (const [modelId, modelCutterData] of planeCutter.modelCutters.entries()) {
-            // console.log(`   🔄 Rebuilding model ${modelId} with thickness ${currentThickness}mm (viewport ${planeCutter.viewportId})`);
-            this._rebuildSlabCut(modelCutterData, planeCutter);
-          }
-
-          // Trigger re-render
-          viewport.render();
-        } else if (currentThickness > 0) {
-          // Even if thickness unchanged, ensure mapper stays connected to slab append filter
-          for (const [_, modelCutterData] of planeCutter.modelCutters.entries()) {
-            if (modelCutterData.appendFilter) {
-              modelCutterData.mapper.setInputConnection(modelCutterData.appendFilter.getOutputPort());
-            }
-          }
-          viewport.render();
-        }
-      } catch (error) {
-        // Ignore errors in slab thickness check
-      }
-    };
-
     // Subscribe to CAMERA_MODIFIED events from ALL viewports
     const { Enums } = await import('@cornerstonejs/core');
 
-    for (const planeCutter of this.planeCutters) {
+    for (const planeCutter of targetCutters) {
       const viewport = this._getViewportById(planeCutter.viewportId);
       if (viewport && viewport.element && Enums?.Events?.CAMERA_MODIFIED) {
+        if (planeCutter.updateCallback) {
+          continue; // Already subscribed
+        }
         // Combined update function that ONLY touches this viewport's VTK objects
         const combinedUpdate = () => {
           updatePlaneCutter(planeCutter);
-          checkSlabThickness(planeCutter);
         };
 
         viewport.element.addEventListener(Enums.Events.CAMERA_MODIFIED, combinedUpdate);
@@ -486,9 +504,8 @@ class PlaneCutterService extends PubSubService {
 
     // Initial per-viewport update (isolated)
     // console.log('🔄 [PlaneCutterService] Performing initial per-viewport updates');
-    for (const planeCutter of this.planeCutters) {
+    for (const planeCutter of targetCutters) {
       updatePlaneCutter(planeCutter);
-      checkSlabThickness(planeCutter);
     }
 
     // console.log('✅ [PlaneCutterService] Synchronized updates configured');
@@ -501,9 +518,22 @@ class PlaneCutterService extends PubSubService {
    */
   private _updateSinglePlaneCutter(
     planeCutter: PlaneCutterData,
-    crosshairCenter: [number, number, number] | null = null
+    crosshairCenter: [number, number, number] | null = null,
+    currentThickness?: number
   ): void {
     try {
+      const effectiveThickness =
+        typeof currentThickness === 'number'
+          ? currentThickness
+          : planeCutter.slabThickness ?? 0;
+      planeCutter.slabThickness = effectiveThickness;
+
+      // Route work to the correct cutter based on the current thickness.
+      const requiredMode: PlaneCutterMode = effectiveThickness > 0 ? 'slab' : 'thin';
+      if (planeCutter.mode !== requiredMode) {
+        return;
+      }
+
       const viewport = this._getViewportById(planeCutter.viewportId);
       if (!viewport) {
         return;
@@ -580,19 +610,9 @@ class PlaneCutterService extends PubSubService {
       planeCutter.plane.setNormal(planeNormal[0], planeNormal[1], planeNormal[2]);
 
       // Update all model cutters in this plane with slab thickness support
+      const template = this._selectTemplateForThickness(effectiveThickness);
       for (const modelCutterData of planeCutter.modelCutters.values()) {
-        // Rebuild slab cut with new plane position (from scrolling or crosshair movement)
-        // IMPORTANT: This should preserve the current slab thickness
-        const currentThickness = planeCutter.slabThickness ?? 0;
-        if (currentThickness > 0) {
-          // Only rebuild for THICK SLAB mode (expensive operation)
-          // Increased logging frequency to 10% for debugging slab issues
-          
-          this._rebuildSlabCut(modelCutterData, planeCutter, { log: true });
-        }
-        // IMPORTANT: DO NOT rebuild thin slices on every scroll!
-        // Thin slice cutter already tracks the plane automatically via planeCutter.plane
-        // Rebuilding would overwrite slab rendering from other viewports
+        template.updateModelCut(modelCutterData, planeCutter, effectiveThickness);
       }
     } catch (error) {
       // console.warn(`⚠️ [${planeCutter.orientation}] Error updating plane:`, error.message);
@@ -602,27 +622,21 @@ class PlaneCutterService extends PubSubService {
   /**
    * Enable plane cutters (make visible)
    */
-  public enable(): void {
+  public async enable(): Promise<void> {
     // console.log('🟢 [PlaneCutterService] Enabling plane cutters');
 
-    if (this.planeCutters.length === 0) {
-      // console.warn('⚠️ [PlaneCutterService] No plane cutters initialized - cannot enable');
-      // console.warn('   Call initialize() first before enable()');
-      this.isEnabled = true; // Set flag anyway so future models will be added
-      return;
-    }
-
     this.isEnabled = true;
+
+    // Ensure viewport descriptors are ready; actual cutters are created lazily
+    await this._ensureViewportDescriptors();
 
     // Add all existing models to cutters
     const { modelStateService } = this.servicesManager.services;
     const models = modelStateService?.getAllModels() || [];
 
-    // console.log(`   Found ${models.length} existing models to add to ${this.planeCutters.length} plane cutters`);
+    // console.log(`   Found ${models.length} existing models to add to plane cutters (lazy per viewport)`);
 
-    for (const model of models) {
-      this.addModelToCutters(model.metadata.id);
-    }
+    await Promise.all(models.map(model => this.addModelToCutters(model.metadata.id)));
 
     this._broadcastEvent(EVENTS.PLANE_CUTTER_ENABLED, {});
   }
@@ -664,7 +678,7 @@ class PlaneCutterService extends PubSubService {
   /**
    * Add a model to all plane cutters
    */
-  public addModelToCutters(modelId: string): void {
+  public async addModelToCutters(modelId: string): Promise<void> {
     const { modelStateService } = this.servicesManager.services;
     const loadedModel = modelStateService?.getModel(modelId);
 
@@ -673,34 +687,45 @@ class PlaneCutterService extends PubSubService {
       return;
     }
 
-    if (this.planeCutters.length === 0) {
-      // console.log(`ℹ️ [PlaneCutterService] No plane cutters initialized yet, skipping model ${modelId}`);
+    const descriptorsReady = await this._ensureViewportDescriptors();
+
+    if (!descriptorsReady) {
+      // console.log(`ℹ️ [PlaneCutterService] Viewports not ready yet, skipping model ${modelId}`);
       return;
     }
 
-    // console.log(`🔪 [PlaneCutterService] Adding model ${modelId} to ${this.planeCutters.length} plane cutters`);
-    // console.log(`   Plane cutter viewport IDs:`, this.planeCutters.map(pc => pc.viewportId));
+    // console.log(`🔪 [PlaneCutterService] Adding model ${modelId} to available plane cutters (lazy creation per viewport)`);
 
-    // Check for valid plane cutters (support both fourUpMesh and MPR layouts)
-    const validViewportIds = [
-      'fourUpMesh-mpr-axial', 'fourUpMesh-mpr-coronal', 'fourUpMesh-mpr-sagittal',
-      'mpr-axial', 'mpr-coronal', 'mpr-sagittal'
-    ];
-    const invalidCutters = this.planeCutters.filter(pc => !validViewportIds.includes(pc.viewportId));
+    for (const descriptor of this.viewportDescriptors) {
+      const viewport = this._getViewportById(descriptor.viewportId);
+      if (!viewport) {
+        continue;
+      }
 
-    if (invalidCutters.length > 0) {
-      // console.error(`❌ [PlaneCutterService] Detected invalid plane cutters! Cleaning up...`);
-      // console.error(`   Invalid viewport IDs:`, invalidCutters.map(pc => pc.viewportId));
-      // console.error(`   Expected viewport IDs (fourUpMesh or MPR):`, validViewportIds);
-      this.cleanup();
-      // console.log(`ℹ️ [PlaneCutterService] After cleanup, skipping model ${modelId}`);
-      // console.log(`ℹ️ Please reload fourUpMesh or MPR layout to reinitialize plane cutters`);
-      return;
-    }
+      const orientation = descriptor.orientation ?? this._resolveViewportOrientation(viewport);
+      if (!orientation) {
+        continue;
+      }
 
-    // Add to each plane cutter
-    for (const planeCutter of this.planeCutters) {
+      const props = viewport.getProperties?.();
+      const thickness = props?.slabThickness ?? 0;
+      const targetMode: PlaneCutterMode = thickness > 0 ? 'slab' : 'thin';
+
+      const planeCutter = await this._getOrCreatePlaneCutterForViewport(viewport, orientation, targetMode);
+      if (!planeCutter) {
+        continue;
+      }
+
+      planeCutter.slabThickness = targetMode === 'slab' ? thickness : 0;
       this._addModelToPlaneCutter(planeCutter, loadedModel);
+
+      // Hide the non-active mode to prevent double rendering
+      const otherMode = this._getOppositeMode(targetMode);
+      const otherCutter = await this._getOrCreatePlaneCutterForViewport(viewport, orientation, otherMode);
+      if (otherCutter) {
+        this._setModelVisibility(otherCutter, modelId, false);
+      }
+      this._setModelVisibility(planeCutter, modelId, true);
     }
 
     this._broadcastEvent(EVENTS.PLANE_CUTTER_UPDATED, { modelId, action: 'added' });
@@ -763,7 +788,9 @@ class PlaneCutterService extends PubSubService {
         modelCutterData.polyData = loadedModel.polyData;
 
         // Rebuild the slab cut with updated polyData
-        this._rebuildSlabCut(modelCutterData, planeCutter);
+        if (planeCutter.mode === 'slab' && (planeCutter.slabThickness ?? 0) > 0) {
+          this._rebuildSlabCut(modelCutterData, planeCutter);
+        }
 
         // Check output (cutter always has the base plane cut)
         const outputData = modelCutterData.cutter.getOutputData();
@@ -796,451 +823,23 @@ class PlaneCutterService extends PubSubService {
     planeCutter: PlaneCutterData,
     options: { log?: boolean } = {}
   ): void {
+    const { modelProjectionService } = this.servicesManager.services;
     const { log = false } = options;
-    const thickness = planeCutter.slabThickness ?? 0;
 
-    // If no thickness (thin slice), use standard single-plane cutting
-    if (thickness <= 0) {
+    // Hide legacy actor output; projection is overlay-only now.
+    try {
+      modelCutterData?.actor?.setVisibility?.(false);
+    } catch (e) {
+      /* ignore */
+    }
+
+    if (modelProjectionService?.updateProjectionsForViewport) {
+      modelProjectionService.updateProjectionsForViewport(planeCutter.viewportId);
       if (log) {
-        // console.log(`  ⚠️ Switching to THIN SLICE mode (thickness=${thickness})`);
+        // console.log(`[PlaneCutterService] Routed slab rebuild to ModelProjectionService for ${planeCutter.viewportId}`);
       }
-      
-      // Clean up any existing append filter from previous slab mode
-      if (modelCutterData.appendFilter) {
-        if (log) {
-          // console.log(`  🗑️ Deleting append filter (switching from slab to thin slice)`);
-        }
-        modelCutterData.appendFilter.delete();
-        modelCutterData.appendFilter = null;
-      }
-
-      // Ensure cutter has the correct plane and input data
-      modelCutterData.cutter.setCutFunction(planeCutter.plane);
-      modelCutterData.cutter.setInputData(modelCutterData.polyData);
-      modelCutterData.cutter.modified();
-      modelCutterData.cutter.update();
-
-      // Connect mapper to cutter output (thin slice mode)
-      modelCutterData.mapper.setInputConnection(modelCutterData.cutter.getOutputPort());
-      modelCutterData.mapper.modified();
-      modelCutterData.actor.modified();
-      
-      // console.log(`  ⚡ THIN SLICE mode activated (overwriting any slab)`);
-      return;
-    }
-    
-    if (log) {
-      // console.log(`  📏 THICK SLAB mode (thickness=${thickness.toFixed(2)}mm)`);
-    }
-
-    // For thick slabs, sample multiple planes and merge their outputs
-    // CRITICAL: Delete and recreate append filter each time to clear old inputs
-    // (VTK.js vtkAppendPolyData accumulates connections without a proper clear method)
-    if (modelCutterData.appendFilter) {
-      modelCutterData.appendFilter.delete();
-    }
-    modelCutterData.appendFilter = vtkAppendPolyData.newInstance();
-    const append = modelCutterData.appendFilter;
-
-    // -----------------------------------------------------------------------
-    // Coordinate frame alignment
-    // Grab plane in world space (same as thin-cutter) and optionally map
-    // into the model's local frame if the model appears translated relative
-    // to its bounds. This keeps slab sampling consistent with thin-slice
-    // rendering even when models carry per-actor transforms.
-    // -----------------------------------------------------------------------
-    const worldOrigin = planeCutter.plane.getOrigin();
-    const worldNormal = planeCutter.plane.getNormal();
-    let origin = [...worldOrigin];
-    let normal = [...worldNormal];
-    let frameLabel = 'world';
-
-    // Heuristic: if actor has a user matrix and its translation is far from
-    // the polyData bounds center (>5mm), treat polyData as model-space and
-    // transform the plane into that model frame.
-    const actorMatrix = modelCutterData.actor?.getUserMatrix?.() as Float32Array | null;
-    const modelBoundsWorld = modelCutterData.polyData?.getBounds?.();
-    let modelBoundsInFrame = modelBoundsWorld;
-
-    if (actorMatrix && modelBoundsWorld) {
-      const translation = [actorMatrix[12], actorMatrix[13], actorMatrix[14]];
-      const boundsCenter = [
-        (modelBoundsWorld[0] + modelBoundsWorld[1]) / 2,
-        (modelBoundsWorld[2] + modelBoundsWorld[3]) / 2,
-        (modelBoundsWorld[4] + modelBoundsWorld[5]) / 2,
-      ];
-      const distToCenter = Math.hypot(
-        translation[0] - boundsCenter[0],
-        translation[1] - boundsCenter[1],
-        translation[2] - boundsCenter[2]
-      );
-
-      const shouldMapToModelFrame = distToCenter > 5; // mm heuristic
-      const invActor = shouldMapToModelFrame ? this._invert4x4(actorMatrix) : null;
-
-      if (invActor) {
-        origin = this._transformPoint(invActor, worldOrigin);
-        normal = this._normalizeVector(this._transformVector(invActor, worldNormal));
-        modelBoundsInFrame = this._transformBounds(invActor, modelBoundsWorld);
-        frameLabel = 'model';
-      }
-    }
-
-    // If polyData is effectively in world (frameLabel === 'world') but actor still
-    // carries a userMatrix, we would double-transform on render. Clear it so
-    // the slab output stays aligned with the volume.
-    if (frameLabel === 'world' && actorMatrix && this._isNonIdentity4x4(actorMatrix)) {
-      const identity4 = this._identity4x4();
-      modelCutterData.actor.setUserMatrix(identity4);
-      if (log) {
-        // console.log('   🧭 Cleared actor userMatrix to avoid double-transform (polyData already in world)');
-      }
-    }
-
-    // Two-pass sampling across slab: one sweep with +normal, one with -normal.
-    // This explicitly covers both directions to neutralize any directional bias.
-    const stepSize = 0.5; // fixed step size of 0.15mm
-    const halfThickness = thickness / 2;
-    const maxStepsPerSide = 50; // safety clamp
-    const stepsPerSide = Math.max(1, Math.min(maxStepsPerSide, Math.ceil(halfThickness / stepSize)));
-
-    const forwardOffsets: number[] = [0]; // includes base plane
-    const reverseOffsets: number[] = [];  // swept along -normal (no base to avoid duplication)
-    for (let i = 1; i <= stepsPerSide; i++) {
-      const delta = i * stepSize;
-      if (delta <= halfThickness + 1e-3) {
-        forwardOffsets.push(delta);   // +normal direction
-        reverseOffsets.push(delta);   // -normal direction (handled with flipped normal)
-      }
-    }
-
-    if (log) {
-      // console.log(
-      //   `  📏 Two-pass slab build: forward=${forwardOffsets.length} slices, reverse=${reverseOffsets.length} slices (thickness: ${thickness.toFixed(2)}mm, step size: ${stepSize.toFixed(2)}mm)`
-      // );
-      // console.log(
-      //   `  📐 Base plane: origin=[${origin[0].toFixed(2)}, ${origin[1].toFixed(2)}, ${origin[2].toFixed(2)}], normal=[${normal[0]}, ${normal[1]}, ${normal[2]}]`
-      // );
-    }
-
-    // Initialize or resize reusable cutter/plane arrays for BOTH passes
-    if (!modelCutterData.slabCutters) {
-      modelCutterData.slabCutters = [];
-      modelCutterData.slabPlanes = [];
-    }
-    if (!modelCutterData.slabCuttersReverse) {
-      modelCutterData.slabCuttersReverse = [];
-      modelCutterData.slabPlanesReverse = [];
-    }
-    
-    const resizeReusableArrays = (cutters: any[], planes: any[], targetLength: number) => {
-      while (cutters.length > targetLength) {
-        const oldCutter = cutters.pop();
-        const oldPlane = planes.pop();
-        if (oldCutter) oldCutter.delete();
-        if (oldPlane) oldPlane.delete();
-      }
-      while (cutters.length < targetLength) {
-        planes.push(vtkPlane.newInstance());
-        cutters.push(vtkCutter.newInstance());
-      }
-    };
-
-    resizeReusableArrays(modelCutterData.slabCutters, modelCutterData.slabPlanes, forwardOffsets.length);
-    resizeReusableArrays(modelCutterData.slabCuttersReverse, modelCutterData.slabPlanesReverse, reverseOffsets.length);
-    
-    // CRITICAL: Set input data for ALL cutters (both passes)
-    [...modelCutterData.slabCutters, ...modelCutterData.slabCuttersReverse].forEach(slabCutter => {
-      slabCutter.setInputData(modelCutterData.polyData);
-    });
-
-    const runSweep = (
-      offsetsList: number[],
-      planesArr: any[],
-      cuttersArr: any[],
-      sweepNormal: number[],
-      label: string
-    ) => {
-      let sweepTotalPoints = 0;
-      let sweepPositiveHits = 0;
-      let sweepNegativeHits = 0;
-      let sweepZeroHit = 0;
-      const sweepPorts = [];
-
-      // Track first few hits/misses for detailed debugging
-      let firstPosHit = null;
-      let firstNegHit = null;
-      let firstPosMiss = null;
-      let firstNegMiss = null;
-
-      for (let i = 0; i < offsetsList.length; i++) {
-        const offset = offsetsList[i];
-        const offsetOrigin = [
-          origin[0] + sweepNormal[0] * offset,
-          origin[1] + sweepNormal[1] * offset,
-          origin[2] + sweepNormal[2] * offset,
-        ];
-
-        const slabPlane = planesArr[i];
-        const slabCutter = cuttersArr[i];
-
-        slabPlane.setOrigin(offsetOrigin[0], offsetOrigin[1], offsetOrigin[2]);
-        slabPlane.setNormal(sweepNormal[0], sweepNormal[1], sweepNormal[2]);
-
-        slabCutter.setInputData(modelCutterData.polyData);
-        slabCutter.setCutFunction(slabPlane);
-        slabCutter.modified();
-        slabCutter.update();
-
-        const sliceOutput = slabCutter.getOutputData();
-        const numPoints = sliceOutput ? sliceOutput.getPoints()?.getNumberOfPoints() || 0 : 0;
-        if (sliceOutput && numPoints > 0) {
-          sweepPorts.push(slabCutter.getOutputPort());
-          sweepTotalPoints += numPoints;
-
-          if (offset > 0) {
-            sweepPositiveHits++;
-            if (!firstPosHit) firstPosHit = { offset, origin: offsetOrigin, points: numPoints };
-          } else if (offset < 0) {
-            sweepNegativeHits++;
-            if (!firstNegHit) firstNegHit = { offset, origin: offsetOrigin, points: numPoints };
-          } else {
-            sweepZeroHit = 1;
-          }
-        } else {
-          if (offset > 0 && !firstPosMiss) {
-            firstPosMiss = { offset, origin: offsetOrigin };
-          } else if (offset < 0 && !firstNegMiss) {
-            firstNegMiss = { offset, origin: offsetOrigin };
-          }
-        }
-      }
-
-      if (log) {
-        if (firstPosHit) {
-          // console.log(`   ✅ [${label}] First +hit: offset=${firstPosHit.offset.toFixed(3)}mm, origin=[${firstPosHit.origin[0].toFixed(2)}, ${firstPosHit.origin[1].toFixed(2)}, ${firstPosHit.origin[2].toFixed(2)}], points=${firstPosHit.points}`);
-        }
-        if (firstNegHit) {
-          // console.log(`   ✅ [${label}] First -hit: offset=${firstNegHit.offset.toFixed(3)}mm, origin=[${firstNegHit.origin[0].toFixed(2)}, ${firstNegHit.origin[1].toFixed(2)}, ${firstNegHit.origin[2].toFixed(2)}], points=${firstNegHit.points}`);
-        }
-        if (firstPosMiss) {
-          // console.log(`   ❌ [${label}] First +miss: offset=${firstPosMiss.offset.toFixed(3)}mm, origin=[${firstPosMiss.origin[0].toFixed(2)}, ${firstPosMiss.origin[1].toFixed(2)}, ${firstPosMiss.origin[2].toFixed(2)}]`);
-        }
-        if (firstNegMiss) {
-          // console.log(`   ❌ [${label}] First -miss: offset=${firstNegMiss.offset.toFixed(3)}mm, origin=[${firstNegMiss.origin[0].toFixed(2)}, ${firstNegMiss.origin[1].toFixed(2)}], ${firstNegMiss.origin[2].toFixed(2)}]`);
-        }
-      }
-
-      return {
-        sweepTotalPoints,
-        sweepPositiveHits,
-        sweepNegativeHits,
-        sweepZeroHit,
-        sweepPorts,
-      };
-    };
-
-    // Get model bounds for debugging (frame-aware)
-    if (log && modelBoundsInFrame) {
-      // console.log(`   📦 Model bounds (${frameLabel}): X[${modelBoundsInFrame[0]?.toFixed(2)}, ${modelBoundsInFrame[1]?.toFixed(2)}], Y[${modelBoundsInFrame[2]?.toFixed(2)}, ${modelBoundsInFrame[3]?.toFixed(2)}], Z[${modelBoundsInFrame[4]?.toFixed(2)}, ${modelBoundsInFrame[5]?.toFixed(2)}]`);
-      // console.log(`   🧭 Plane origin (world): [${worldOrigin.map(v => v.toFixed(2)).join(', ')}], normal=[${worldNormal.map(v => v.toFixed(2)).join(', ')}]`);
-      // console.log(`   🧭 Plane origin (${frameLabel}): [${origin.map(v => v.toFixed(2)).join(', ')}], normal=[${normal.map(v => v.toFixed(2)).join(', ')}]`);
-    }
-
-    // Optional guard: warn if base plane is completely outside bounds (+/- halfThickness)
-    if (modelBoundsInFrame) {
-      const margin = halfThickness + 1e-3;
-      const outside =
-        origin[0] < modelBoundsInFrame[0] - margin ||
-        origin[0] > modelBoundsInFrame[1] + margin ||
-        origin[1] < modelBoundsInFrame[2] - margin ||
-        origin[1] > modelBoundsInFrame[3] + margin ||
-        origin[2] < modelBoundsInFrame[4] - margin ||
-        origin[2] > modelBoundsInFrame[5] + margin;
-      if (outside && log) {
-        // console.warn(`   ⚠️ Base plane appears outside model bounds in ${frameLabel} frame (margin=${margin.toFixed(2)}mm)`);
-      }
-    }
-
-    // Run forward (+normal) sweep
-    const forwardStats = runSweep(
-      forwardOffsets,
-      modelCutterData.slabPlanes,
-      modelCutterData.slabCutters,
-      normal,
-      '+normal sweep'
-    );
-
-    // Run reverse (-normal) sweep (offsets only in +direction to avoid duplicating base plane)
-    const flippedNormal = [-normal[0], -normal[1], -normal[2]];
-    const reverseStats = runSweep(
-      reverseOffsets,
-      modelCutterData.slabPlanesReverse,
-      modelCutterData.slabCuttersReverse,
-      flippedNormal,
-      '-normal sweep'
-    );
-
-    // Now add all valid ports from both sweeps to append filter
-    for (const port of forwardStats.sweepPorts) {
-      append.addInputConnection(port);
-    }
-    for (const port of reverseStats.sweepPorts) {
-      append.addInputConnection(port);
-    }
-
-    // Aggregate stats (map reverse hits onto world +/− relative to original normal)
-    const worldPositiveHits = forwardStats.sweepPositiveHits + reverseStats.sweepNegativeHits;
-    const worldNegativeHits = forwardStats.sweepNegativeHits + reverseStats.sweepPositiveHits;
-    const worldZeroHit = forwardStats.sweepZeroHit + reverseStats.sweepZeroHit;
-
-    const totalPoints =
-      forwardStats.sweepTotalPoints + reverseStats.sweepTotalPoints;
-    const totalHits =
-      worldPositiveHits + worldNegativeHits + worldZeroHit;
-
-    if (log) {
-      // console.log(
-      //   `   📊 Slice distribution (world frame): +side=${worldPositiveHits}, -side=${worldNegativeHits}, base=${worldZeroHit}`
-      // );
-      // console.log(
-      //   `  ✅ Created ${totalHits}/${forwardOffsets.length + reverseOffsets.length} valid slab slices with ${totalPoints} total points`
-      // );
-      // console.log(
-      //   `   🔗 Connected ${forwardStats.sweepPorts.length + reverseStats.sweepPorts.length} cutter outputs to append filter (two-pass)`
-      // );
-      // console.log(
-      //   `   🔍 Array sizes: forwardCutters=${modelCutterData.slabCutters.length}, reverseCutters=${modelCutterData.slabCuttersReverse.length}`
-      // );
-
-      if (totalHits > 0 && (worldPositiveHits === 0 || worldNegativeHits === 0)) {
-        // console.warn(
-        //   `   ⚠️ ASYMMETRIC HITS DETECTED even after two-pass sweep: Only ${worldPositiveHits > 0 ? 'positive' : 'negative'} side produced intersections!`
-        // );
-      }
-    }
-
-    // **BUG FIX 2: Non-persistent / Flashing Output**
-    // Instead of permanently hiding the actor when totalHits === 0,
-    // fall back to thin-slice mode. This prevents the "flash and disappear" behavior
-    // when scrolling through regions with temporary no-hit zones.
-    if (totalHits === 0) {
-      // Debug info for zero-hit slabs
-      const bounds = modelCutterData.polyData?.getBounds?.();
-      if (log && bounds) {
-        // console.warn(
-        //   `  ⚠️ No valid slab slices produced; model bounds X[${bounds[0]?.toFixed(2)}, ${bounds[1]?.toFixed(
-        //     2
-        //   )}], Y[${bounds[2]?.toFixed(2)}, ${bounds[3]?.toFixed(2)}], Z[${bounds[4]?.toFixed(2)}, ${bounds[5]?.toFixed(
-        //     2
-        //   )}]`
-        // );
-        // console.warn(
-        //   `  ⚠️ Plane origin=[${origin.map(v => v.toFixed(2))}], normal=[${normal.map(v => v.toFixed(2))}], thickness=${thickness.toFixed(
-        //     2
-        //   )}mm`
-        // );
-        // console.warn(`  🔄 Falling back to thin-slice mode to maintain visibility`);
-      }
-
-      // Fall back to thin-slice mode instead of hiding the actor
-      // This ensures the cross-section remains visible even when slab temporarily misses
-      if (modelCutterData.appendFilter) {
-        try {
-          modelCutterData.appendFilter.delete();
-        } catch (e) {
-          /* ignore */
-        }
-        modelCutterData.appendFilter = null;
-      }
-
-      // Connect mapper to the base cutter (thin slice at plane origin)
-      modelCutterData.cutter.setCutFunction(planeCutter.plane);
-      modelCutterData.cutter.setInputData(modelCutterData.polyData);
-      modelCutterData.cutter.modified();
-      modelCutterData.cutter.update();
-      
-      modelCutterData.mapper.setInputConnection(modelCutterData.cutter.getOutputPort());
-      modelCutterData.mapper.modified();
-      
-      // Keep actor visible with thin-slice fallback
-      modelCutterData.actor.setVisibility(true);
-      modelCutterData.actor.modified();
-      
-      if (log) {
-        const thinOutput = modelCutterData.cutter.getOutputData();
-        const thinPoints = thinOutput ? thinOutput.getPoints()?.getNumberOfPoints() || 0 : 0;
-        // console.log(`  ✅ Thin-slice fallback: ${thinPoints} points at plane origin`);
-      }
-      
-      return;
-    }
-
-    // Update append filter and route slab output through the thin-slice pipeline
-    append.update();
-    modelCutterData.mapper.setInputConnection(append.getOutputPort());
-    modelCutterData.mapper.modified();
-    modelCutterData.actor.setVisibility(true);
-    modelCutterData.actor.modified();
-    
-    // CRITICAL: Force actor to be visible and in front
-    const actorProp = modelCutterData.actor.getProperty();
-    actorProp.setOpacity(0.99); // Force update
-    modelCutterData.actor.setVisibility(true);
-    
-    // Verify the pipeline output
-    if (log) {
-      const finalOutput = append.getOutputData();
-      if (finalOutput && finalOutput.getPoints()) {
-        const finalPoints = finalOutput.getPoints().getNumberOfPoints();
-        const finalCells = finalOutput.getNumberOfCells();
-        // console.log(`  📦 Append filter output: ${finalPoints} points, ${finalCells} cells`);
-        // console.log(`  🎬 Actor visibility: ${modelCutterData.actor.getVisibility()}, opacity: ${actorProp.getOpacity()}`);
-      } else {
-        // console.warn(`  ⚠️ Append filter has no output data!`);
-      }
-    }
-    
-    // Ensure actor properties are correct
-    const actorProperty = modelCutterData.actor.getProperty();
-    const currentOpacity = actorProperty.getOpacity();
-    const currentVisibility = modelCutterData.actor.getVisibility();
-    
-    if (log) {
-      // console.log(`   🎭 Actor state: opacity=${currentOpacity}, visibility=${currentVisibility}`);
-    }
-    
-    // Force actor to be visible
-    if (!currentVisibility) {
-      modelCutterData.actor.setVisibility(true);
-      if (log) {
-        // console.log(`   ✅ Actor visibility forced to true`);
-      }
-    }
-    
-    modelCutterData.actor.modified?.();
-    
-    if (log) {
-      // console.log(`   ✅ Mapper and actor updated with combined slab output`);
-    }
-
-    // Ensure actor is attached and in clipping range, then render viewport
-    const viewport = this._getViewportById(planeCutter.viewportId);
-    if (viewport) {
-      const vtkRenderer = viewport.getRenderer?.();
-      if (vtkRenderer?.hasViewProp && !vtkRenderer.hasViewProp(modelCutterData.actor)) {
-        vtkRenderer.addActor(modelCutterData.actor);
-      }
-      vtkRenderer?.resetCameraClippingRange?.();
-      viewport.render?.();
-
-      if (log) {
-        const actorBounds = modelCutterData.actor.getBounds?.();
-        const cam = viewport.getCamera?.();
-        const clip = vtkRenderer?.getActiveCamera?.()?.getClippingRange?.();
-        // console.log(`   📐 Actor bounds: ${actorBounds ? actorBounds.map(v => v.toFixed?.(2) ?? v).join(', ') : 'n/a'}`);
-        // console.log(`   🎥 Camera clip range: ${clip ? clip.map(v => v.toFixed?.(2) ?? v).join(', ') : 'n/a'}, viewPlaneNormal: ${cam?.viewPlaneNormal ? cam.viewPlaneNormal.map(v => v.toFixed?.(3) ?? v).join(', ') : 'n/a'}`);
-      }
+    } else if (log) {
+      // console.warn('[PlaneCutterService] ModelProjectionService not available; skipping projection update');
     }
   }
 
@@ -1270,6 +869,7 @@ class PlaneCutterService extends PubSubService {
         orientation,
         plane,
         modelCutters: new Map(),
+        mode: 'thin', // Default; will be overridden by caller when necessary
       };
 
       // Event listeners will be set up after all plane cutters are created
@@ -1284,6 +884,108 @@ class PlaneCutterService extends PubSubService {
       // console.error(`❌ [PlaneCutterService] Error creating plane cutter for ${orientation}:`, error);
       return null;
     }
+  }
+
+  /**
+   * Ensure viewport descriptors are available; if not, try to initialize.
+   */
+  private async _ensureViewportDescriptors(): Promise<boolean> {
+    if (this.viewportDescriptors.length > 0) {
+      return true;
+    }
+
+    return await this.initialize();
+  }
+
+  private _getViewportDescriptor(viewportId: string) {
+    return this.viewportDescriptors.find(vp => vp.viewportId === viewportId);
+  }
+
+  private _resolveViewportOrientation(viewport: any): 'axial' | 'coronal' | 'sagittal' | null {
+    const cached = this._getViewportDescriptor(viewport.id);
+    if (cached?.orientation) {
+      return cached.orientation;
+    }
+
+    return this._getViewportOrientation(viewport);
+  }
+
+  private _getPlaneCutterForViewport(viewportId: string, mode: PlaneCutterMode): PlaneCutterData | undefined {
+    return this.planeCutters.find(pc => pc.viewportId === viewportId && pc.mode === mode);
+  }
+
+  private _getOppositeMode(mode: PlaneCutterMode): PlaneCutterMode {
+    return mode === 'thin' ? 'slab' : 'thin';
+  }
+
+  /**
+   * Choose the cutter template based on the current thickness.
+   */
+  private _selectTemplateForThickness(thickness: number): PlaneCutterTemplate {
+    return (
+      this.cutterTemplates.find(template => template.shouldUse(thickness)) ||
+      this.cutterTemplates[0]
+    );
+  }
+
+  /**
+   * Read the latest slab thickness from the viewport (defaults to 0).
+   */
+  private _readViewportThickness(viewportId: string): number {
+    const viewport = this._getViewportById(viewportId);
+    if (!viewport) {
+      return 0;
+    }
+    try {
+      const props = viewport.getProperties?.();
+      return props?.slabThickness ?? 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  private _setModelVisibility(planeCutter: PlaneCutterData, modelId: string, visible: boolean): void {
+    const modelCutterData = planeCutter.modelCutters.get(modelId);
+    if (!modelCutterData || !modelCutterData.actor?.setVisibility) {
+      return;
+    }
+
+    try {
+      modelCutterData.actor.setVisibility(visible);
+    } catch (e) {
+      // Ignore visibility errors
+    }
+  }
+
+  /**
+   * Lazily create or return a plane cutter for the requested viewport/mode.
+   */
+  private async _getOrCreatePlaneCutterForViewport(
+    viewport: any,
+    orientation: 'axial' | 'coronal' | 'sagittal',
+    mode: PlaneCutterMode
+  ): Promise<PlaneCutterData | null> {
+    const existing = this._getPlaneCutterForViewport(viewport.id, mode);
+    if (existing) {
+      return existing;
+    }
+
+    const planeCutter = await this._createPlaneCutterForViewport(viewport, orientation);
+    if (!planeCutter) {
+      return null;
+    }
+
+    planeCutter.mode = mode;
+    const props = viewport.getProperties?.();
+    planeCutter.slabThickness = mode === 'slab'
+      ? props?.slabThickness ?? 0
+      : 0;
+
+    this.planeCutters.push(planeCutter);
+
+    await this._setupSynchronizedUpdates([planeCutter]);
+
+    return planeCutter;
   }
 
   /**
@@ -1393,8 +1095,10 @@ class PlaneCutterService extends PubSubService {
 
     planeCutter.modelCutters.set(modelId, modelCutterData);
 
-    // Apply slab cutting (will handle both thin slice and thick slab cases)
-    this._rebuildSlabCut(modelCutterData, planeCutter, { log: true });
+    // Apply slab cutting only when the slab cutter is active
+    if (planeCutter.mode === 'slab' && (planeCutter.slabThickness ?? 0) > 0) {
+      this._rebuildSlabCut(modelCutterData, planeCutter, { log: true });
+    }
 
     // Check cutter output for debugging
     const outputData = cutter.getOutputData();
@@ -1661,6 +1365,7 @@ class PlaneCutterService extends PubSubService {
     this.planeCutters = [];
     this.colorIndex = 0;
     this.modelColors.clear(); // Clear model color assignments
+    this.viewportDescriptors = [];
 
     // console.log('✅ [PlaneCutterService] Cleanup complete');
   }
