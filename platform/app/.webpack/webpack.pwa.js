@@ -181,14 +181,14 @@ module.exports = (env, argv) => {
         },
         {
           // Proxy for 3D model server - API endpoints
-          context: ['/api/models', '/api/health'],
+          context: ['/api/models', '/api/health', '/api/ndi'],
           target: 'http://localhost:5001',
           changeOrigin: true,
           secure: false,
         },
         {
           // Proxy for 3D model server - Static model files
-          context: ['/models'],
+          context: ['/models', '/ndi'],
           target: 'http://localhost:5001',
           changeOrigin: true,
           secure: false,

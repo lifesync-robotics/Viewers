@@ -139,6 +139,39 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
     setShowConfigManager(false);
   }, []);
 
+  // Auto-load the most recent configuration from the database when the dialog opens
+  const fetchLatestConfiguration = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const apiBase = getApiBase();
+      const response = await fetch(`${apiBase}/api/tracking/configurations?limit=1`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Request failed with status ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.success && result.configurations?.length) {
+        const latestConfig: TrackingConfiguration = result.configurations[0];
+        loadConfiguration(latestConfig);
+        setSuccess(`Auto-loaded "${latestConfig.name}" from database`);
+      } else if (result.success) {
+        setSuccess('No saved configurations found. Configure and save to get started.');
+      } else {
+        setError(result.error || 'Failed to load configuration from database');
+      }
+    } catch (err) {
+      setError(`Failed to auto-load configuration: ${err.message}`);
+      console.error('Error auto-loading configuration:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [loadConfiguration]);
+
   // Save configuration
   const saveConfiguration = async () => {
     try {
@@ -458,6 +491,13 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
     });
   };
 
+  // Automatically pull the latest saved configuration when the dialog opens
+  useEffect(() => {
+    if (open) {
+      fetchLatestConfiguration();
+    }
+  }, [open, fetchLatestConfiguration]);
+
   if (!open) return null;
 
   return (
@@ -485,178 +525,174 @@ const TrackingConfigDialog: React.FC<TrackingConfigDialogProps> = ({
             </div>
           )}
 
-          {/* Configuration Manager Toggle */}
-          <div className="config-manager-toggle">
-            <button
-              className="btn btn-secondary"
-              onClick={() => setShowConfigManager(!showConfigManager)}
-            >
-              {showConfigManager ? 'Hide' : 'Load'} Saved Configurations
-            </button>
-          </div>
-
-          {/* Configuration Manager */}
-          {showConfigManager && (
-            <ConfigurationManager
-              onConfigurationLoad={loadConfiguration}
-              currentConfigId={undefined}
-            />
-          )}
-
-          {/* Basic Settings */}
-          <div className="config-section">
-            <h3>Basic Information</h3>
-            <div className="form-group">
-              <label htmlFor="config-name">Configuration Name *</label>
-              <input
-                id="config-name"
-                type="text"
-                value={configName}
-                onChange={(e) => setConfigName(e.target.value)}
-                placeholder="e.g., OR1 Simulation Setup"
-                className="form-input"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="config-description">Description</label>
-              <textarea
-                id="config-description"
-                value={configDescription}
-                onChange={(e) => setConfigDescription(e.target.value)}
-                placeholder="Optional description"
-                className="form-textarea"
-                rows={2}
-              />
-            </div>
-          </div>
-
-          {/* Reference Marker Selection */}
-          <div className="config-section">
-            <h3>Reference Marker</h3>
-            <ReferenceMarkerSelector
-              selectedMarkerId={selectedReferenceMarkerId}
-              onSelect={setSelectedReferenceMarkerId}
-              disabled={loading}
-            />
-          </div>
-
-          {/* Instrument Selection */}
-          <div className="config-section">
-            <h3>Instruments</h3>
-            <InstrumentSelector
-              selectedInstrumentIds={selectedInstrumentIds}
-              alternativeRomSelections={alternativeRomSelections}
-              onInstrumentToggle={handleInstrumentToggle}
-              onAlternativeRomChange={handleAlternativeRomChange}
-              disabled={loading}
-            />
-          </div>
-
-          {/* Tracking Mode */}
-          <div className="config-section">
-            <h3>Tracking Mode</h3>
-            <TrackingModeToggle
-              mode={trackingMode}
-              onChange={setTrackingMode}
-              disabled={loading}
-            />
-          </div>
-
-          {/* NDI Connection Settings (Hardware Mode Only) */}
-          {trackingMode === 'hardware' && (
-            <div className="config-section">
-              <h3>NDI Connection</h3>
-              <NDIConnectionSettings
-                ndiConfig={ndiConfig}
-                onChange={setNdiConfig}
-                onTestConnection={testConnection}
-                connectionStatus={connectionStatus}
-                disabled={loading}
-              />
-            </div>
-          )}
-
-          {/* Test Connection Button (Simulation Mode) */}
-          {trackingMode === 'simulation' && (
-            <div className="config-section">
-              <button
-                className="btn btn-secondary"
-                onClick={testConnection}
-                disabled={loading}
-              >
-                Test Simulation Connection
-              </button>
-              {connectionStatus && (
-                <div className={`connection-status ${connectionStatus.success ? 'success' : 'error'}`}>
-                  <span className="status-icon">{connectionStatus.success ? '✓' : '✗'}</span>
-                  {connectionStatus.message}
-                  {connectionStatus.tracker_info && (
-                    <div className="tracker-info">
-                      <div>Model: {connectionStatus.tracker_info.model}</div>
-                      <div>Serial: {connectionStatus.tracker_info.serial_number}</div>
-                      <div>Status: {connectionStatus.tracker_info.status}</div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Advanced Settings */}
           <div className="config-section">
             <div className="advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>
-              <h3>Advanced Settings</h3>
+              <h3>Advanced</h3>
               <span className="toggle-icon">{showAdvanced ? '▼' : '▶'}</span>
             </div>
             {showAdvanced && (
               <div className="advanced-settings">
-                <div className="form-group">
-                  <label htmlFor="tracking-frequency">Tracking Frequency (Hz)</label>
-                  <input
-                    id="tracking-frequency"
-                    type="number"
-                    value={trackingFrequency}
-                    onChange={(e) => setTrackingFrequency(parseInt(e.target.value))}
-                    min={20}
-                    max={120}
-                    className="form-input"
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="coordinate-system">Coordinate System</label>
-                  <select
-                    id="coordinate-system"
-                    value={coordinateSystem}
-                    onChange={(e) => setCoordinateSystem(e.target.value)}
-                    className="form-select"
-                  >
-                    <option value="ndi">NDI</option>
-                    <option value="patient">Patient</option>
-                    <option value="world">World</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label htmlFor="quality-threshold">Quality Threshold</label>
-                  <input
-                    id="quality-threshold"
-                    type="number"
-                    value={qualityThreshold}
-                    onChange={(e) => setQualityThreshold(parseFloat(e.target.value))}
-                    min={0}
-                    max={1}
-                    step={0.1}
-                    className="form-input"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>
+                <div className="config-section">
+                  <h4>Basic Information</h4>
+                  <div className="form-group">
+                    <label htmlFor="config-name">Configuration Name *</label>
                     <input
-                      type="checkbox"
-                      checked={autoReferenceDetection}
-                      onChange={(e) => setAutoReferenceDetection(e.target.checked)}
+                      id="config-name"
+                      type="text"
+                      value={configName}
+                      onChange={(e) => setConfigName(e.target.value)}
+                      placeholder="e.g., OR1 Simulation Setup"
+                      className="form-input"
                     />
-                    Auto Reference Detection
-                  </label>
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="config-description">Description</label>
+                    <textarea
+                      id="config-description"
+                      value={configDescription}
+                      onChange={(e) => setConfigDescription(e.target.value)}
+                      placeholder="Optional description"
+                      className="form-textarea"
+                      rows={2}
+                    />
+                  </div>
+                </div>
+
+                <div className="config-section">
+                  <h4>Reference Marker</h4>
+                  <ReferenceMarkerSelector
+                    selectedMarkerId={selectedReferenceMarkerId}
+                    onSelect={setSelectedReferenceMarkerId}
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="config-section">
+                  <h4>Instruments</h4>
+                  <InstrumentSelector
+                    selectedInstrumentIds={selectedInstrumentIds}
+                    alternativeRomSelections={alternativeRomSelections}
+                    onInstrumentToggle={handleInstrumentToggle}
+                    onAlternativeRomChange={handleAlternativeRomChange}
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="config-section">
+                  <h4>Tracking Mode & Connection</h4>
+                  <TrackingModeToggle
+                    mode={trackingMode}
+                    onChange={setTrackingMode}
+                    disabled={loading}
+                  />
+
+                  {trackingMode === 'hardware' && (
+                    <NDIConnectionSettings
+                      ndiConfig={ndiConfig}
+                      onChange={setNdiConfig}
+                      onTestConnection={testConnection}
+                      connectionStatus={connectionStatus}
+                      disabled={loading}
+                    />
+                  )}
+
+                  {trackingMode === 'simulation' && (
+                    <div className="config-section">
+                      <button
+                        className="btn btn-secondary"
+                        onClick={testConnection}
+                        disabled={loading}
+                      >
+                        Test Simulation Connection
+                      </button>
+                      {connectionStatus && (
+                        <div className={`connection-status ${connectionStatus.success ? 'success' : 'error'}`}>
+                          <span className="status-icon">{connectionStatus.success ? '✓' : '✗'}</span>
+                          {connectionStatus.message}
+                          {connectionStatus.tracker_info && (
+                            <div className="tracker-info">
+                              <div>Model: {connectionStatus.tracker_info.model}</div>
+                              <div>Serial: {connectionStatus.tracker_info.serial_number}</div>
+                              <div>Status: {connectionStatus.tracker_info.status}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="config-section">
+                  <h4>Advanced Tuning</h4>
+                  <div className="form-group">
+                    <label htmlFor="tracking-frequency">Tracking Frequency (Hz)</label>
+                    <input
+                      id="tracking-frequency"
+                      type="number"
+                      value={trackingFrequency}
+                      onChange={(e) => setTrackingFrequency(parseInt(e.target.value))}
+                      min={20}
+                      max={120}
+                      className="form-input"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="coordinate-system">Coordinate System</label>
+                    <select
+                      id="coordinate-system"
+                      value={coordinateSystem}
+                      onChange={(e) => setCoordinateSystem(e.target.value)}
+                      className="form-select"
+                    >
+                      <option value="ndi">NDI</option>
+                      <option value="patient">Patient</option>
+                      <option value="world">World</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="quality-threshold">Quality Threshold</label>
+                    <input
+                      id="quality-threshold"
+                      type="number"
+                      value={qualityThreshold}
+                      onChange={(e) => setQualityThreshold(parseFloat(e.target.value))}
+                      min={0}
+                      max={1}
+                      step={0.1}
+                      className="form-input"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={autoReferenceDetection}
+                        onChange={(e) => setAutoReferenceDetection(e.target.checked)}
+                      />
+                      Auto Reference Detection
+                    </label>
+                  </div>
+                </div>
+
+                <div className="config-section">
+                  <h4>Saved Configurations</h4>
+                  <p className="config-description">
+                    Latest configuration loads automatically when this dialog opens.
+                  </p>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowConfigManager(!showConfigManager)}
+                    disabled={loading}
+                  >
+                    {showConfigManager ? 'Hide' : 'Manage'} Saved Configurations
+                  </button>
+                  {showConfigManager && (
+                    <ConfigurationManager
+                      onConfigurationLoad={loadConfiguration}
+                      currentConfigId={undefined}
+                    />
+                  )}
                 </div>
               </div>
             )}

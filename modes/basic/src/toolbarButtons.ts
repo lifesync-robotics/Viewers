@@ -1,8 +1,20 @@
-import type { Button } from '@ohif/core/types';
-
 import { EVENTS } from '@cornerstonejs/core';
 import { ViewportGridService } from '@ohif/core';
 import i18n from 'i18next';
+
+// Define Button type locally to match OHIF's toolbar button structure
+type Button = {
+  id: string;
+  uiType: string;
+  props: {
+    label?: string;
+    icon?: string;
+    commands?: any;
+    evaluate?: any;
+    listeners?: any;
+    [key: string]: any;
+  };
+};
 
 const callbacks = (toolName: string) => [
   {

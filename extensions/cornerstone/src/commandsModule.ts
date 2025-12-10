@@ -1515,13 +1515,13 @@ function commandsModule({
                   (dims[1] * spacing[1]) ** 2 +
                   (dims[2] * spacing[2]) ** 2
                 );
-                const maxSamples = mapper.getMaximumSamplesPerRay?.() || 4000;
+                const maxSamples = (mapper as any).getMaximumSamplesPerRay?.() || 4000;
                 const minRequiredDistance = (spatialDiagonal / (maxSamples * 0.8));
-                const currentDistance = mapper.getSampleDistance?.();
+                const currentDistance = (mapper as any).getSampleDistance?.();
 
                 if (!currentDistance || currentDistance < minRequiredDistance) {
                   console.log(`[setViewportPreset] Adjusting sample distance: ${currentDistance?.toFixed(4)} → ${minRequiredDistance.toFixed(4)}`);
-                  mapper.setSampleDistance(minRequiredDistance);
+                  (mapper as any).setSampleDistance(minRequiredDistance);
                 }
               }
             }
@@ -1542,32 +1542,123 @@ function commandsModule({
 
     setVolumeRenderingQulaity: ({ viewportId, volumeQuality }) => {
       const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+      const actors = viewport.getActors();
 
-      // console.log(`[setVolumeRenderingQuality] Viewport type: ${viewport.type}, quality: ${volumeQuality}, id: ${viewportId}`);
+      console.log(`[setVolumeRenderingQuality] Viewport: ${viewportId}, Quality: ${volumeQuality}, Actors: ${actors.length}`);
 
-      const { actor } = viewport.getActors()[0];
-      const mapper = actor.getMapper();
-      const image = mapper.getInputData();
-      const dims = image.getDimensions();
-      const spacing = image.getSpacing();
-      const spatialDiagonal = vec3.length(
-        vec3.fromValues(dims[0] * spacing[0], dims[1] * spacing[1], dims[2] * spacing[2])
-      );
+      let appliedCount = 0;
+      actors.forEach(({ actor, uid }, index) => {
+        const mapper = actor.getMapper();
+        // Only apply to mappers that have input data (volumes)
+        if (mapper && mapper.getInputData && mapper.setSampleDistance) {
+          const image = mapper.getInputData();
+          if (!image) return;
 
-      // Calculate desired sample distance based on quality
-      let sampleDistance = spacing.reduce((a, b) => a + b) / 3.0;
-      sampleDistance /= volumeQuality > 1 ? 0.5 * volumeQuality ** 2 : 1.0;
+          const dims = image.getDimensions();
+          const spacing = image.getSpacing();
+          const spatialDiagonal = vec3.length(
+            vec3.fromValues(dims[0] * spacing[0], dims[1] * spacing[1], dims[2] * spacing[2])
+          );
 
-      // Ensure sample distance is large enough to stay under the maximum samples limit
-      const maxSamples = mapper.getMaximumSamplesPerRay?.() || 4000;
-      const minRequiredDistance = (spatialDiagonal / (maxSamples * 0.8));
+          // Calculate desired sample distance based on quality
+          let sampleDistance = spacing.reduce((a, b) => a + b) / 3.0;
+          sampleDistance /= volumeQuality > 1 ? 0.5 * volumeQuality ** 2 : 1.0;
 
-      // Use the larger of the two (safer)
-      const safeSampleDistance = Math.max(sampleDistance, minRequiredDistance);
+          // Ensure sample distance is large enough to stay under the maximum samples limit
+          const maxSamples = mapper.getMaximumSamplesPerRay?.() || 4000;
+          const minRequiredDistance = (spatialDiagonal / (maxSamples * 0.8));
+          const safeSampleDistance = Math.max(sampleDistance, minRequiredDistance);
 
-      console.log(`[setVolumeRenderingQuality] Quality: ${volumeQuality}, desired: ${sampleDistance.toFixed(4)}, minRequired: ${minRequiredDistance.toFixed(4)}, final: ${safeSampleDistance.toFixed(4)}`);
-      mapper.setSampleDistance(safeSampleDistance);
-      viewport.render();
+          // Disable auto-adjust
+          if (mapper.setAutoAdjustSampleDistances) {
+            mapper.setAutoAdjustSampleDistances(false);
+          }
+
+          mapper.setSampleDistance(safeSampleDistance);
+          console.log(`  - Actor ${index} (${uid}): Set sample distance to ${safeSampleDistance.toFixed(4)}`);
+          appliedCount++;
+        }
+      });
+
+      if (appliedCount > 0) {
+        viewport.render();
+      } else {
+        console.warn('[setVolumeRenderingQuality] No suitable mappers found');
+      }
+    },
+
+    /**
+     * Sets the image sample distance for volume rendering (controls ray density per pixel).
+     * Higher values = fewer rays per pixel = better performance but lower quality.
+     * @param {string} viewportId - The ID of the viewport to set the image sample distance.
+     * @param {number} imageSampleDistance - The sample distance factor (1.0 = normal, 2.0 = half rays).
+     */
+    setVolumeRenderingImageSampleDistance: ({ viewportId, imageSampleDistance }) => {
+      const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+      const actors = viewport.getActors();
+
+      console.log(`[setVolumeRenderingImageSampleDistance] Viewport: ${viewportId}, imageSampleDistance: ${imageSampleDistance}, Actors: ${actors.length}`);
+
+      let appliedCount = 0;
+      actors.forEach(({ actor, uid }, index) => {
+        const mapper = actor.getMapper();
+        if (mapper && mapper.setImageSampleDistance) {
+          mapper.setImageSampleDistance(imageSampleDistance);
+
+          // CRITICAL: Disable auto-adjust so it doesn't override our setting
+          if (mapper.setAutoAdjustSampleDistances) {
+            mapper.setAutoAdjustSampleDistances(false);
+          }
+
+          console.log(`  - Actor ${index} (${uid}): Set image sample distance to ${imageSampleDistance}`);
+          appliedCount++;
+        }
+      });
+
+      if (appliedCount > 0) {
+        viewport.render();
+      } else {
+        console.warn('[setVolumeRenderingImageSampleDistance] No suitable mappers found');
+      }
+    },
+
+    /**
+     * Sets interaction sample distance factor for volume rendering.
+     * Reduces quality during interaction (dragging/rotating) for better performance.
+     * @param {string} viewportId - The ID of the viewport.
+     * @param {number} initialScale - Quality reduction factor when interaction starts (default: 2.0).
+     * @param {number} interactionFactor - Additional quality reduction during interaction (default: 2.0).
+     */
+    setVolumeRenderingInteractionSampleDistance: ({ viewportId, initialScale = 2.0, interactionFactor = 2.0 }) => {
+      const viewport = cornerstoneViewportService.getCornerstoneViewport(viewportId);
+      const actors = viewport.getActors();
+
+      console.log(`[setVolumeRenderingInteractionSampleDistance] Viewport: ${viewportId}, scale: ${initialScale}, factor: ${interactionFactor}`);
+
+      let appliedCount = 0;
+      actors.forEach(({ actor, uid }, index) => {
+        const mapper = actor.getMapper();
+        if (mapper) {
+          if (mapper.setInitialInteractionScale) {
+            mapper.setInitialInteractionScale(initialScale);
+          }
+          if (mapper.setInteractionSampleDistanceFactor) {
+            mapper.setInteractionSampleDistanceFactor(interactionFactor);
+          }
+          // CRITICAL: Disable auto-adjust
+          if (mapper.setAutoAdjustSampleDistances) {
+            mapper.setAutoAdjustSampleDistances(false);
+          }
+          console.log(`  - Actor ${index} (${uid}): Updated interaction settings`);
+          appliedCount++;
+        }
+      });
+
+      if (appliedCount > 0) {
+        viewport.render();
+      } else {
+        console.warn('[setVolumeRenderingInteractionSampleDistance] No suitable mappers found');
+      }
     },
 
     /**
@@ -2722,6 +2813,76 @@ function commandsModule({
         planeCutterService.disable();
       }
     },
+    setOrientationMarkerType: ({ markerType }) => {
+      console.log('🔄 [setOrientationMarkerType] Setting orientation marker type to:', markerType);
+      
+      const toolGroupIds = toolGroupService.getToolGroupIds();
+      const { OrientationMarkerTool } = cornerstoneTools;
+      
+      // AXIS = 2, CUBE = 1 (from OrientationMarkerTool constants)
+      const validTypes = {
+        'axis': 2,
+        'cube': 1,
+        'axes': 2, // alias for axis
+      };
+      
+      const overlayMarkerType = validTypes[markerType?.toLowerCase()] ?? 2; // default to AXIS
+      
+      toolGroupIds.forEach(toolGroupId => {
+        const toolGroup = ToolGroupManager.getToolGroup(toolGroupId);
+        if (toolGroup) {
+          try {
+            // Get current configuration
+            const currentConfig = toolGroup.getToolConfiguration(toolNames.OrientationMarker);
+            
+            // Update the configuration with new marker type
+            toolGroup.setToolConfiguration(toolNames.OrientationMarker, {
+              ...currentConfig,
+              overlayMarkerType,
+            });
+            
+            console.log(`✅ Updated orientation marker for tool group: ${toolGroupId}`);
+          } catch (error) {
+            console.warn(`Tool ${toolNames.OrientationMarker} not found in group ${toolGroupId}`);
+          }
+        }
+      });
+      
+      // Trigger re-render
+      const renderingEngine = cornerstoneViewportService.getRenderingEngine();
+      if (renderingEngine) {
+        renderingEngine.render();
+      }
+      
+      uiNotificationService.show({
+        title: 'Orientation Marker',
+        message: `Orientation marker style set to: ${markerType.toUpperCase()}`,
+        type: 'info',
+        duration: 2000,
+      });
+    },
+    toggleOrientationMarkerType: () => {
+      console.log('🔄 [toggleOrientationMarkerType] Toggling orientation marker type');
+      
+      const toolGroup = ToolGroupManager.getToolGroup('default');
+      if (!toolGroup) {
+        console.warn('Default tool group not found');
+        return;
+      }
+      
+      try {
+        const currentConfig = toolGroup.getToolConfiguration(toolNames.OrientationMarker);
+        const currentType = currentConfig?.overlayMarkerType ?? 2;
+        
+        // Toggle between AXIS (2) and CUBE (1)
+        const newType = currentType === 2 ? 1 : 2;
+        const typeName = newType === 2 ? 'axis' : 'cube';
+        
+        actions.setOrientationMarkerType({ markerType: typeName });
+      } catch (error) {
+        console.error('Error toggling orientation marker:', error);
+      }
+    },
     activateSelectedSegmentationOfType: ({ segmentationRepresentationType }) => {
       const { segmentationService, viewportGridService } = servicesManager.services;
       const activeViewportId = viewportGridService.getActiveViewportId();
@@ -3290,9 +3451,33 @@ function commandsModule({
       storeContexts: [],
       options: {},
     },
+    setOrientationMarkerType: {
+      commandFn: actions.setOrientationMarkerType,
+      storeContexts: [],
+      options: {},
+    },
+    toggleOrientationMarkerType: {
+      commandFn: actions.toggleOrientationMarkerType,
+      storeContexts: [],
+      options: {},
+    },
+    setVolumeRenderingImageSampleDistance: {
+      commandFn: actions.setVolumeRenderingImageSampleDistance,
+      storeContexts: [],
+      options: {},
+    },
+    setVolumeRenderingInteractionSampleDistance: {
+      commandFn: actions.setVolumeRenderingInteractionSampleDistance,
+      storeContexts: [],
+      options: {},
+    },
   };
 
   console.log('📦 [commandsModule] Total commands registered:', Object.keys(definitions).length);
+  console.log('🔧 [commandsModule] Volume rendering performance commands:');
+  console.log('  - setVolumeRenderingImageSampleDistance:', !!definitions.setVolumeRenderingImageSampleDistance);
+  console.log('  - setVolumeRenderingInteractionSampleDistance:', !!definitions.setVolumeRenderingInteractionSampleDistance);
+  console.log('  - setVolumeRenderingQulaity:', !!definitions.setVolumeRenderingQulaity);
   console.log('📦 [commandsModule] showModelUploadModal registered:', !!definitions.showModelUploadModal);
 
   if (definitions.showModelUploadModal) {
@@ -3305,11 +3490,19 @@ function commandsModule({
     console.error('❌ [commandsModule] showModelUploadModal command NOT FOUND in definitions!');
   }
 
-  return {
+  const commandsModuleExport = {
     actions,
     definitions,
     defaultContext: 'CORNERSTONE',
   };
+
+  // Expose to window for debugging
+  if (typeof window !== 'undefined') {
+    window.cornerstoneCommandsModule = commandsModuleExport;
+    console.log('✅ [commandsModule] Exposed to window.cornerstoneCommandsModule for debugging');
+  }
+
+  return commandsModuleExport;
 }
 
 export default commandsModule;

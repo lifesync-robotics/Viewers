@@ -21,6 +21,7 @@ export class ToolProjectionRenderer {
   private extensionLength: number = 50; // 50mm = 5cm default
   private instrumentLength: number = 200; // 200mm = 20cm default (instrument body length in -z direction)
   private debugCount: Map<string, number> = new Map(); // Per-viewport debug counter
+  private readonly LOG_PREFIX = '[ToolProj]';
 
   constructor(servicesManager: any, extensionLength: number = 50, instrumentLength: number = 200) {
     this.servicesManager = servicesManager;
@@ -62,11 +63,26 @@ export class ToolProjectionRenderer {
         return; // Skip 3D viewports
       }
 
+      // Debug logging for alignment check
+      const currentCount = this.debugCount.get(viewport.id) || 0;
+      const shouldLog = currentCount >= 1 && currentCount <= 20;
+
+      if (shouldLog) {
+        this._log(`\n${'='.repeat(80)}`);
+        this._log(`🎯 VIEWPORT PROJECTION UPDATE: ${viewport.id} (Frame ${currentCount + 1})`);
+        this._log(`${'='.repeat(80)}`);
+      }
+
       // Render instrument body (solid line from base to origin)
       this._renderInstrumentBody(viewport, instrumentBase, toolRep.origin, toolRep.zAxis);
 
       // Render extension part (from origin to tip)
       this._renderProjectionOnViewport(viewport, toolRep.origin, tipPoint, toolRep.zAxis);
+
+      // Post-render alignment verification
+      if (shouldLog) {
+        this._verifyAlignment(viewport, instrumentBase, toolRep.origin, tipPoint, toolRep.zAxis);
+      }
     });
   }
 
@@ -112,32 +128,79 @@ export class ToolProjectionRenderer {
   }
 
   /**
-   * Calculate instrument base point: origin - zAxis * instrumentLength
-   * This represents the back end of the instrument body (in -z direction)
+   * Prefixed log helpers for easy filtering
    */
-  private _calculateInstrumentBase(toolRep: ToolRepresentation): number[] {
-    const zAxis = vec3.fromValues(
-      toolRep.zAxis[0],
-      toolRep.zAxis[1],
-      toolRep.zAxis[2]
-    );
+  private _log(...args: any[]): void {
+    console.log(this.LOG_PREFIX, ...args);
+  }
 
-    // Scale zAxis by instrument length (negative direction)
-    vec3.scale(zAxis, zAxis, -this.instrumentLength);
+  private _warn(...args: any[]): void {
+    console.warn(this.LOG_PREFIX, ...args);
+  }
 
-    return [
-      toolRep.origin[0] + zAxis[0],
-      toolRep.origin[1] + zAxis[1],
-      toolRep.origin[2] + zAxis[2]
-    ];
+  private _error(...args: any[]): void {
+    console.error(this.LOG_PREFIX, ...args);
   }
 
   /**
-   * Render projection on a single viewport with correct plane intersection math
+   * Identify viewport type by name (axial, coronal, sagittal)
+   * Returns the viewport type or null if unknown
+   */
+  private _identifyViewportType(viewport: any): 'axial' | 'coronal' | 'sagittal' | null {
+    const viewportId = viewport.id;
+    if (!viewportId) {
+      return null;  // ✅ Handle null/undefined gracefully
+    }
+    
+    const viewportIdLower = viewportId.toLowerCase();
+    
+    if (viewportIdLower.includes('axial')) {
+      return 'axial';
+    } else if (viewportIdLower.includes('coronal')) {
+      return 'coronal';
+    } else if (viewportIdLower.includes('sagittal')) {
+      return 'sagittal';
+    }
+    
+    return null;
+  }
+
+  /**
+   * Get the expected plane normal for a viewport type.
    *
-   * For MPR viewports, we need to:
-   * 1. Calculate if/where the tool intersects the MPR slice plane
-   * 2. Draw the intersection correctly, not just project 3D points
+   * We use axis-aligned unit vectors in patient space. Whether the
+   * underlying volume is LPS (DICOM default) or RAS, the plane orientation
+   * is defined by which axis is dominant, not the sign. Cross‑validation
+   * with the camera normal handles sign/direction; we just need the axis.
+   * - Axial: Z axis (superior–inferior)
+   * - Sagittal: X axis (left–right)
+   * - Coronal: Y axis (anterior–posterior)
+   */
+
+  private _getStandardPlaneNormal(viewportType: 'axial' | 'coronal' | 'sagittal'): vec3 {
+    const standardNormals = {
+      'axial': vec3.fromValues(0, 0, 1),      // Z-axis (superior-inferior)
+      'sagittal': vec3.fromValues(1, 0, 0),   // X-axis (left-right)
+      'coronal': vec3.fromValues(0, 1, 0)     // Y-axis (anterior-posterior)
+    };
+    
+    return standardNormals[viewportType];
+  }
+
+  /**
+   * Check if two normals are approximately equal (within tolerance)
+   */
+  private _normalsMatch(normal1: vec3, normal2: vec3, tolerance: number = 0.1): boolean {
+    const diff = vec3.subtract(vec3.create(), normal1, normal2);
+    const distance = vec3.length(diff);
+    return distance < tolerance;
+  }
+
+
+
+
+  /**
+   * Render projection on a single viewport with intersection-based styling
    */
   private _renderProjectionOnViewport(
     viewport: any,
@@ -148,21 +211,22 @@ export class ToolProjectionRenderer {
     // Increment debug counter for this viewport
     const currentCount = this.debugCount.get(viewport.id) || 0;
     this.debugCount.set(viewport.id, currentCount + 1);
-    const shouldLog = currentCount < 5; // Log first 5 times per viewport
+    const shouldLog = currentCount >= 1 && currentCount <= 20; // Log frames 1-20 per viewport (aligned with InstrumentProjectionMode)
 
     try {
-      // Get viewport name for debugging
+      // Step 1: Identify viewport type by name
+      const viewportType = this._identifyViewportType(viewport);
       const viewportName = viewport.id || 'unknown';
 
       if (shouldLog) {
-        console.log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
-        console.log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
-        console.log(`📍 Tool Tip: [${tipPoint.map(v => v.toFixed(1)).join(', ')}]`);
-        console.log(`📍 Tool Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
-        console.log(`📏 Extension Length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
+        this._log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
+        this._log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
+        this._log(`📍 Tool Tip: [${tipPoint.map(v => v.toFixed(1)).join(', ')}]`);
+        this._log(`📍 Tool Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
+        this._log(`📏 Extension Length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
       }
 
-      // Get viewport camera info
+      // Step 2: Get viewport camera info (for slice plane)
       const camera = viewport.getCamera();
       const planeNormal = vec3.fromValues(
         camera.viewPlaneNormal[0],
@@ -175,113 +239,101 @@ export class ToolProjectionRenderer {
         camera.focalPoint[2]
       );
 
-      if (shouldLog) {
-        console.log(`\n📐 Viewport Plane Info:`);
-        console.log(`   Plane Normal: [${planeNormal[0].toFixed(3)}, ${planeNormal[1].toFixed(3)}, ${planeNormal[2].toFixed(3)}]`);
-        console.log(`   Plane Point (focal): [${planePoint[0].toFixed(1)}, ${planePoint[1].toFixed(1)}, ${planePoint[2].toFixed(1)}]`);
+      // Intersection-aware workflow:
+      // - Compute extension end strictly along the tool's z-axis using the configured length.
+      // - Use signed distances to decide if the segment crosses the slice plane.
+      // - Render solid when crossing, dashed otherwise.
 
-        // Identify plane type based on normal
-        let planeType = 'Unknown';
-        if (Math.abs(planeNormal[2]) > 0.9) planeType = 'Axial (Z-normal)';
-        else if (Math.abs(planeNormal[0]) > 0.9) planeType = 'Sagittal (X-normal)';
-        else if (Math.abs(planeNormal[1]) > 0.9) planeType = 'Coronal (Y-normal)';
-        console.log(`   Plane Type: ${planeType}`);
-      }
-
-      // Calculate tool line intersection with MPR plane
       const originVec = vec3.fromValues(origin[0], origin[1], origin[2]);
-      const tipVec = vec3.fromValues(tipPoint[0], tipPoint[1], tipPoint[2]);
-      const toolDirection = vec3.subtract(vec3.create(), tipVec, originVec);
-      const toolLength = vec3.length(toolDirection);
-      vec3.normalize(toolDirection, toolDirection);
+      const zAxisVec = vec3.fromValues(zAxis[0], zAxis[1], zAxis[2]);
+      const hasDirection = vec3.length(zAxisVec) > 0.001;
 
-      if (shouldLog) {
-        console.log(`\n🔧 Tool Line Info:`);
-        console.log(`   Direction (normalized): [${toolDirection[0].toFixed(3)}, ${toolDirection[1].toFixed(3)}, ${toolDirection[2].toFixed(3)}]`);
-        console.log(`   Length: ${toolLength.toFixed(2)}mm`);
-      }
-
-      // Line-plane intersection math:
-      // Plane equation: n · (P - P0) = 0, where n = planeNormal, P0 = planePoint
-      // Line equation: P = origin + t * toolDirection
-      // Solve for t: t = n · (P0 - origin) / (n · toolDirection)
-
-      const originToPlane = vec3.subtract(vec3.create(), planePoint, originVec);
-      const numerator = vec3.dot(planeNormal, originToPlane);
-      const denominator = vec3.dot(planeNormal, toolDirection);
-
-      if (shouldLog) {
-        console.log(`\n🧮 Intersection Math:`);
-        console.log(`   Numerator (n · (P0 - origin)): ${numerator.toFixed(4)}`);
-        console.log(`   Denominator (n · direction): ${denominator.toFixed(4)}`);
-      }
-
-      // Check if line is parallel to plane
-      const PARALLEL_THRESHOLD = 0.001;
-      if (Math.abs(denominator) < PARALLEL_THRESHOLD) {
-        // Tool is parallel to plane
-        // Always show projection, even if tool is far from plane
-        const distanceToPlane = Math.abs(vec3.dot(planeNormal, originToPlane));
-
+      if (!hasDirection) {
         if (shouldLog) {
-          console.log(`   ⚠️ Tool is PARALLEL to plane`);
-          console.log(`   Distance to plane: ${distanceToPlane.toFixed(2)}mm`);
-          console.log(`   ✅ Always showing projected line (dashed) regardless of distance`);
+          this._warn('⚠️ Missing or invalid tool direction, skipping projection');
         }
-
-        // Always show projection, even if far from plane
-        // Pass distance to determine color (green if within ±2mm, red otherwise)
-        this._renderProjectedLine(viewport, originVec, tipVec, distanceToPlane);
         return;
       }
 
-      // Calculate intersection parameter t
-      const t = numerator / denominator;
+      vec3.normalize(zAxisVec, zAxisVec);
+
+      // Use configured extension length only (simple extrusion along z-axis)
+      const effectiveExtensionLength = Math.max(0, Number.isFinite(this.extensionLength) ? this.extensionLength : 0);
+
+      const extensionEnd = vec3.scaleAndAdd(vec3.create(), originVec, zAxisVec, effectiveExtensionLength);
+
+      // Signed distances to plane
+      const signedOrigin = vec3.dot(planeNormal, vec3.subtract(vec3.create(), originVec, planePoint));
+      const signedExtension = vec3.dot(planeNormal, vec3.subtract(vec3.create(), extensionEnd, planePoint));
+      const denom = vec3.dot(planeNormal, zAxisVec);
+      const PARALLEL_THRESHOLD = 0.05; // ~87° to plane normal
+      const isParallelOrNearlyParallel = Math.abs(denom) < PARALLEL_THRESHOLD;
+      const crossesPlane =
+        signedOrigin === 0 ||
+        signedExtension === 0 ||
+        (signedOrigin > 0) !== (signedExtension > 0);
+      const minDistance = Math.min(Math.abs(signedOrigin), Math.abs(signedExtension));
 
       if (shouldLog) {
-        console.log(`   t parameter: ${t.toFixed(4)}`);
-        console.log(`   t range: [0, ${toolLength.toFixed(2)}]`);
+        this._log(`\n🔧 Extension Geometry (With Intersection):`);
+        this._log(`   Direction (normalized): [${zAxisVec[0].toFixed(3)}, ${zAxisVec[1].toFixed(3)}, ${zAxisVec[2].toFixed(3)}]`);
+        this._log(`   Length: ${effectiveExtensionLength.toFixed(2)}mm`);
+        this._log(`   Extension end: [${extensionEnd[0].toFixed(1)}, ${extensionEnd[1].toFixed(1)}, ${extensionEnd[2].toFixed(1)}]`);
+        this._log(`   Signed origin dist: ${signedOrigin.toFixed(3)}mm`);
+        this._log(`   Signed extension dist: ${signedExtension.toFixed(3)}mm`);
+        this._log(`   n·dir: ${denom.toFixed(6)} (parallel thresh ${PARALLEL_THRESHOLD})`);
+        this._log(`   Drawing on viewport: ${viewport.id || 'unknown'}`);
       }
 
-      // Check if intersection is within tool segment
-      if (t < 0 || t > toolLength) {
-        const originDistance = Math.abs(vec3.dot(planeNormal, vec3.subtract(vec3.create(), originVec, planePoint)));
-        const tipDistance = Math.abs(vec3.dot(planeNormal, vec3.subtract(vec3.create(), tipVec, planePoint)));
-        const minDistance = Math.min(originDistance, tipDistance);
-
+      if (isParallelOrNearlyParallel) {
         if (shouldLog) {
-          console.log(`   ⚠️ Intersection OUTSIDE tool segment`);
-          console.log(`   Origin distance from plane: ${originDistance.toFixed(2)}mm`);
-          console.log(`   Tip distance from plane: ${tipDistance.toFixed(2)}mm`);
-          console.log(`   ✅ Always showing projected line (dashed) regardless of distance`);
-          }
-
-        // Always show projection, even if far from plane
-        // Pass minimum distance to adjust color (green if within ±2mm, red otherwise)
-        this._renderProjectedLine(viewport, originVec, tipVec, minDistance);
+          this._log(`   ⚠️ Parallel/nearly-parallel to plane → dashed projection`);
+        }
+        this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
         return;
       }
 
-      // Calculate intersection point
-      const intersectionPoint = vec3.scaleAndAdd(vec3.create(), originVec, toolDirection, t);
-
-      // Since the line intersects the plane, the distance from line to plane is 0
-      // This means the tool is crossing the slice, so it should be green
-      const distanceToPlane = 0.0;
-
-      if (shouldLog) {
-        console.log(`   ✅ INTERSECTION FOUND!`);
-        console.log(`   Intersection point: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
-        console.log(`   Line-to-plane distance: ${distanceToPlane.toFixed(2)}mm (line intersects plane)`);
-        console.log(`   → Drawing SOLID line from origin to intersection`);
+      if (!crossesPlane) {
+        if (shouldLog) {
+          this._log(`   ℹ️ Same side of plane → dashed projection (distance ${minDistance.toFixed(2)}mm)`);
+        }
+        this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
+        return;
       }
 
-      this._renderIntersectionLine(viewport, originVec, intersectionPoint, distanceToPlane);
+      // Compute intersection param t on segment origin→extensionEnd
+      const denomT = signedOrigin - signedExtension;
+      if (!Number.isFinite(denomT) || Math.abs(denomT) < 1e-6) {
+        if (shouldLog) {
+          this._log(`   ⚠️ Degenerate intersection denominator; using projection`);
+        }
+        this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
+        return;
+      }
+
+      const t = signedOrigin / denomT; // expected within [0,1]
+      if (!Number.isFinite(t) || t < 0 || t > 1) {
+        if (shouldLog) {
+          this._log(`   ⚠️ Intersection t out of range (${t.toFixed(4)}); using projection`);
+        }
+        this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
+        return;
+      }
+
+      const intersectionPoint = vec3.lerp(vec3.create(), originVec, extensionEnd, t);
+
+      if (shouldLog) {
+        this._log(`   ✅ Intersection on segment (t=${t.toFixed(4)})`);
+        this._log(`   Intersection: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
+      }
+
+      // Solid line to intersection (distance 0 => green)
+      this._renderIntersectionLine(viewport, originVec, intersectionPoint, 0.0);
 
     } catch (error) {
-      console.error(`❌ Error rendering projection on ${viewport.id}:`, error);
-      // Fallback to simple worldToCanvas projection if complex math fails
-      this._renderSimpleProjectionFallback(viewport, origin, tipPoint);
+      this._error(`❌ Error rendering projection on ${viewport.id}:`, error);
+      // Clear projection on error to avoid showing incorrect visualization
+      this._clearViewportProjection(viewport.id);
     }
   }
 
@@ -293,8 +345,47 @@ export class ToolProjectionRenderer {
    */
   private _renderInstrumentBody(viewport: any, base: number[], origin: number[], zAxis: number[]): void {
     try {
+      // Get debug counter for this viewport
+      const currentCount = this.debugCount.get(viewport.id) || 0;
+      const shouldLog = currentCount >= 1 && currentCount <= 20;
+
+      if (shouldLog) {
+        this._log(`\n🔧 ====== INSTRUMENT BODY RENDER [${viewport.id}] ======`);
+        this._log(`📍 Base (world):   [${base.map(v => v.toFixed(1)).join(', ')}]`);
+        this._log(`📍 Origin (world): [${origin.map(v => v.toFixed(1)).join(', ')}]`);
+        this._log(`📍 Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
+        
+        // Calculate expected direction in 3D
+        const dx3D = origin[0] - base[0];
+        const dy3D = origin[1] - base[1];
+        const dz3D = origin[2] - base[2];
+        const len3D = Math.sqrt(dx3D*dx3D + dy3D*dy3D + dz3D*dz3D);
+        this._log(`📐 3D Direction (base→origin): [${(dx3D/len3D).toFixed(3)}, ${(dy3D/len3D).toFixed(3)}, ${(dz3D/len3D).toFixed(3)}]`);
+        this._log(`📏 3D Length: ${len3D.toFixed(2)}mm`);
+      }
+
+      // Revert to direct worldToCanvas - viewUp correction was overcorrecting
       const baseCanvas = viewport.worldToCanvas([base[0], base[1], base[2]]);
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
+
+      if (shouldLog) {
+        this._log(`\n🔄 World → Canvas (Instrument Body):`);
+        this._log(`   Base:   [${base.map(v => v.toFixed(1)).join(', ')}] → [${baseCanvas[0].toFixed(1)}, ${baseCanvas[1].toFixed(1)}]`);
+        this._log(`   Origin: [${origin.map(v => v.toFixed(1)).join(', ')}] → [${originCanvas[0].toFixed(1)}, ${originCanvas[1].toFixed(1)}]`);
+        
+        // Calculate canvas direction
+        const dxCanvas = originCanvas[0] - baseCanvas[0];
+        const dyCanvas = originCanvas[1] - baseCanvas[1];
+        const lenCanvas = Math.sqrt(dxCanvas*dxCanvas + dyCanvas*dyCanvas);
+        const angleCanvas = Math.atan2(dyCanvas, dxCanvas) * 180 / Math.PI;
+        
+        this._log(`\n📊 Canvas Projection (Instrument Body):`);
+        this._log(`   Canvas ΔX: ${dxCanvas.toFixed(1)} px`);
+        this._log(`   Canvas ΔY: ${dyCanvas.toFixed(1)} px`);
+        this._log(`   Canvas Direction: [${(dxCanvas/lenCanvas).toFixed(3)}, ${(dyCanvas/lenCanvas).toFixed(3)}]`);
+        this._log(`   Canvas Angle: ${angleCanvas.toFixed(1)}° (from +X axis)`);
+        this._log(`   Canvas Length: ${lenCanvas.toFixed(1)} px`);
+      }
 
       if (!this._isValidCanvasPoint(baseCanvas) || !this._isValidCanvasPoint(originCanvas)) {
         return; // Don't clear, just skip rendering
@@ -302,14 +393,18 @@ export class ToolProjectionRenderer {
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
       // Draw instrument body as solid line (always visible, represents physical instrument)
       this._drawInstrumentBodyLine(svgElement, viewport.id, baseCanvas, originCanvas);
+      
+      if (shouldLog) {
+        this._log(`✅ Instrument body rendered\n`);
+      }
     } catch (error) {
-      console.error(`❌ Error rendering instrument body on ${viewport.id}:`, error);
+      this._error(`❌ Error rendering instrument body on ${viewport.id}:`, error);
     }
   }
 
@@ -319,6 +414,7 @@ export class ToolProjectionRenderer {
    */
   private _renderProjectedLine(viewport: any, origin: vec3, tip: vec3, distanceToPlane?: number): void {
     try {
+      // Revert to direct worldToCanvas - viewUp correction was overcorrecting
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
       const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
 
@@ -329,7 +425,7 @@ export class ToolProjectionRenderer {
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
@@ -344,7 +440,7 @@ export class ToolProjectionRenderer {
       this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true, opacity, distanceToPlane);
       this._drawOriginCircle(svgElement, viewport.id, originCanvas, opacity);
     } catch (error) {
-      console.error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
+      this._error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
     }
   }
 
@@ -354,6 +450,7 @@ export class ToolProjectionRenderer {
    */
   private _renderIntersectionLine(viewport: any, origin: vec3, intersection: vec3, distanceToPlane?: number): void {
     try {
+      // Revert to direct worldToCanvas - viewUp correction was overcorrecting
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
       const intersectionCanvas = viewport.worldToCanvas([intersection[0], intersection[1], intersection[2]]);
 
@@ -364,7 +461,7 @@ export class ToolProjectionRenderer {
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        console.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
@@ -374,7 +471,7 @@ export class ToolProjectionRenderer {
       this._drawOriginCircle(svgElement, viewport.id, originCanvas);
       this._drawIntersectionMarker(svgElement, viewport.id, intersectionCanvas);
     } catch (error) {
-      console.error(`❌ Error in _renderIntersectionLine for ${viewport.id}:`, error);
+      this._error(`❌ Error in _renderIntersectionLine for ${viewport.id}:`, error);
     }
   }
 
@@ -481,25 +578,6 @@ export class ToolProjectionRenderer {
     opacity?: number,
     distanceToPlane?: number
   ): void {
-    // Get canvas bounds for clipping (use SVG dimensions)
-    const canvasWidth = parseFloat(svg.getAttribute('width') || '0');
-    const canvasHeight = parseFloat(svg.getAttribute('height') || '0');
-
-    // Clip line to canvas bounds (optional - could let it extend beyond)
-    const clipped = this._clipLineToBounds(
-      originCanvas,
-      tipCanvas,
-      [0, 0, canvasWidth, canvasHeight]
-    );
-
-    if (!clipped) {
-      // Line is completely outside bounds
-      this._clearViewportProjection(viewportId);
-      return;
-    }
-
-    const [origin, tip] = clipped;
-
     // Remove existing line if any
     const existingLine = svg.querySelector(`[data-id="projection-line-${viewportId}"]`);
     if (existingLine) {
@@ -509,10 +587,10 @@ export class ToolProjectionRenderer {
     // Create line element
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     line.setAttribute('data-id', `projection-line-${viewportId}`);
-    line.setAttribute('x1', origin[0].toString());
-    line.setAttribute('y1', origin[1].toString());
-    line.setAttribute('x2', tip[0].toString());
-    line.setAttribute('y2', tip[1].toString());
+    line.setAttribute('x1', originCanvas[0].toString());
+    line.setAttribute('y1', originCanvas[1].toString());
+    line.setAttribute('x2', tipCanvas[0].toString());
+    line.setAttribute('y2', tipCanvas[1].toString());
 
     // Style based on line type and distance to plane
     const lineOpacity = opacity !== undefined ? opacity : (isDashed ? 0.7 : 0.9);
@@ -539,7 +617,7 @@ export class ToolProjectionRenderer {
     }
 
     // Add ruler-like tick marks instead of arrow
-    this._drawRulerTicks(svg, viewportId, origin, tip, lineColor, lineOpacity);
+    this._drawRulerTicks(svg, viewportId, originCanvas, tipCanvas, lineColor, lineOpacity);
 
     // Add line to SVG
     svg.appendChild(line);
@@ -747,6 +825,300 @@ export class ToolProjectionRenderer {
   }
 
   /**
+   * Draw tool direction indicator showing 3D direction vs 2D projection
+   */
+  private _drawDirectionIndicator(
+    viewport: any, 
+    originWorld: vec3, 
+    directionWorld: vec3,
+    label: string
+  ): void {
+    const svg = this._getOrCreateSVGOverlay(viewport);
+    if (!svg) return;
+
+    const viewportId = viewport.id;
+    
+    // Remove existing indicator if any
+    const existingIndicator = svg.querySelector(`[data-id="debug-direction-${viewportId}"]`);
+    if (existingIndicator) {
+      existingIndicator.remove();
+    }
+
+    // Create group
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.setAttribute('data-id', `debug-direction-${viewportId}`);
+
+    // Project origin and direction endpoint
+    const originCanvas = viewport.worldToCanvas([originWorld[0], originWorld[1], originWorld[2]]);
+    const dirEndWorld = [
+      originWorld[0] + directionWorld[0] * 30, // 30mm arrow
+      originWorld[1] + directionWorld[1] * 30,
+      originWorld[2] + directionWorld[2] * 30
+    ];
+    const dirEndCanvas = viewport.worldToCanvas(dirEndWorld);
+
+    if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(dirEndCanvas)) {
+      return;
+    }
+
+    // Draw direction arrow
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', originCanvas[0].toString());
+    line.setAttribute('y1', originCanvas[1].toString());
+    line.setAttribute('x2', dirEndCanvas[0].toString());
+    line.setAttribute('y2', dirEndCanvas[1].toString());
+    line.setAttribute('stroke', '#ff00ff'); // Magenta
+    line.setAttribute('stroke-width', '3');
+    line.setAttribute('opacity', '0.8');
+    line.setAttribute('stroke-dasharray', '5,3');
+
+    // Arrow head
+    const dx = dirEndCanvas[0] - originCanvas[0];
+    const dy = dirEndCanvas[1] - originCanvas[1];
+    const angle = Math.atan2(dy, dx);
+    const arrowSize = 12;
+
+    const arrowHead = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const arrow1X = dirEndCanvas[0] - arrowSize * Math.cos(angle - Math.PI / 6);
+    const arrow1Y = dirEndCanvas[1] - arrowSize * Math.sin(angle - Math.PI / 6);
+    const arrow2X = dirEndCanvas[0] - arrowSize * Math.cos(angle + Math.PI / 6);
+    const arrow2Y = dirEndCanvas[1] - arrowSize * Math.sin(angle + Math.PI / 6);
+    
+    arrowHead.setAttribute('d', `M ${dirEndCanvas[0]} ${dirEndCanvas[1]} L ${arrow1X} ${arrow1Y} L ${arrow2X} ${arrow2Y} Z`);
+    arrowHead.setAttribute('fill', '#ff00ff');
+    arrowHead.setAttribute('opacity', '0.8');
+
+    // Add label with canvas angle
+    const canvasAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    labelText.setAttribute('x', (dirEndCanvas[0] + 15).toString());
+    labelText.setAttribute('y', (dirEndCanvas[1] - 10).toString());
+    labelText.setAttribute('fill', '#ff00ff');
+    labelText.setAttribute('font-size', '12');
+    labelText.setAttribute('font-weight', 'bold');
+    labelText.setAttribute('opacity', '0.9');
+    labelText.textContent = `${label}: ${canvasAngle.toFixed(0)}°`;
+
+    group.appendChild(line);
+    group.appendChild(arrowHead);
+    group.appendChild(labelText);
+    svg.appendChild(group);
+  }
+
+  /**
+   * Verify alignment between instrument body and extension line
+   * This checks if both lines point in the same direction on canvas
+   */
+  private _verifyAlignment(
+    viewport: any,
+    base: number[],
+    origin: number[],
+    tip: number[],
+    zAxis: number[]
+  ): void {
+    try {
+      // Project all three points
+      const baseCanvas = viewport.worldToCanvas([base[0], base[1], base[2]]);
+      const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
+      const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
+
+      if (!this._isValidCanvasPoint(baseCanvas) || 
+          !this._isValidCanvasPoint(originCanvas) || 
+          !this._isValidCanvasPoint(tipCanvas)) {
+        this._warn(`⚠️ Invalid canvas points in alignment check for ${viewport.id}`);
+        return;
+      }
+
+      // Calculate instrument body direction (base → origin)
+      const bodyDx = originCanvas[0] - baseCanvas[0];
+      const bodyDy = originCanvas[1] - baseCanvas[1];
+      const bodyLength = Math.sqrt(bodyDx * bodyDx + bodyDy * bodyDy);
+      const bodyAngle = Math.atan2(bodyDy, bodyDx) * 180 / Math.PI;
+      const bodyDir = [bodyDx / bodyLength, bodyDy / bodyLength];
+
+      // Calculate extension direction (origin → tip)
+      const extDx = tipCanvas[0] - originCanvas[0];
+      const extDy = tipCanvas[1] - originCanvas[1];
+      const extLength = Math.sqrt(extDx * extDx + extDy * extDy);
+      const extAngle = Math.atan2(extDy, extDx) * 180 / Math.PI;
+      const extDir = [extDx / extLength, extDy / extLength];
+
+      // Calculate angle difference
+      let angleDiff = extAngle - bodyAngle;
+      // Normalize to [-180, 180]
+      while (angleDiff > 180) angleDiff -= 360;
+      while (angleDiff < -180) angleDiff += 360;
+
+      // Calculate dot product (should be ~1.0 if aligned, ~-1.0 if opposite)
+      const dotProduct = bodyDir[0] * extDir[0] + bodyDir[1] * extDir[1];
+
+      this._log(`\n${'='.repeat(80)}`);
+      this._log(`🔍 ALIGNMENT VERIFICATION [${viewport.id}]`);
+      this._log(`${'='.repeat(80)}`);
+      
+      this._log(`\n📍 Canvas Coordinates:`);
+      this._log(`   Base:   [${baseCanvas[0].toFixed(1)}, ${baseCanvas[1].toFixed(1)}]`);
+      this._log(`   Origin: [${originCanvas[0].toFixed(1)}, ${originCanvas[1].toFixed(1)}]`);
+      this._log(`   Tip:    [${tipCanvas[0].toFixed(1)}, ${tipCanvas[1].toFixed(1)}]`);
+
+      this._log(`\n📐 Instrument Body (Base → Origin):`);
+      this._log(`   Direction: [${bodyDir[0].toFixed(3)}, ${bodyDir[1].toFixed(3)}]`);
+      this._log(`   Angle: ${bodyAngle.toFixed(2)}°`);
+      this._log(`   Length: ${bodyLength.toFixed(1)} px`);
+
+      this._log(`\n📐 Extension Line (Origin → Tip):`);
+      this._log(`   Direction: [${extDir[0].toFixed(3)}, ${extDir[1].toFixed(3)}]`);
+      this._log(`   Angle: ${extAngle.toFixed(2)}°`);
+      this._log(`   Length: ${extLength.toFixed(1)} px`);
+
+      this._log(`\n⚖️ ALIGNMENT METRICS:`);
+      this._log(`   Angle Difference: ${angleDiff.toFixed(2)}°`);
+      this._log(`   Dot Product: ${dotProduct.toFixed(4)} (1.0 = perfect alignment, -1.0 = opposite)`);
+
+      // Check alignment
+      const ANGLE_THRESHOLD = 5.0; // 5 degrees tolerance
+      const DOT_THRESHOLD = 0.996; // cos(5°) ≈ 0.996
+
+      if (Math.abs(angleDiff) > ANGLE_THRESHOLD || dotProduct < DOT_THRESHOLD) {
+        this._log(`\n❌ MISALIGNMENT DETECTED!`);
+        this._log(`   Expected: Both lines should point in the same direction (angle diff ≈ 0°)`);
+        this._log(`   Actual: ${Math.abs(angleDiff).toFixed(2)}° difference`);
+        this._log(`\n🔍 Possible causes:`);
+        this._log(`   1. worldToCanvas() applying different transformations to body vs extension`);
+        this._log(`   2. Viewport-specific coordinate system flip or rotation`);
+        this._log(`   3. Camera viewUp vector causing inconsistent projection`);
+        this._log(`   4. Plane intersection math modifying the extension points incorrectly`);
+        
+        // Log camera info for debugging
+        const camera = viewport.getCamera();
+        this._log(`\n📷 Camera Info for ${viewport.id}:`);
+        this._log(`   viewPlaneNormal: [${camera.viewPlaneNormal.map((v: number) => v.toFixed(3)).join(', ')}]`);
+        this._log(`   viewUp: [${camera.viewUp.map((v: number) => v.toFixed(3)).join(', ')}]`);
+        if (viewport.getViewPresentation) {
+          const pres = viewport.getViewPresentation();
+          this._log(`   rotation: ${pres.rotation || 0}°`);
+          this._log(`   flipHorizontal: ${pres.flipHorizontal || false}`);
+          this._log(`   flipVertical: ${pres.flipVertical || false}`);
+        }
+      } else {
+        this._log(`\n✅ ALIGNMENT OK: Lines are properly aligned (${Math.abs(angleDiff).toFixed(2)}° difference)`);
+      }
+
+      this._log(`${'='.repeat(80)}\n`);
+    } catch (error) {
+      this._error(`❌ Error in alignment verification for ${viewport.id}:`, error);
+    }
+  }
+
+  /**
+   * Draw coordinate axes overlay for debugging
+   * Shows how world X, Y, Z axes project onto the viewport canvas
+   */
+  private _drawCoordinateAxes(viewport: any, originWorld: vec3): void {
+    const svg = this._getOrCreateSVGOverlay(viewport);
+    if (!svg) return;
+
+    const viewportId = viewport.id;
+    
+    // Remove existing axes if any
+    const existingAxes = svg.querySelector(`[data-id="debug-axes-${viewportId}"]`);
+    if (existingAxes) {
+      existingAxes.remove();
+    }
+
+    // Create group for all axes
+    const axesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    axesGroup.setAttribute('data-id', `debug-axes-${viewportId}`);
+
+    // Define axis length in world units (mm)
+    const axisLength = 50; // 50mm = 5cm
+
+    // Define axes in world space
+    const axes = [
+      { name: 'X', direction: [1, 0, 0], color: '#ff0000' }, // Red
+      { name: 'Y', direction: [0, 1, 0], color: '#00ff00' }, // Green
+      { name: 'Z', direction: [0, 0, 1], color: '#0000ff' }  // Blue
+    ];
+
+    // Project origin
+    const originCanvas = viewport.worldToCanvas([originWorld[0], originWorld[1], originWorld[2]]);
+    
+    if (!this._isValidCanvasPoint(originCanvas)) {
+      return;
+    }
+
+    // Draw each axis
+    axes.forEach(axis => {
+      const endWorld = [
+        originWorld[0] + axis.direction[0] * axisLength,
+        originWorld[1] + axis.direction[1] * axisLength,
+        originWorld[2] + axis.direction[2] * axisLength
+      ];
+
+      const endCanvas = viewport.worldToCanvas(endWorld);
+      
+      if (!this._isValidCanvasPoint(endCanvas)) {
+        return;
+      }
+
+      // Draw axis line
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', originCanvas[0].toString());
+      line.setAttribute('y1', originCanvas[1].toString());
+      line.setAttribute('x2', endCanvas[0].toString());
+      line.setAttribute('y2', endCanvas[1].toString());
+      line.setAttribute('stroke', axis.color);
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('opacity', '0.7');
+      line.setAttribute('stroke-linecap', 'round');
+
+      // Draw arrow at end
+      const dx = endCanvas[0] - originCanvas[0];
+      const dy = endCanvas[1] - originCanvas[1];
+      const angle = Math.atan2(dy, dx);
+      const arrowSize = 8;
+
+      const arrowHead = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const arrow1X = endCanvas[0] - arrowSize * Math.cos(angle - Math.PI / 6);
+      const arrow1Y = endCanvas[1] - arrowSize * Math.sin(angle - Math.PI / 6);
+      const arrow2X = endCanvas[0] - arrowSize * Math.cos(angle + Math.PI / 6);
+      const arrow2Y = endCanvas[1] - arrowSize * Math.sin(angle + Math.PI / 6);
+      
+      arrowHead.setAttribute('d', `M ${endCanvas[0]} ${endCanvas[1]} L ${arrow1X} ${arrow1Y} M ${endCanvas[0]} ${endCanvas[1]} L ${arrow2X} ${arrow2Y}`);
+      arrowHead.setAttribute('stroke', axis.color);
+      arrowHead.setAttribute('stroke-width', '2');
+      arrowHead.setAttribute('opacity', '0.7');
+      arrowHead.setAttribute('stroke-linecap', 'round');
+
+      // Add text label
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', (endCanvas[0] + 10).toString());
+      label.setAttribute('y', (endCanvas[1] + 5).toString());
+      label.setAttribute('fill', axis.color);
+      label.setAttribute('font-size', '14');
+      label.setAttribute('font-weight', 'bold');
+      label.setAttribute('opacity', '0.9');
+      label.textContent = axis.name;
+
+      axesGroup.appendChild(line);
+      axesGroup.appendChild(arrowHead);
+      axesGroup.appendChild(label);
+    });
+
+    // Add origin marker
+    const originMarker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    originMarker.setAttribute('cx', originCanvas[0].toString());
+    originMarker.setAttribute('cy', originCanvas[1].toString());
+    originMarker.setAttribute('r', '4');
+    originMarker.setAttribute('fill', '#ffffff');
+    originMarker.setAttribute('stroke', '#000000');
+    originMarker.setAttribute('stroke-width', '2');
+    axesGroup.appendChild(originMarker);
+
+    svg.appendChild(axesGroup);
+  }
+
+  /**
    * Clear projection for a specific viewport
    */
   private _clearViewportProjection(viewportId: string): void {
@@ -836,23 +1208,6 @@ export class ToolProjectionRenderer {
     baseCanvas: number[],
     originCanvas: number[]
   ): void {
-    // Get canvas bounds for clipping
-    const canvasWidth = parseFloat(svg.getAttribute('width') || '0');
-    const canvasHeight = parseFloat(svg.getAttribute('height') || '0');
-
-    // Clip line to canvas bounds
-    const clipped = this._clipLineToBounds(
-      baseCanvas,
-      originCanvas,
-      [0, 0, canvasWidth, canvasHeight]
-    );
-
-    if (!clipped) {
-      return; // Line is completely outside bounds
-    }
-
-    const [base, origin] = clipped;
-
     // Remove existing instrument body line if any
     const existingLine = svg.querySelector(`[data-id="instrument-body-${viewportId}"]`);
     if (existingLine) {
@@ -862,10 +1217,10 @@ export class ToolProjectionRenderer {
     // Create line element for instrument body
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     line.setAttribute('data-id', `instrument-body-${viewportId}`);
-    line.setAttribute('x1', base[0].toString());
-    line.setAttribute('y1', base[1].toString());
-    line.setAttribute('x2', origin[0].toString());
-    line.setAttribute('y2', origin[1].toString());
+    line.setAttribute('x1', baseCanvas[0].toString());
+    line.setAttribute('y1', baseCanvas[1].toString());
+    line.setAttribute('x2', originCanvas[0].toString());
+    line.setAttribute('y2', originCanvas[1].toString());
 
     // Style: solid line, thicker, yellow color to represent physical instrument
     line.setAttribute('stroke', '#ffff00'); // Yellow color for instrument body

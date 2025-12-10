@@ -88,6 +88,14 @@ export default async function init({
 
   Settings.getRuntimeSettings().set('useCursors', Boolean(appConfig.useCursors));
 
+  // Volume rendering performance optimizations
+  if (appConfig.preferSizeOverAccuracy !== undefined) {
+    Settings.getRuntimeSettings().set('preferSizeOverAccuracy', Boolean(appConfig.preferSizeOverAccuracy));
+  }
+  if (appConfig.useNorm16Texture !== undefined) {
+    Settings.getRuntimeSettings().set('useNorm16Texture', Boolean(appConfig.useNorm16Texture));
+  }
+
   const {
     userAuthenticationService,
     customizationService,

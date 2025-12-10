@@ -33,7 +33,7 @@ interface ServerModel {
   id: string;
   name: string;
   filename: string;
-  type: 'server' | 'user';
+  type: 'server' | 'user' | 'ndi_probe';
   url: string;
   size: number;
   createdAt: Date;
@@ -67,12 +67,18 @@ function ModelUpload({
   const [isLoadingServerModels, setIsLoadingServerModels] = useState(false);
   const [isLoadingSelectedModel, setIsLoadingSelectedModel] = useState(false);
 
+  // Add to the existing state variables
+  const [ndiProbeInfo, setNdiProbeInfo] = useState<ServerModel | null>(null);
+  const [isLoadingNdiProbe, setIsLoadingNdiProbe] = useState(false);
+  const [selectedNdiProbeUrl, setSelectedNdiProbeUrl] = useState<string>('');
+
   console.log('🎨 [ModelUpload] ModelStateService available:', !!modelStateService);
   console.log('🎨 [ModelUpload] Current viewport ID:', viewportId);
 
   useEffect(() => {
     console.log('🎨 [ModelUpload] Component mounted in DOM');
     loadServerModels();
+    loadNdiProbeInfo(); // Add this line
     return () => {
       console.log('🎨 [ModelUpload] Component unmounted from DOM');
     };
@@ -184,11 +190,11 @@ function ModelUpload({
     async (acceptedFiles: File[]) => {
       const validFiles = acceptedFiles.filter(file => {
         const ext = file.name.split('.').pop()?.toLowerCase();
-        return ['obj', 'stl', 'ply'].includes(ext || '');
+        return ['obj', 'stl'].includes(ext || '');
       });
 
       if (validFiles.length === 0) {
-        alert('Please upload valid 3D model files (.obj, .stl, .ply)');
+        alert('Please upload valid 3D model files (.obj, .stl)');
         return;
       }
 
@@ -213,18 +219,23 @@ function ModelUpload({
     console.log('🎯 [ModelUpload] Selected model:', modelUrl);
   };
 
-  // Handle loading selected server model
-  const handleLoadServerModel = async () => {
-    if (!selectedModelUrl) {
+  // Update the handleLoadServerModel function to handle NDI probes
+  const handleLoadServerModel = async (modelUrl?: string, customModelId?: string) => {
+    const urlToLoad = modelUrl || selectedModelUrl;
+    if (!urlToLoad) {
       alert('Please select a model first');
       return;
     }
 
     setIsLoadingSelectedModel(true);
     try {
-      console.log('📥 [ModelUpload] Loading server model:', selectedModelUrl);
+      console.log('📥 [ModelUpload] Loading model:', urlToLoad);
+      if (customModelId) {
+        console.log('📥 [ModelUpload] Using custom model ID:', customModelId);
+      }
 
-      const loadedModel = await modelStateService.loadModelFromServer(selectedModelUrl, {
+      const loadedModel = await modelStateService.loadModelFromServer(urlToLoad, {
+        modelId: customModelId, // Use custom ID if provided (for tracking tools)
         viewportId,
         color: defaultColor,
         opacity: defaultOpacity,
@@ -232,7 +243,7 @@ function ModelUpload({
       });
 
       if (loadedModel) {
-        console.log('✅ [ModelUpload] Server model loaded successfully');
+        console.log('✅ [ModelUpload] Model loaded successfully');
         if (onComplete) {
           onComplete();
         }
@@ -240,10 +251,72 @@ function ModelUpload({
         alert('Failed to load model from server');
       }
     } catch (error) {
-      console.error('❌ [ModelUpload] Error loading server model:', error);
+      console.error('❌ [ModelUpload] Error loading model:', error);
       alert('Error loading model: ' + error.message);
     } finally {
       setIsLoadingSelectedModel(false);
+    }
+  };
+
+  const loadNdiProbeInfo = async () => {
+    setIsLoadingNdiProbe(true);
+    try {
+      const baseUrl = window.location.origin;
+      const response = await fetch(`${baseUrl}/api/ndi/probe/info`, {
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.warn('⚠️ [ModelUpload] NDI probe not found on server (404)');
+          setNdiProbeInfo(null);
+          return;
+        } else if (response.status >= 500) {
+          console.warn('⚠️ [ModelUpload] Model server not available (5xx error)');
+          setNdiProbeInfo(null);
+          return;
+        }
+        throw new Error(`Failed to fetch NDI probe: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success && data.probe) {
+        // Extract tool ID from filename (e.g., "DR-VR06-A32.STL" -> "DR-VR06-A32")
+        // This will be used as the model ID to match tracking system expectations
+        const toolId = data.probe.filename ? data.probe.filename.replace(/\.(stl|STL|obj|OBJ)$/i, '') : data.probe.id;
+        
+        // Convert NDI probe format to ServerModel format
+        const ndiProbe: ServerModel = {
+          id: toolId, // Use tool ID (e.g., "DR-VR06-A32") instead of database ID
+          name: data.probe.name,
+          filename: data.probe.filename,
+          type: 'ndi_probe', // New type
+          url: data.probe.url,
+          size: data.probe.size,
+          createdAt: data.probe.uploadedAt || new Date(),
+          format: data.probe.format
+        };
+
+        setNdiProbeInfo(ndiProbe);
+        console.log('📡 [ModelUpload] Fetched NDI probe info:', {
+          filename: ndiProbe.filename,
+          toolId: toolId,
+          url: ndiProbe.url
+        });
+      } else {
+        console.warn('⚠️ [ModelUpload] NDI probe endpoint returned success=false');
+        setNdiProbeInfo(null);
+      }
+    } catch (error) {
+      console.error('❌ [ModelUpload] Error loading NDI probe info:', error);
+      // If it's a network error (server not running), don't show it as an error to user
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        console.warn('⚠️ [ModelUpload] Cannot connect to model server - NDI probe loading disabled');
+      }
+      setNdiProbeInfo(null);
+    } finally {
+      setIsLoadingNdiProbe(false);
     }
   };
 
@@ -336,7 +409,7 @@ function ModelUpload({
 
                   {/* Supported formats */}
                   <div className="text-xs text-aqua-pale">
-                    Supported: <span className="font-semibold">.OBJ</span>
+                    Supported: <span className="font-semibold">.OBJ, .STL</span>
                   </div>
                 </div>
               </div>
@@ -350,6 +423,102 @@ function ModelUpload({
   const getServerModelsPanel = () => {
     return (
       <div className="flex-1 flex flex-col border-l border-secondary-light pl-4">
+        {/* NDI Probe Section */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-semibold text-white">NDI Probe</h3>
+            <Button
+              type={ButtonEnums.type.secondary}
+              size={ButtonEnums.size.small}
+              onClick={loadNdiProbeInfo}
+              disabled={isLoadingNdiProbe}
+            >
+              {isLoadingNdiProbe ? 'Loading...' : 'Load Probe'}
+            </Button>
+          </div>
+
+          {isLoadingNdiProbe ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-secondary-light">Loading NDI probe...</div>
+            </div>
+          ) : ndiProbeInfo ? (
+            <div className="space-y-3">
+              <div
+                className={classNames(
+                  'border rounded-lg p-3 cursor-pointer transition-colors',
+                  selectedNdiProbeUrl === ndiProbeInfo.url
+                    ? 'border-primary-light bg-primary-dark/30'
+                    : 'border-secondary-light hover:border-primary-light hover:bg-secondary-dark'
+                )}
+                onClick={() => setSelectedNdiProbeUrl(ndiProbeInfo.url)}
+              >
+                <div className="flex items-start gap-3">
+                  {/* Radio button */}
+                  <input
+                    type="radio"
+                    name="ndiProbe"
+                    checked={selectedNdiProbeUrl === ndiProbeInfo.url}
+                    onChange={() => setSelectedNdiProbeUrl(ndiProbeInfo.url)}
+                    className="mt-1 w-4 h-4 text-primary-light"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+
+                  {/* Probe info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-white truncate">
+                      {ndiProbeInfo.filename}
+                    </div>
+                    <div className="text-xs text-secondary-light mt-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-xs bg-purple-900/30 text-purple-300">
+                          🔍 NDI Probe
+                        </span>
+                        <span>{(ndiProbeInfo.size / 1024 / 1024).toFixed(2)} MB</span>
+                      </div>
+                      <div className="text-xs">
+                        Format: {ndiProbeInfo.format.toUpperCase()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Load NDI Probe Button */}
+              {selectedNdiProbeUrl && (
+                <div className="pt-2 border-t border-secondary-light">
+                  <Button
+                    type={ButtonEnums.type.primary}
+                    onClick={() => handleLoadServerModel(selectedNdiProbeUrl, ndiProbeInfo?.id)}
+                    disabled={isLoadingSelectedModel}
+                    className="w-full"
+                  >
+                    {isLoadingSelectedModel ? 'Loading NDI Probe...' : 'Load NDI Probe'}
+                  </Button>
+                  {ndiProbeInfo && (
+                    <div className="text-xs text-gray-400 mt-1 text-center">
+                      Tool ID: {ndiProbeInfo.id}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center p-8 border border-dashed border-secondary-light rounded-lg">
+              <div className="text-center text-secondary-light">
+                <div className="mb-2">🔍 NDI probe not available</div>
+                <div className="text-sm space-y-1">
+                  <div>Model server may not be running</div>
+                  <div>or NDI probe files not found</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Separator */}
+        <div className="border-t border-secondary-light mb-4"></div>
+
+        {/* Existing Server Models Section */}
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-semibold text-white">Server Models</h3>
           <Button
