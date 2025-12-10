@@ -43,20 +43,21 @@ export class InstrumentProjectionMode extends NavigationMode {
     console.log('🎯🎯🎯 Instrument Projection mode activated');
     console.log(`   Extension length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
     console.log('   📹 Camera is FREE - user can pan/zoom/rotate viewports');
-    console.log('   📐 Projection will dynamically update based on viewport state');
+    console.log('   ⚠️ Projection rendering is DISABLED (temporarily)');
     this.lastPosition = null;
     this.updateCount = 0; // Reset update count for fresh logs
 
+    // DISABLED: Do not initialize projection renderer
     // Initialize projection renderer
-    this.toolProjectionRenderer = new ToolProjectionRenderer(
-      this.servicesManager,
-      this.extensionLength,
-      this.instrumentLength
-    );
+    // this.toolProjectionRenderer = new ToolProjectionRenderer(
+    //   this.servicesManager,
+    //   this.extensionLength,
+    //   this.instrumentLength
+    // );
 
     const viewports = this.getViewports();
     console.log(`   🔍 Found ${viewports.length} viewports on mode enter`);
-    console.log('   🎯 Instrument Projection mode is now active and ready');
+    console.log('   🎯 Instrument Projection mode is now active (projection rendering disabled)');
   }
 
   // NOTE: Camera state saving/restoring removed - camera is now free to move
@@ -66,8 +67,9 @@ export class InstrumentProjectionMode extends NavigationMode {
     console.log('🎯 Instrument Projection mode deactivated');
     this.lastPosition = null;
 
-    // Cleanup projection renderer
+    // Cleanup projection renderer and clear all projections
     if (this.toolProjectionRenderer) {
+      // Clear all viewport projections before cleanup
       this.toolProjectionRenderer.cleanup();
       this.toolProjectionRenderer = null;
     }
@@ -111,11 +113,12 @@ export class InstrumentProjectionMode extends NavigationMode {
     // Extract tool representation from matrix
     const toolRepresentation = this._extractToolRepresentation(position, matrix);
 
+    // DISABLED: Projection rendering temporarily disabled
     // Update projection rendering - ToolProjectionRenderer will handle
     // viewport.worldToCanvas() conversion dynamically based on current camera state
-    if (this.toolProjectionRenderer) {
-      this.toolProjectionRenderer.updateProjection(toolRepresentation);
-    }
+    // if (this.toolProjectionRenderer) {
+    //   this.toolProjectionRenderer.updateProjection(toolRepresentation);
+    // }
 
     // Log periodically
     if (this.updateCount % 100 === 0) {
