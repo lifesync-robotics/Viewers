@@ -52,7 +52,7 @@ export function useViewportHover(viewportId: string): { isHovered: boolean; isAc
     let resizeTimeout;
     const handleResize = () => {
       clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(updateRect, 10);
+      resizeTimeout = setTimeout(updateRect, 100); // ✨ Increased from 10ms to 100ms for more stable interaction
     };
 
     window.addEventListener('resize', handleResize);

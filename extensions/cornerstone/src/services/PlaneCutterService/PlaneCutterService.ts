@@ -5,7 +5,8 @@ import vtkCutter from '@kitware/vtk.js/Filters/Core/Cutter';
 import vtkMapper from '@kitware/vtk.js/Rendering/Core/Mapper';
 import vtkActor from '@kitware/vtk.js/Rendering/Core/Actor';
 import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
-import { crosshairsHandler } from '../../utils/crosshairsHandler';
+// Note: Plane cutters now use camera.focalPoint directly instead of crosshairs center
+// This ensures proper synchronization when scrolling MPR slices
 
 /**
  * Per-model cutter data within a viewport's plane cutter
@@ -183,7 +184,7 @@ class PlaneCutterService extends PubSubService {
 
     const eventName = cornerstoneViewportService.EVENTS.VIEWPORT_PROPERTIES_CHANGED;
     // console.log(`🔔 [PlaneCutterService] Subscribing to event: "${eventName}"`);
-    
+
     cornerstoneViewportService.subscribe(
       eventName,
       this._handleViewportPropertiesChanged.bind(this)
@@ -513,8 +514,10 @@ class PlaneCutterService extends PubSubService {
 
   /**
    * Update a single plane cutter's position and cut all models
+   * Uses camera focalPoint to determine the cutting plane position
+   * This ensures the plane cutter follows the current slice when scrolling MPR
    * @param planeCutter - The plane cutter to update
-   * @param crosshairCenter - The crosshair center (if available), passed from caller for efficiency
+   * @param _unused - Unused parameter (kept for backwards compatibility)
    */
   private _updateSinglePlaneCutter(
     planeCutter: PlaneCutterData,
@@ -539,12 +542,10 @@ class PlaneCutterService extends PubSubService {
         return;
       }
 
-      let planeOrigin = null;
-      let planeNormal = null;
-
-      // Get camera once for both plane origin and normal calculations
+      // Get camera for plane origin and normal calculations
       const camera = viewport.getCamera();
-      planeNormal = camera.viewPlaneNormal;
+      const planeNormal = camera.viewPlaneNormal;
+      const { focalPoint } = camera;
 
       // Validate plane normal
       if (!planeNormal || planeNormal.length !== 3) {
@@ -598,12 +599,11 @@ class PlaneCutterService extends PubSubService {
             return;
           }
         }
-      }
 
-      // If still no valid position, skip update
-      if (!planeOrigin || !Array.isArray(planeOrigin) || planeOrigin.length !== 3) {
-        return;
-      }
+      // Use camera focalPoint directly as the plane origin
+      // This is the correct approach - the cutting plane should be at the camera's focal point
+      // which corresponds to the current slice being viewed
+      const planeOrigin = [focalPoint[0], focalPoint[1], focalPoint[2]];
 
       // Update plane origin and normal
       planeCutter.plane.setOrigin(planeOrigin[0], planeOrigin[1], planeOrigin[2]);
@@ -673,6 +673,13 @@ class PlaneCutterService extends PubSubService {
    */
   public getIsEnabled(): boolean {
     return this.isEnabled;
+  }
+
+  /**
+   * Get all plane cutters (for debugging)
+   */
+  public getPlaneCutters(): PlaneCutterData[] {
+    return this.planeCutters;
   }
 
   /**
@@ -1013,12 +1020,12 @@ class PlaneCutterService extends PubSubService {
     const numPoints = loadedModel.polyData.getPoints()?.getNumberOfPoints() || 0;
     const bounds = loadedModel.polyData.getBounds();
     // console.log(`  📊 PolyData info: ${numPoints} points, bounds:`, bounds);
-    
+
     // Get plane info for debugging
     const planeOrigin = planeCutter.plane.getOrigin();
     const planeNormal = planeCutter.plane.getNormal();
     // console.log(`  ✂️ Cutting plane: origin=[${planeOrigin[0].toFixed(2)}, ${planeOrigin[1].toFixed(2)}, ${planeOrigin[2].toFixed(2)}], normal=[${planeNormal[0].toFixed(2)}, ${planeNormal[1].toFixed(2)}, ${planeNormal[2].toFixed(2)}]`);
-    
+
     // Check if plane intersects model bounds
     const [xMin, xMax, yMin, yMax, zMin, zMax] = bounds;
     // console.log(`  📦 Model bounds: X[${xMin.toFixed(2)}, ${xMax.toFixed(2)}], Y[${yMin.toFixed(2)}, ${yMax.toFixed(2)}], Z[${zMin.toFixed(2)}, ${zMax.toFixed(2)}]`);
@@ -1062,7 +1069,7 @@ class PlaneCutterService extends PubSubService {
     actorProperty.setRepresentationToSurface();
     actorProperty.setEdgeVisibility(false);
     actorProperty.setLighting(false); // Disable lighting for consistent bright lines
-    
+
     // console.log(`  🎨 Actor configured: color=[${color}], surface mode, line width=5, extreme depth offset`);
 
     // Add actor to viewport's renderer
@@ -1311,7 +1318,7 @@ class PlaneCutterService extends PubSubService {
     for (const planeCutter of this.planeCutters) {
       const viewport = this._getViewportById(planeCutter.viewportId);
       let viewportThickness = 'N/A';
-      
+
       if (viewport) {
         try {
           const props = viewport.getProperties?.();
@@ -1320,7 +1327,7 @@ class PlaneCutterService extends PubSubService {
           viewportThickness = 'error';
         }
       }
-      
+
       // console.log(`  ${planeCutter.orientation} (${planeCutter.viewportId}):`, {
       //   planeCutterThickness: planeCutter.slabThickness ?? 0,
       //   viewportThickness,

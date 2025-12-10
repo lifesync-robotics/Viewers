@@ -53,6 +53,7 @@ import CalibrationLineTool from './tools/CalibrationLineTool';
 import ImageOverlayViewerTool from './tools/ImageOverlayViewerTool';
 import FiducialMarkerTool from './tools/FiducialMarkerTool';
 import PlaneCutterTool from './tools/PlaneCutterTool';
+import ScrewInteractionTool from '../../lifesync/src/tools/ScrewInteractionTool';
 
 export default function initCornerstoneTools(configuration = {}) {
   CrosshairsTool.isAnnotation = false;
@@ -62,6 +63,7 @@ export default function initCornerstoneTools(configuration = {}) {
   AdvancedMagnifyTool.isAnnotation = false;
   PlanarFreehandContourSegmentationTool.isAnnotation = false;
   PlaneCutterTool.isAnnotation = false;
+  ScrewInteractionTool.isAnnotation = false;
 
   init({
     addons: {
@@ -71,6 +73,12 @@ export default function initCornerstoneTools(configuration = {}) {
       autoTerminateOnIdle: {
         enabled: false,
       },
+    },
+    // ✨ Extended interaction delays for better user experience
+    interactionDelay: {
+      mouseClickDelay: 300, // Delay before click is considered complete (increased for stability)
+      mouseHoverDelay: 200,  // Delay before hover state changes
+      touchDelay: 300,       // Delay for touch interactions
     },
   });
   addTool(PanTool);
@@ -105,6 +113,7 @@ export default function initCornerstoneTools(configuration = {}) {
   addTool(ImageOverlayViewerTool);
   addTool(AdvancedMagnifyTool);
   addTool(PlaneCutterTool);
+  addTool(ScrewInteractionTool);
   addTool(UltrasoundDirectionalTool);
   addTool(UltrasoundPleuraBLineTool);
   addTool(PlanarFreehandROITool);
@@ -187,6 +196,7 @@ const toolNames = {
   SplineContourSegmentation: SplineContourSegmentationTool.toolName,
   LabelMapEditWithContourTool: LabelMapEditWithContourTool.toolName,
   PlaneCutter: PlaneCutterTool.toolName,
+  ScrewInteraction: ScrewInteractionTool.toolName,
 };
 
 export { toolNames };

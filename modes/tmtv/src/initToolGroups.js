@@ -139,6 +139,9 @@ function _initToolGroups(toolNames, Enums, toolGroupService, commandsManager) {
             enabled: false,
             panSize: 10,
           },
+          // ✨ Increased crosshair line width to 3x (from ~1.5px to 4.5px)
+          getReferenceLineWidth: () => 4.5,
+          getReferenceLineDashed: () => false,
         },
       },
     ],

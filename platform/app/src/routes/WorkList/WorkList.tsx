@@ -373,31 +373,31 @@ const { sortBySeriesDate } = utils;
 
 const seriesInStudiesMap = new Map();
 
-// 把前端 filterValues 映射成 /api/cases/search 接受的 query 参数
+// Map frontend filterValues to query parameters accepted by /api/cases/search
 const buildCaseSearchParams = filters => {
   if (!filters) {
     console.warn('⚠️ buildCaseSearchParams: filters is null/undefined, using defaults');
     return { page: 1, limit: 100 };
   }
 
-  // 将日期格式转换为 ISO 8601 格式 (YYYY-MM-DDTHH:mm:ssZ)
-  // 支持 YYYYMMDD (8位数字) 和 YYYY-MM-DD (带连字符) 格式
+  // Convert date format to ISO 8601 format (YYYY-MM-DDTHH:mm:ssZ)
+  // Supports YYYYMMDD (8 digits) and YYYY-MM-DD (with hyphen) formats
   const convertDateToISO = dateStr => {
     if (!dateStr) {
       return undefined;
     }
 
-    // 转换为字符串并去除空格
+    // Convert to string and trim whitespace
     const trimmed = String(dateStr).trim();
 
-    // 如果为空字符串，返回 undefined
+    // If empty string, return undefined
     if (trimmed.length === 0) {
       return undefined;
     }
 
     let year, month, day;
 
-    // 处理 YYYY-MM-DD 格式（带连字符）
+    // Handle YYYY-MM-DD format (with hyphen)
     if (trimmed.includes('-')) {
       const parts = trimmed.split('-');
       if (parts.length !== 3) {
@@ -408,25 +408,25 @@ const buildCaseSearchParams = filters => {
       month = parts[1].trim();
       day = parts[2].trim();
 
-      // 检查每个部分是否完整
+      // Check if each part is complete
       if (year.length !== 4 || month.length !== 2 || day.length !== 2) {
         console.warn('⚠️ Incomplete date parts:', { year, month, day, original: dateStr });
         return undefined;
       }
     }
-    // 处理 YYYYMMDD 格式（8位数字）
+    // Handle YYYYMMDD format (8 digits)
     else if (trimmed.length === 8 && /^\d{8}$/.test(trimmed)) {
       year = trimmed.substring(0, 4);
       month = trimmed.substring(4, 6);
       day = trimmed.substring(6, 8);
     }
-    // 其他格式都不支持
+    // Other formats are not supported
     else {
       console.warn('⚠️ Invalid date format, expected YYYYMMDD or YYYY-MM-DD, got:', dateStr);
       return undefined;
     }
 
-    // 验证年份（必须是4位数字，且年份合理）
+    // Validate year (must be 4 digits, and year must be reasonable)
     if (!/^\d{4}$/.test(year)) {
       console.warn('⚠️ Invalid year format:', year);
       return undefined;
@@ -437,7 +437,7 @@ const buildCaseSearchParams = filters => {
       return undefined;
     }
 
-    // 验证月份和日期范围
+    // Validate month and date ranges
     if (!/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) {
       console.warn('⚠️ Invalid month or day format:', { month, day });
       return undefined;
@@ -454,19 +454,19 @@ const buildCaseSearchParams = filters => {
   };
 
   const params = {
-    // 患者姓名：对应 ?patientName=，过滤空字符串
+    // Patient name: corresponds to ?patientName=, filter empty strings
     patientName:
       filters.patientName && filters.patientName.trim() ? filters.patientName.trim() : undefined,
 
-    // 病例号 / MRN：你在 filtersMeta 里用的是 'mrn'，过滤空字符串
+    // Case number / MRN: you use 'mrn' in filtersMeta, filter empty strings
     patientMRN: filters.mrn && filters.mrn.trim() ? filters.mrn.trim() : undefined,
 
-    // 状态（如果你后面加 status 字段）
+    // Status (if you add status field later)
     status: filters.status && filters.status.trim() ? filters.status.trim() : undefined,
 
-    // 检查日期范围：DateRange 组件返回的是 { startDate, endDate } 格式 (YYYYMMDD)
-    // 需要转换为 ISO 8601 格式给后端 API
-    // 确保日期值有效且不为空字符串
+    // Check date range: DateRange component returns { startDate, endDate } format (YYYYMMDD)
+    // Need to convert to ISO 8601 format for backend API
+    // Ensure date values are valid and not empty strings
     createdAfter:
       filters.studyDate?.startDate &&
       filters.studyDate.startDate !== null &&
@@ -482,20 +482,20 @@ const buildCaseSearchParams = filters => {
         ? convertDateToISO(String(filters.studyDate.endDate))
         : undefined,
 
-    // 分页：确保始终传递有效的分页参数，如果没有则使用默认值
-    // 这样即使没有查询条件，也能正确返回分页结果
+    // Pagination: ensure valid pagination parameters are always passed, use defaults if not provided
+    // This ensures correct pagination results even without query conditions
     page: filters.pageNumber && filters.pageNumber > 0 ? filters.pageNumber : 1,
-    limit: filters.resultsPerPage && filters.resultsPerPage > 0 ? filters.resultsPerPage : 100, // 默认返回更多结果，如果没有查询条件
+    limit: filters.resultsPerPage && filters.resultsPerPage > 0 ? filters.resultsPerPage : 100, // Default to return more results if no query conditions
 
-    // 是否包含 studies（如果 UI 将来加一个开关）
+    // Whether to include studies (if UI adds a toggle later)
     includeStudies: filters.includeStudies || undefined,
   };
 
-  // 移除所有 undefined、null 和空字符串值（但保留分页参数）
+  // Remove all undefined, null and empty string values (but keep pagination parameters)
   Object.keys(params).forEach(key => {
     const value = params[key];
     if (value === undefined || value === null || value === '') {
-      // 保留分页参数，即使它们可能是默认值
+      // Keep pagination parameters even if they might be default values
       if (key !== 'page' && key !== 'limit') {
         delete params[key];
       }
@@ -524,6 +524,7 @@ function WorkList({
   dataPath,
   onRefresh,
   servicesManager,
+  extensionManager,
 }: withAppTypes) {
   const { show, hide } = useModal();
   const { t } = useTranslation();
@@ -555,17 +556,17 @@ function WorkList({
   const STUDIES_LIMIT = 101;
   const queryFilterValues = _getQueryFilterValues(searchParams);
 
-  // 检查是否有有效的查询参数（排除空值）
+  // Check if there are valid query parameters (exclude empty values)
   const hasValidQueryParams = Object.keys(queryFilterValues).some(key => {
     const value = queryFilterValues[key];
     if (value === null || value === undefined || value === '') {
       return false;
     }
-    // 检查日期对象：startDate 和 endDate 都必须有效
+    // Check date objects: both startDate and endDate must be valid
     if (typeof value === 'object' && value.startDate === null && value.endDate === null) {
       return false;
     }
-    // 检查日期对象：如果 startDate 或 endDate 是空字符串，也不算有效
+    // Check date objects: if startDate or endDate is empty string, it's not valid either
     if (typeof value === 'object' && value.startDate !== undefined && value.endDate !== undefined) {
       const hasValidStartDate =
         value.startDate !== null &&
@@ -583,7 +584,7 @@ function WorkList({
     return true;
   });
 
-  // 清理无效的查询值（特别是日期字段）
+  // Clean invalid query values (especially date fields)
   const cleanQueryFilterValues = values => {
     if (!values || typeof values !== 'object') {
       return defaultFilterValues;
@@ -591,7 +592,7 @@ function WorkList({
 
     const cleaned = { ...values };
 
-    // 清理日期字段：确保 startDate 和 endDate 要么是有效的日期字符串，要么是 null
+    // Clean date fields: ensure startDate and endDate are either valid date strings or null
     if (cleaned.studyDate && typeof cleaned.studyDate === 'object') {
       const isValidDateString = dateStr => {
         if (!dateStr || dateStr === null || dateStr === '') {
@@ -601,11 +602,11 @@ function WorkList({
         if (str.length < 8) {
           return false;
         }
-        // 检查是否是 YYYYMMDD 格式（8位数字）
+        // Check if it's YYYYMMDD format (8 digits)
         if (/^\d{8}$/.test(str)) {
           return true;
         }
-        // 检查是否是 YYYY-MM-DD 格式（带连字符）
+        // Check if it's YYYY-MM-DD format (with hyphen)
         if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
           return true;
         }
@@ -619,13 +620,13 @@ function WorkList({
         endDate: isValidDateString(cleaned.studyDate.endDate) ? cleaned.studyDate.endDate : null,
       };
 
-      // 如果两个日期都无效，设置为 null
+      // If both dates are invalid, set to null
       if (!cleaned.studyDate.startDate && !cleaned.studyDate.endDate) {
         cleaned.studyDate = { startDate: null, endDate: null };
       }
     }
 
-    // 清理其他空字符串字段
+    // Clean other empty string fields
     Object.keys(cleaned).forEach(key => {
       if (key !== 'studyDate' && (cleaned[key] === '' || cleaned[key] === null)) {
         cleaned[key] = defaultFilterValues[key] || null;
@@ -637,7 +638,7 @@ function WorkList({
 
   const [sessionQueryFilterValues, updateSessionQueryFilterValues] = useSessionStorage({
     key: 'queryFilterValues',
-    // 只有在 URL 中有有效查询参数时才使用，否则使用默认值
+    // Only use if there are valid query parameters in URL, otherwise use default values
     defaultValue: hasValidQueryParams
       ? cleanQueryFilterValues(queryFilterValues)
       : defaultFilterValues,
@@ -647,11 +648,11 @@ function WorkList({
     clearOnUnload: true,
   });
 
-  // 合并默认值和 sessionStorage 的值，但优先使用 URL 参数（如果有）
-  // 同时清理 sessionStorage 中的无效值
+  // Merge default values and sessionStorage values, but prioritize URL parameters (if any)
+  // Also clean invalid values in sessionStorage
   const cleanedSessionValues = cleanQueryFilterValues(sessionQueryFilterValues);
 
-  // 检查清理后的 sessionStorage 值是否与默认值相同
+  // Check if cleaned sessionStorage values are the same as default values
   const isSessionValuesSameAsDefault = Object.keys(defaultFilterValues).every(key => {
     if (key === 'studyDate') {
       return (
@@ -662,15 +663,15 @@ function WorkList({
     return cleanedSessionValues[key] === defaultFilterValues[key];
   });
 
-  // 如果没有有效的查询参数，且 sessionStorage 的值与默认值相同（或无效），使用默认值
-  // 这样可以确保刷新页面时，如果没有查询参数，所有字段都是空的
+  // If there are no valid query parameters, and sessionStorage values are the same as defaults (or invalid), use defaults
+  // This ensures that when refreshing the page, if there are no query parameters, all fields are empty
   const initialFilterValues = hasValidQueryParams
     ? { ...defaultFilterValues, ...cleanQueryFilterValues(queryFilterValues) }
     : isSessionValuesSameAsDefault
       ? defaultFilterValues
       : { ...defaultFilterValues, ...cleanedSessionValues };
 
-  // 最终检查：如果初始值与默认值相同，确保使用默认值
+  // Final check: if initial values are the same as defaults, ensure defaults are used
   const isSameAsDefault = Object.keys(defaultFilterValues).every(key => {
     if (key === 'studyDate') {
       return (
@@ -694,9 +695,9 @@ function WorkList({
 
   const [filterValues, _setFilterValues] = useState(finalInitialFilterValues);
 
-  // 如果 sessionStorage 中有无效值，清理它们（只在首次加载时检查）
+  // If there are invalid values in sessionStorage, clean them (only check on first load)
   useEffect(() => {
-    // 检查是否有无效的日期值需要清理
+    // Check if there are invalid date values that need cleaning
     const hasInvalidDates =
       filterValues.studyDate?.startDate &&
       String(filterValues.studyDate.startDate).trim().length > 0 &&
@@ -716,7 +717,7 @@ function WorkList({
       _setFilterValues(cleaned);
       updateSessionQueryFilterValues(cleaned);
     }
-  }, []); // 只在组件挂载时执行一次
+  }, []); // Only execute once when component mounts
 
   const debouncedFilterValues = useDebounce(filterValues, 200);
 
@@ -742,18 +743,18 @@ function WorkList({
       const { cases: caseData, pagination } = await caseService.searchCases(searchParams);
 
       setCases(caseData || []);
-      setCasePagination(pagination || null); // 保存 pagination 信息
+      setCasePagination(pagination || null); // Save pagination info
     } catch (error) {
       console.error('❌ Failed to load cases:', error);
       setCases([]);
-      setCasePagination(null); // 出错时清空 pagination
+      setCasePagination(null); // Clear pagination on error
     } finally {
       setLoadingCases(false);
     }
   }, [caseService, debouncedFilterValues, filterValues]);
 
   useEffect(() => {
-    // 过滤条件变化后重新加载 Case 列表
+    // Reload Case list after filter conditions change
     loadCases();
   }, [loadCases]);
   const { resultsPerPage, pageNumber, sortBy, sortDirection } = filterValues;
@@ -793,7 +794,7 @@ function WorkList({
       } else if (!s2Prop && s1Prop) {
         return 1 * sortModifier;
       } else if (sortBy === 'studyDate') {
-        return _sortStringDates(s1, s2, sortModifier);
+        return _sortStringDates(s1, s2, sortModifier);create
       }
 
       return 0;
@@ -836,7 +837,7 @@ function WorkList({
   const [seriesDataForCases, setSeriesDataForCases] = useState(new Map()); // Map<studyUID, seriesData>
   const numOfStudies = studiesTotal;
   const caseCount = cases?.length || 0;
-  // 在 cases 视图模式下，使用 pagination.totalCount 显示总数；如果没有 pagination，fallback 到当前页数量
+  // In cases view mode, use pagination.totalCount to display total count; if no pagination, fallback to current page count
   const totalCaseCount = casePagination?.totalCount ?? caseCount;
   const displayedCount =
     viewMode === 'cases' ? totalCaseCount : pageNumber * resultsPerPage > 100 ? 101 : numOfStudies;
@@ -855,18 +856,18 @@ function WorkList({
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
   const [isUploading, setIsUploading] = useState(false);
-  // TODO: 搜索功能暂时注释，后续实现
+  // TODO: Search functionality temporarily commented, to be implemented later
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFilter, setSearchFilter] = useState('studyUID'); // 'studyUID' | 'patientName' | 'mrn' | 'studyDate'
-  
+
   // Filter studies based on search query (placeholder - will implement later)
   const filteredOrthancStudies = useMemo(() => {
     if (!searchQuery.trim()) {
       return orthancStudies;
     }
-    
+
     const query = searchQuery.toLowerCase().trim();
-    
+
     return orthancStudies.filter(study => {
       switch (searchFilter) {
         case 'studyUID':
@@ -886,42 +887,66 @@ function WorkList({
   // Select Study dialog state
   const [selectedStudy, setSelectedStudy] = useState(null);
   const [showEnrollDialog, setShowEnrollDialog] = useState(false);
-  const [selectedClinicalPhase, setSelectedClinicalPhase] = useState('PreOperativePlanning');
+
+  // Clinical phase state - two different purposes
+  const [clinicalPhase, setClinicalPhase] = useState('PreOperativePlanning'); // For upload file clinical phase
+  const [selectedClinicalPhase, setSelectedClinicalPhase] = useState('PreOperativePlanning'); // For clinical phase after selecting study for enrollment
+
   const [isEnrolling, setIsEnrolling] = useState(false);
   const [enrollError, setEnrollError] = useState(null);
 
-  // 暂时直接使用 orthancStudies，不进行过滤
+  // Temporarily use orthancStudies directly, no filtering
   // const filteredOrthancStudies = orthancStudies;
 
   const querying = useMemo(() => {
     return isLoadingData || expandedRows.length > 0;
   }, [isLoadingData, expandedRows]);
 
+  // Load studies for a specific case (moved earlier, for use in handleCustomUpload)
+  const loadStudiesForCase = useCallback(
+    async caseId => {
+      if (!caseService) {
+        return;
+      }
+
+      try {
+        const caseStudiesData = await caseService.getStudiesForCase(caseId);
+        // Safe access with fallback to empty array
+        setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData?.studies || [])));
+      } catch (error) {
+        console.warn(`Failed to load studies for case ${caseId}:`, error);
+        // Set empty array on error
+        setCaseStudies(prev => new Map(prev.set(caseId, [])));
+      }
+    },
+    [caseService]
+  );
+
   // Custom upload function using /api/dicom/studies/upload
   const handleCustomUpload = useCallback(async () => {
     if (selectedFiles.length === 0) {
-      alert('请选择至少一个文件');
+      alert('Please select at least one file');
       return;
     }
 
     if (!caseService) {
-      alert('Case Service 未初始化');
+      alert('Case Service not initialized');
       return;
     }
 
-    // Confirm before upload if auto-enroll is enabled
-    // if (autoEnroll && addStudyToCaseId) {
-    //   const confirmMessage =
-    //     `确认上传并注册到 Case？\n\n` +
-    //     `Case ID: ${addStudyToCaseId}\n` +
-    //     `临床阶段: ${clinicalPhase}\n` +
-    //     `文件数量: ${selectedFiles.length} 个\n\n` +
-    //     `上传完成后，study 将自动注册到该 Case。`;
+    // If caseId is provided, confirm upload and enrollment
+    if (addStudyToCaseId) {
+      const confirmMessage =
+        `Confirm upload and auto-enroll to Case?\n\n` +
+        `Case ID: ${addStudyToCaseId}\n` +
+        `Clinical Phase: ${clinicalPhase}\n` +
+        `File Count: ${selectedFiles.length} file(s)\n\n` +
+        `After upload completes, study and all series will be automatically enrolled to this Case.`;
 
-    //   if (!window.confirm(confirmMessage)) {
-    //     return; // User cancelled
-    //   }
-    // }
+      if (!window.confirm(confirmMessage)) {
+        return; // User cancelled
+      }
+    }
 
     // Get API URL from localStorage or use default
     const hostname = window.location.hostname;
@@ -941,12 +966,12 @@ function WorkList({
         formData.append('files', file);
       });
 
-      // Add optional parameters if auto-enroll is enabled
-      // if (autoEnroll && addStudyToCaseId) {
-      //   formData.append('caseId', addStudyToCaseId.toString());
-      //   formData.append('clinicalPhase', clinicalPhase);
-      //   formData.append('autoEnroll', 'true');
-      // }
+      // If caseId is provided, automatically add enrollment parameters (backend will auto-enroll)
+      if (addStudyToCaseId) {
+        formData.append('caseId', addStudyToCaseId.toString());
+        formData.append('clinicalPhase', clinicalPhase);
+        // No need for autoEnroll parameter, backend auto-enrolls by default
+      }
 
       // Upload using fetch
       const response = await fetch(`${apiUrl}/api/dicom/studies/upload`, {
@@ -962,12 +987,35 @@ function WorkList({
       const result = await response.json();
 
       if (result.success) {
-        // Show success message
-        const message = `✅ 上传成功！${result.studiesUploaded} 个 study 已上传到 Orthanc`;
-        // const message =
-        //   autoEnroll && result.enrollmentResults
-        //     ? `✅ 上传并注册成功！${result.studiesUploaded} 个 study 已上传并注册到 Case`
-        //     : `✅ 上传成功！${result.studiesUploaded} 个 study 已上传到 Orthanc`;
+        // Build success message
+        let message = `✅ Upload successful! ${result.studiesUploaded} study(ies) uploaded to Orthanc`;
+
+        // If there are enrollment results, show enrollment information
+        if (result.enrollmentResults && result.enrollmentResults.length > 0) {
+          const successCount = result.enrollmentResults.filter(r => r.success).length;
+          const totalSeries = result.enrollmentResults.reduce(
+            (sum, r) => sum + (r.enrolledSeriesCount || 0),
+            0
+          );
+
+          message = `✅ Upload and enrollment successful!\n\n` +
+            `- ${result.studiesUploaded} study(ies) uploaded\n` +
+            `- ${successCount} study(ies) successfully enrolled to Case ${addStudyToCaseId}\n` +
+            `- Total ${totalSeries} series enrolled\n`;
+
+          // Show detailed enrollment information
+          if (result.enrollmentResults.length > 0) {
+            const details = result.enrollmentResults.map(r => {
+              if (r.success) {
+                return `  ✓ ${r.studyUID}: ${r.enrolledSeriesCount || 0} series`;
+              } else {
+                return `  ✗ ${r.studyUID || r.orthancStudyId}: ${r.error}`;
+              }
+            }).join('\n');
+
+            console.log('Enrollment details:\n' + details);
+          }
+        }
 
         alert(message);
 
@@ -982,6 +1030,19 @@ function WorkList({
           setLoadingOrthancStudies(false);
         }
 
+        // If enrolled to case, refresh case data
+        if (addStudyToCaseId && result.enrollmentResults && result.enrollmentResults.length > 0) {
+          try {
+            // Reload case list and studies for this case
+            await loadCases();
+            if (caseStudies.has(addStudyToCaseId)) {
+              await loadStudiesForCase(addStudyToCaseId);
+            }
+          } catch (err) {
+            console.error('Failed to reload case data:', err);
+          }
+        }
+
         // Refresh page data
         onRefresh();
 
@@ -989,44 +1050,23 @@ function WorkList({
         setSelectedFiles([]);
         setUploadProgress({});
 
-        // If auto-enrolled, close modal; otherwise, optionally switch to select tab
-        // if (autoEnroll && result.enrollmentResults) {
-        //   setShowAddStudyModal(false);
-        // } else {
-        //   // Optional: switch to select tab to see uploaded studies
-        //   // setActiveTab('select');
-        // }
+        // If enrolled to case, close modal
+        if (addStudyToCaseId && result.enrollmentResults && result.enrollmentResults.length > 0) {
+          setShowAddStudyModal(false);
+        } else {
+          // Optional: switch to select tab to view uploaded studies
+          // setActiveTab('select');
+        }
       } else {
         throw new Error(result.error || 'Upload failed');
       }
     } catch (error) {
       console.error('Upload error:', error);
-      alert(`上传失败: ${error.message}`);
+      alert(`Upload failed: ${error.message}`);
     } finally {
       setIsUploading(false);
     }
-  }, [selectedFiles, addStudyToCaseId, caseService, onRefresh]);
-  // }, [selectedFiles, autoEnroll, clinicalPhase, addStudyToCaseId, caseService, onRefresh]);
-
-  // Load studies for a specific case (defined early for use in handleEnrollStudy)
-  const loadStudiesForCase = useCallback(
-    async caseId => {
-      if (!caseService) {
-        return;
-      }
-
-      try {
-        const caseStudiesData = await caseService.getStudiesForCase(caseId);
-        // Safe access with fallback to empty array
-        setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData?.studies || [])));
-      } catch (error) {
-        console.warn(`Failed to load studies for case ${caseId}:`, error);
-        // Set empty array on error
-        setCaseStudies(prev => new Map(prev.set(caseId, [])));
-      }
-    },
-    [caseService]
-  );
+  }, [selectedFiles, clinicalPhase, addStudyToCaseId, caseService, onRefresh, loadCases, loadStudiesForCase, caseStudies]);
 
   // Handle study selection - open enroll dialog
   const handleStudyClick = useCallback(study => {
@@ -1051,7 +1091,7 @@ function WorkList({
         selectedStudy.studyInstanceUID,
         selectedClinicalPhase,
         {
-          enrollAllSeries: true, // 自动注册所有 series
+          enrollAllSeries: true, // Auto-enroll all series
         }
       );
 
@@ -1060,7 +1100,7 @@ function WorkList({
       setShowAddStudyModal(false);
       setSelectedStudy(null);
 
-      // 重新加载以确保数据同步（依赖服务器返回的真实数据，不要手动增加计数）
+      // Reload to ensure data synchronization (rely on real data from server, don't manually increment count)
       await loadCases();
 
       // Reload studies for this case if it's already expanded
@@ -1112,21 +1152,21 @@ function WorkList({
     const isNextPage = newPageNumber > oldPageNumber;
     const isPrevPage = newPageNumber < oldPageNumber;
 
-    // 在 cases 视图模式下，使用后端返回的 pagination 信息来判断
+    // In cases view mode, use pagination info returned from backend to determine
     if (viewMode === 'cases') {
       if (casePagination) {
-        // 使用后端返回的 hasNext/hasPrev 来判断
+        // Use hasNext/hasPrev returned from backend to determine
         if (isNextPage && !casePagination.hasNext) {
-          return; // 没有下一页，直接返回
+          return; // No next page, return directly
         }
         if (isPrevPage && !casePagination.hasPrev) {
-          return; // 没有上一页，直接返回
+          return; // No previous page, return directly
         }
       } else {
         console.warn('⚠️ No pagination info available in cases view mode');
       }
     } else {
-      // 在 studies 视图模式下，使用原来的逻辑
+      // In studies view mode, use original logic
       const rollingPageNumberMod = Math.floor(101 / filterValues.resultsPerPage);
       const rollingPageNumber = oldPageNumber % rollingPageNumberMod;
       const hasNextPage = Math.max(rollingPageNumber, 1) * resultsPerPage < numOfStudies;
@@ -1164,7 +1204,7 @@ function WorkList({
     try {
       const updatedCase = await caseService.updateCase(selectedCase.caseId, updates);
       await loadCases(); // Reload cases list
-      
+
       // Update selectedCase with the latest data from server
       // This ensures the edit dialog shows updated data if reopened
       setSelectedCase({
@@ -1176,7 +1216,7 @@ function WorkList({
         },
         status: updatedCase.status || selectedCase.status || 'created',
       });
-      
+
       console.log(`✅ Case ${selectedCase.caseId} updated successfully`);
     } catch (err) {
       console.error('Failed to update case:', err);
@@ -1243,7 +1283,7 @@ function WorkList({
 
     const queryString = {};
     Object.keys(defaultFilterValues).forEach(key => {
-      // 暂时排除 sortBy 和 sortDirection，避免触发 404 错误（服务器没有对应的 API）
+      // Temporarily exclude sortBy and sortDirection to avoid triggering 404 errors (server doesn't have corresponding API)
       if (key === 'sortBy' || key === 'sortDirection') {
         return;
       }
@@ -1355,16 +1395,16 @@ function WorkList({
       }
     };
 
-    // 创建一个映射：studyRowKey -> studyInstanceUID
+    // Create a mapping: studyRowKey -> studyInstanceUID
     const studyRowKeyToUID = new Map();
-    
+
     if (viewMode === 'cases' && cases.length > 0) {
-      // Case-centric view: 遍历所有 cases 和 studies 来建立映射
-      // 注意：这里的逻辑必须与 createTableDataSource 中的 rowIndex 分配逻辑完全一致
+      // Case-centric view: iterate through all cases and studies to build mapping
+      // Note: this logic must be exactly consistent with rowIndex assignment logic in createTableDataSource
       let rowIndex = 1;
       cases.forEach(caseItem => {
         rowIndex++; // case row
-        // 只有当 case 展开时，才会创建 study 行并分配 rowIndex
+        // Only when case is expanded will study rows be created and rowIndex assigned
         if (expandedCases.includes(caseItem.caseId) && caseStudies.has(caseItem.caseId)) {
           const studies = caseStudies.get(caseItem.caseId) || [];
           studies.forEach(study => {
@@ -1373,13 +1413,13 @@ function WorkList({
         }
       });
     } else {
-      // Study-centric view: 直接使用索引
+      // Study-centric view: use index directly
       filteredStudies.forEach((study, index) => {
         studyRowKeyToUID.set(index + 1, study.studyInstanceUid);
       });
     }
 
-    // 根据 expandedRows 获取对应的 studyInstanceUID
+    // Get corresponding studyInstanceUID based on expandedRows
     for (let z = 0; z < expandedRows.length; z++) {
       const studyRowKey = expandedRows[z];
       const studyInstanceUid = studyRowKeyToUID.get(studyRowKey);
@@ -1415,12 +1455,12 @@ function WorkList({
 
         // Add case row with active case highlighting
         const isActiveCase = activeCaseId && caseItem.caseId === activeCaseId;
-        
+
         rows.push({
           dataCY: `caseRow-${caseItem.caseId}`,
           clickableCY: caseItem.caseId,
-          className: isActiveCase 
-            ? 'bg-blue-900/20 border-l-4 border-blue-500 hover:bg-blue-900/30' 
+          className: isActiveCase
+            ? 'bg-blue-900/20 border-l-4 border-blue-500 hover:bg-blue-900/30'
             : 'hover:bg-primary-dark',
           row: [
             {
@@ -1430,11 +1470,11 @@ function WorkList({
                   {isActiveCase && <span className="text-blue-400 text-lg">★</span>}
                   <Icons.Database className="h-5 w-5 text-blue-400" />
                   <span className="text-base font-bold text-blue-200">📁 {caseItem.caseId}</span>
-                  {isActiveCase && <span className="ml-2 text-xs bg-blue-600/60 px-2 py-0.5 rounded text-blue-200">ACTIVE</span>}
+                  {/* {isActiveCase && <span className="ml-2 text-xs bg-blue-600/60 px-2 py-0.5 rounded text-blue-200">ACTIVE</span>} */}
                 </div>
               ),
               // title: caseItem.caseId,
-              gridCol: 6, // 恢复为 6，不调整
+              gridCol: 6, // Restored to 6, no adjustment
             },
             {
               key: 'patientName',
@@ -1443,7 +1483,7 @@ function WorkList({
                   {caseItem.patientName || 'Unknown Patient'}
                 </span>
               ),
-              gridCol: 3, // 从 2 增大到 3，避免长名字被截断
+              gridCol: 3, // Increased from 2 to 3, avoid truncating long names
             },
             {
               key: 'mrn',
@@ -1452,12 +1492,12 @@ function WorkList({
                   {caseItem.patientMRN || caseItem.patientInfo?.mrn || caseItem.mrn || 'N/A'}
                 </span>
               ),
-              gridCol: 5, // 保持不变
+              gridCol: 5, // Keep unchanged
             },
             {
               key: 'createdAt',
               content: moment(caseItem.createdAt).format('MMM-DD-YYYY'),
-              gridCol: 3, // 保持不变，日期格式固定
+              gridCol: 3, // Keep unchanged, date format fixed
             },
             {
               key: 'studyCount',
@@ -1467,12 +1507,12 @@ function WorkList({
                   <span>{caseItem.studyCount} studies</span>
                 </div>
               ),
-              gridCol: 3, // 保持不变，确保 "0 studies" 在一行显示
+              gridCol: 3, // Keep unchanged, ensure "0 studies" displays in one line
             },
             {
               key: 'actions',
               content: (
-                <div className="flex items-center gap-0.5"> {/* 从 gap-1 改为 gap-0.5 */}
+                <div className="flex items-center gap-0.5"> {/* Changed from gap-1 to gap-0.5 */}
                   <button
                     onClick={async e => {
                       e.stopPropagation();
@@ -1486,7 +1526,7 @@ function WorkList({
                       setSelectedFiles([]);
                       setUploadProgress({});
                       setIsUploading(false);
-                      // setSearchQuery(''); // Reset search - TODO: 搜索功能暂时注释
+                      // setSearchQuery(''); // Reset search - TODO: Search functionality temporarily commented
                       setLoadingOrthancStudies(true);
 
                       try {
@@ -1501,7 +1541,7 @@ function WorkList({
                         setLoadingOrthancStudies(false);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-1 py-1 transition-colors hover:bg-green-900/50 whitespace-nowrap" // px-1.5 改为 px-1
+                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-1 py-1 transition-colors hover:bg-green-900/50 whitespace-nowrap" // Changed from px-1.5 to px-1
                     title="Add Study to Case"
                   >
                     <Icons.Add className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
@@ -1510,7 +1550,7 @@ function WorkList({
                   <button
                     onClick={e => {
                       e.stopPropagation();
-                      // 🔍 DEBUG: 检查原始 caseItem 数据
+                      // 🔍 DEBUG: Check original caseItem data
                       console.log('🔍 WorkList: ========== DEBUG INFO ==========');
                       console.log('🔍 Original caseItem:', JSON.stringify(caseItem, null, 2));
                       console.log('🔍 caseItem.patientInfo:', caseItem.patientInfo);
@@ -1518,7 +1558,7 @@ function WorkList({
                       console.log('🔍 caseItem.patientMRN:', caseItem.patientMRN);
                       console.log('🔍 caseItem.patientName:', caseItem.patientName);
                       console.log('🔍 ===========================================');
-                      
+
                       // Transform case data to match EditCaseDialog's expected structure
                       // Use patientInfo as primary source, fallback to case-level fields for backward compatibility
                       const caseDataForDialog = {
@@ -1531,15 +1571,15 @@ function WorkList({
                         },
                         status: caseItem.status || 'created',
                       };
-                      
-                      // 🔍 DEBUG: 检查转换后的数据
+
+                      // 🔍 DEBUG: Check transformed data
                       console.log('🔍 WorkList: caseDataForDialog:', JSON.stringify(caseDataForDialog, null, 2));
                       console.log('🔍 WorkList: caseDataForDialog.patientInfo?.dateOfBirth:', caseDataForDialog.patientInfo?.dateOfBirth);
-                      
+
                       setSelectedCase(caseDataForDialog);
                       setIsEditDialogOpen(true);
                     }}
-                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-1 py-1 transition-colors hover:bg-blue-900/50 whitespace-nowrap" // px-1.5 改为 px-1
+                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-1 py-1 transition-colors hover:bg-blue-900/50 whitespace-nowrap" // Changed from px-1.5 to px-1
                     title="Edit Case"
                   >
                     <Icons.Settings className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
@@ -1568,7 +1608,7 @@ function WorkList({
                         alert(`Failed to delete case: ${err.message}`);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-1 py-1 transition-colors hover:bg-red-900/50 whitespace-nowrap" // px-1.5 改为 px-1
+                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-1 py-1 transition-colors hover:bg-red-900/50 whitespace-nowrap" // Changed from px-1.5 to px-1
                     title="Delete Case"
                   >
                     <Icons.Cancel className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
@@ -1576,7 +1616,7 @@ function WorkList({
                   </button>
                 </div>
               ),
-              gridCol: 7, // 从 8 减小到 7，因为移除了 expandIcon 列，可以重新分配空间
+              gridCol: 7, // Decreased from 8 to 7, because expandIcon column was removed, can reallocate space
             },
             {
               key: 'expandIcon',
@@ -1613,12 +1653,12 @@ function WorkList({
             if (!fullStudy) {
               // Study not loaded yet - show placeholder with remove button
               const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
-              
+
               rows.push({
                 dataCY: `studyPlaceholder-${study.studyInstanceUID}`,
                 clickableCY: study.studyInstanceUID,
-                className: isActiveCaseStudy 
-                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40' 
+                className: isActiveCaseStudy
+                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40'
                   : 'hover:bg-primary-dark',
                 row: [
                   {
@@ -1636,7 +1676,7 @@ function WorkList({
                     content: (
                       <div className="text-gray-400">
                         <span className="text-sm">
-                          {study.description || 'Study not in Orthanc'}
+                        {study.description || 'Study not found in Orthanc (may have been deleted)'}
                         </span>
                         <br />
                         <span className="text-xs text-gray-500">
@@ -1653,7 +1693,7 @@ function WorkList({
                   },
                   {
                     key: 'status',
-                    content: <span className="text-xs text-yellow-500">Not in worklist</span>,
+                    content: <span className="text-xs text-yellow-500">Missing from Orthanc</span>,
                     gridCol: 2,
                   },
                   {
@@ -1746,12 +1786,12 @@ function WorkList({
 
               // 🎨 Highlight active case studies with different background color
               const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
-              
+
               rows.push({
                 dataCY: `studyRow-${studyInstanceUid}`,
                 clickableCY: studyInstanceUid,
-                className: isActiveCaseStudy 
-                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40' 
+                className: isActiveCaseStudy
+                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40'
                   : 'hover:bg-primary-dark',
                 row: [
                   {
@@ -2009,7 +2049,7 @@ function WorkList({
                                 }
                                 onClick={() => {}}
                                 dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
-                                className={!isValidMode ? 'bg-[#222d44]' : ''}
+                                className={!isValidMode ? 'bg-[#222d44]' : undefined}
                               >
                                 {mode.displayName}
                               </Button>
@@ -2193,7 +2233,7 @@ function WorkList({
 
                           caseService
                             .enrollStudy(activeCaseId, studyInstanceUid, clinicalPhase, {
-                              enrollAllSeries: true, // 自动注册所有 series
+                              enrollAllSeries: true, // Auto-enroll all series
                             })
                             .then(() => {
                               console.log(`✅ Study added to case ${activeCaseId}`);
@@ -2428,6 +2468,30 @@ function WorkList({
     'ohif.dataSourceConfigurationComponent'
   );
 
+  // 示例：假设有一个函数处理跳转到plan（根据您的代码调整）
+  const handleOpenPlanning = (caseId) => {
+    // 设置标志
+    localStorage.setItem('ohif_from_case', 'true');
+
+    // 新增：尝试预清理渲染缓存（如果extensionManager有访问servicesManager）
+    const servicesManager = extensionManager.getActiveServicesManager(); // 基于第527行extensionManager
+    if (servicesManager) {
+      const { modelStateService, viewportStateService } = servicesManager.services;
+      modelStateService.clearAllModels();
+      viewportStateService.clearAll();
+      console.log('🧹 Pre-cleared rendering cache before navigating to plan');
+    }
+
+    // 执行导航
+    navigate(`/plan?caseId=${caseId}`);
+  };
+
+  // 在useEffect中保持设置标志（第2470-2474行）
+  useEffect(() => {
+    localStorage.setItem('ohif_from_case', 'true');  // Set flag when in WorkList (case)
+  }, []);
+
+
   return (
     <div className="flex h-screen flex-col bg-black">
       <Header
@@ -2491,13 +2555,13 @@ function WorkList({
               onChange={setFilterValues}
               clearFilters={() => {
                 console.log('🧹 Clearing filters, resetting to:', defaultFilterValues);
-                // 清空所有查询条件
+                // Clear all query conditions
                 const clearedFilters = { ...defaultFilterValues };
                 setFilterValues(clearedFilters);
                 updateSessionQueryFilterValues(clearedFilters);
-                // 同时清空 URL 参数（暂时不包含 sortBy 和 sortDirection，避免 404 错误）
+                // Also clear URL parameters (temporarily excluding sortBy and sortDirection to avoid 404 errors)
                 const newSearchParams = new URLSearchParams();
-                // TODO: 暂时注释掉排序参数的保留，避免触发 404 错误
+                // TODO: Temporarily comment out sorting parameter retention to avoid triggering 404 errors
                 if (filterValues.sortBy) {
                   newSearchParams.set('sortBy', filterValues.sortBy);
                 }
@@ -2623,7 +2687,7 @@ function WorkList({
                   {/* Upload Method Selection */}
                   <div className="mb-6">
                     <label className="mb-3 block text-sm font-semibold text-white">
-                      上传方式：
+                      Upload Method:
                     </label>
                     <div className="space-y-2 rounded-lg border border-gray-700 bg-gray-900/50 p-4">
                       <label className="flex cursor-pointer items-start gap-3">
@@ -2668,7 +2732,7 @@ function WorkList({
                     <DicomUploadComponent
                       dataSource={dataSource}
                       onComplete={async () => {
-                        // 上传完成后，刷新 Orthanc studies 列表
+                        // After upload completes, refresh Orthanc studies list
                         setLoadingOrthancStudies(true);
                         try {
                           if (caseService) {
@@ -2682,7 +2746,7 @@ function WorkList({
                                   studyDate: study.studyDate,
                                   modalities: study.modalities,
                                   description: study.studyDescription,
-                                  enrollAllSeries: true, // 自动注册所有 series
+                                  enrollAllSeries: true, // Auto-enroll all series
                                 }
                               );
                               console.log(`✅ Study added to case ${addStudyToCaseId}`);
@@ -2692,11 +2756,11 @@ function WorkList({
                               // Refresh Orthanc studies list
                               const studies = await caseService.getAllOrthancStudies();
                               setOrthancStudies(studies);
-                              // 可选：自动切换到 Select Study 标签页
+                              // Optional: auto-switch to Select Study tab
                               // setActiveTab('select');
                             }
                           }
-                          // 刷新页面数据
+                          // Refresh page data
                           onRefresh();
                         } catch (err) {
                           console.error('Failed to reload Orthanc studies:', err);
@@ -2705,7 +2769,7 @@ function WorkList({
                         }
                       }}
                       onStarted={() => {
-                        // 上传开始时，可以显示加载状态
+                        // When upload starts, can display loading state
                         console.log('Upload started');
                       }}
                     />
@@ -2799,63 +2863,49 @@ function WorkList({
                       </div>
 
                       {/* Custom Upload Options */}
-                      {/* 自动注册功能已注释
-                      <div className="rounded-lg border border-gray-700 bg-gray-900/50 p-4">
-                        <label className="mb-3 flex cursor-pointer items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={autoEnroll}
-                            onChange={e => setAutoEnroll(e.target.checked)}
-                            className="rounded"
-                            disabled={isUploading}
-                          />
-                          <span className="font-semibold text-white">自动注册到当前 Case</span>
-                        </label>
-                        {autoEnroll && (
-                          <div className="mt-3 space-y-3">
-                            <div>
-                              <label className="mb-2 block text-sm text-gray-300">临床阶段：</label>
-                              <select
-                                value={clinicalPhase}
-                                onChange={e => setClinicalPhase(e.target.value)}
-                                className="w-full rounded border border-gray-600 bg-black px-3 py-2 text-white"
-                                disabled={isUploading}
-                              >
-                                <option value="Diagnostic">Diagnostic</option>
-                                <option value="PreSurgicalOptimization">
-                                  PreSurgicalOptimization
-                                </option>
-                                <option value="PreOperativePlanning">PreOperativePlanning</option>
-                                <option value="PreOperativeCheck">PreOperativeCheck</option>
-                                <option value="IntraOperative">IntraOperative</option>
-                                <option value="PostOperativeImmediate">
-                                  PostOperativeImmediate
-                                </option>
-                                <option value="PostOperativeShortTerm">
-                                  PostOperativeShortTerm
-                                </option>
-                                <option value="PostOperativeLongTerm">PostOperativeLongTerm</option>
-                                <option value="Surveillance">Surveillance</option>
-                                <option value="Revision">Revision</option>
-                              </select>
+                      {addStudyToCaseId && (
+                        <div className="rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+                          <div className="mb-3">
+                            <label className="mb-2 block text-sm font-semibold text-white">
+                              Clinical Phase:
+                            </label>
+                            <select
+                              value={clinicalPhase}
+                              onChange={e => setClinicalPhase(e.target.value)}
+                              className="w-full rounded border border-gray-600 bg-black px-3 py-2 text-white"
+                              disabled={isUploading}
+                            >
+                              <option value="Diagnostic">Diagnostic</option>
+                              <option value="PreSurgicalOptimization">
+                                PreSurgicalOptimization
+                              </option>
+                              <option value="PreOperativePlanning">PreOperativePlanning</option>
+                              <option value="PreOperativeCheck">PreOperativeCheck</option>
+                              <option value="IntraOperative">IntraOperative</option>
+                              <option value="PostOperativeImmediate">
+                                PostOperativeImmediate
+                              </option>
+                              <option value="PostOperativeShortTerm">
+                                PostOperativeShortTerm
+                              </option>
+                              <option value="PostOperativeLongTerm">PostOperativeLongTerm</option>
+                              <option value="Surveillance">Surveillance</option>
+                              <option value="Revision">Revision</option>
+                            </select>
+                          </div>
+                          <div className="rounded border border-blue-500/30 bg-blue-900/20 p-3">
+                            <div className="text-sm text-blue-300">
+                              <span className="font-semibold">Will auto-enroll to Case ID:</span>{' '}
+                              <span className="font-mono text-blue-200">
+                                {addStudyToCaseId}
+                              </span>
                             </div>
-                            {addStudyToCaseId && (
-                              <div className="rounded border border-blue-500/30 bg-blue-900/20 p-3">
-                                <div className="text-sm text-blue-300">
-                                  <span className="font-semibold">将注册到 Case ID:</span>{' '}
-                                  <span className="font-mono text-blue-200">
-                                    {addStudyToCaseId}
-                                  </span>
-                                </div>
-                              </div>
-                            )}
-                            <p className="text-xs text-gray-400">
-                              勾选后，上传完成后会自动将 study 注册到当前 case
+                            <p className="mt-2 text-xs text-gray-400">
+                              After upload completes, study and all series will be automatically enrolled to this Case
                             </p>
                           </div>
-                        )}
-                      </div>
-                      */}
+                        </div>
+                      )}
 
                       {/* Upload Button */}
                       <div className="flex justify-end gap-3">
@@ -2886,7 +2936,7 @@ function WorkList({
                       {/* Upload Progress */}
                       {isUploading && (
                         <div className="rounded-lg border border-blue-500/50 bg-blue-900/20 p-4">
-                          <div className="mb-2 text-sm text-blue-300">上传中，请稍候...</div>
+                          <div className="mb-2 text-sm text-blue-300">Uploading, please wait...</div>
                           <div className="h-2 w-full overflow-hidden rounded-full bg-gray-700">
                             <div
                               className="h-full animate-pulse bg-blue-500"
@@ -2902,7 +2952,7 @@ function WorkList({
 
               {activeTab === 'select' && (
                 <div>
-                  {/* Search Bar - TODO: 搜索功能暂时注释，后续实现 */}
+                  {/* Search Bar - TODO: Search functionality temporarily commented, to be implemented later */}
                   <div className="border-secondary-light bg-secondary-main flex items-center gap-3 border-b p-4">
                     <select
                       value={searchFilter}
@@ -2923,14 +2973,14 @@ function WorkList({
                     />
                     {/* <button
                       onClick={() => {
-                        // TODO: 实现搜索功能
+                        // TODO: Implement search functionality
                         console.log('Search clicked:', searchQuery, searchFilter);
                       }}
                       className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
                     >
                       Search
                     </button> */}
-                  </div> 
+                  </div>
 
                   {/* Study List */}
                   <div className="p-6">
@@ -3165,20 +3215,20 @@ function _getQueryFilterValues(params) {
   }
   params = newParams;
 
-  // 获取日期参数，并验证格式
+  // Get date parameters and validate format
   const startDateParam = params.get('startdate');
   const endDateParam = params.get('enddate');
 
-  // 验证日期格式：必须是有效的日期字符串（至少8个字符，YYYYMMDD 或 YYYY-MM-DD）
+  // Validate date format: must be a valid date string (at least 8 characters, YYYYMMDD or YYYY-MM-DD)
   const isValidDateString = dateStr => {
     if (!dateStr || dateStr.trim().length < 8) {
       return false;
     }
-    // 检查是否是 YYYYMMDD 格式（8位数字）
+    // Check if it's YYYYMMDD format (8 digits)
     if (/^\d{8}$/.test(dateStr.trim())) {
       return true;
     }
-    // 检查是否是 YYYY-MM-DD 格式（带连字符）
+    // Check if it's YYYY-MM-DD format (with hyphen)
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
       return true;
     }

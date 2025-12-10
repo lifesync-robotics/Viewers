@@ -51,6 +51,7 @@ export interface ScrewData {
   transformMatrix: number[];
   viewportStatesJson?: string;
   placedAt: string;
+  autoLabel?: boolean;  // ✅ added autoLabel field
 }
 
 export interface AddScrewRequest {
@@ -183,14 +184,14 @@ class PlanningBackendService {
     const syncforgeApiUrl = globalConfig.syncforge?.apiUrl;
     if (syncforgeApiUrl) {
       // Append /api/planning if not already present
-      defaultApiUrl = syncforgeApiUrl.endsWith('/api/planning') 
-        ? syncforgeApiUrl 
+      defaultApiUrl = syncforgeApiUrl.endsWith('/api/planning')
+        ? syncforgeApiUrl
         : `${syncforgeApiUrl.replace(/\/$/, '')}/api/planning`;
     }
 
     // Check localStorage for saved API URL (for remote access via ngrok)
-    const savedApiUrl = typeof window !== 'undefined' 
-      ? localStorage.getItem('syncforge_api_url') 
+    const savedApiUrl = typeof window !== 'undefined'
+      ? localStorage.getItem('syncforge_api_url')
       : null;
     if (savedApiUrl) {
       // Append /api/planning if not already present
@@ -200,7 +201,7 @@ class PlanningBackendService {
     }
 
     this.baseUrl = defaultApiUrl;
-    
+
     if (typeof window !== 'undefined') {
       console.log('📋 PlanningBackendService initialized', {
         baseUrl: this.baseUrl,
@@ -336,11 +337,13 @@ class PlanningBackendService {
         body: JSON.stringify(request),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
       const data = await response.json();
+
+      if (!response.ok) {
+        // Try to extract error message from response body
+        const errorMessage = data?.error || data?.message || `HTTP ${response.status}: ${response.statusText}`;
+        throw new Error(errorMessage);
+      }
 
       if (data.success) {
         console.log(`✅ [PlanningBackend] Screw added: ${data.screw_id}`);
@@ -432,15 +435,15 @@ class PlanningBackendService {
   ): Promise<{ success: boolean; error?: string }> {
     try {
       console.log('✏️ [PlanningBackend] Updating screw:', screwId);
+      console.log('   Session ID:', sessionId);
+      console.log('   Updates:', updates);
 
-      const response = await fetch(`${this.baseUrl}/screws/${screwId}`, {
+      // sessionId goes as query parameter, updates go directly in body
+      const response = await fetch(`${this.baseUrl}/screws/${screwId}?sessionId=${encodeURIComponent(sessionId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          sessionId,
-          updates,
-        }),
+        body: JSON.stringify(updates),
       });
 
       if (!response.ok) {
@@ -574,13 +577,20 @@ class PlanningBackendService {
 
   /**
    * Query for a screw model by dimensions
+   * @param radius - Screw radius in mm
+   * @param length - Screw length in mm
+   * @param forceProcedural - If true, force procedural generation instead of using asset library
    */
-  async queryModel(radius: number, length: number): Promise<ModelQueryResponse> {
+  async queryModel(radius: number, length: number, forceProcedural: boolean = false): Promise<ModelQueryResponse> {
     try {
-      console.log(`🔍 [PlanningBackend] Querying model: R=${radius}mm, L=${length}mm`);
+      console.log(`🔍 [PlanningBackend] Querying model: R=${radius}mm, L=${length}mm${forceProcedural ? ' (FORCED PROCEDURAL)' : ''}`);
+
+      const url = forceProcedural
+        ? `${this.baseUrl}/models/query?radius=${radius}&length=${length}&force_procedural=true`
+        : `${this.baseUrl}/models/query?radius=${radius}&length=${length}`;
 
       const response = await fetch(
-        `${this.baseUrl}/models/query?radius=${radius}&length=${length}`,
+        url,
         {
           credentials: 'include',
         }
@@ -607,10 +617,43 @@ class PlanningBackendService {
   }
 
   /**
+   * Query a cap model
+   * Cap model is a fixed file, doesn't have dimensions
+   */
+  async queryCapModel(): Promise<CapModelQueryResponse> {
+    try {
+      console.log(`🔍 [PlanningBackend] Querying cap model ...`);
+      return {
+        success: true,
+        model: {
+          model_id: 'cap',
+          filename: '7300-T10_Top.obj',
+          type: 'cap',
+          description: 'Screw cap'
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ [PlanningBackend] Error querying model:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to query model',
+      };
+    }
+  }
+
+  /**
    * Get model OBJ file URL
    */
   getModelUrl(modelId: string): string {
     return `${this.baseUrl}/models/${modelId}/obj`;
+  }
+
+  /**
+   * Get cap model OBJ file URL
+   */
+  getCapModelUrl(): string {
+    return `${this.baseUrl}/models/cap/obj`;
   }
 
   /**
