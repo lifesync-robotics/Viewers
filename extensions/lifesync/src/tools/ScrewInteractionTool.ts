@@ -721,7 +721,8 @@ class ScrewInteractionTool extends BaseTool {
 
       // STEP 3: Force rendering engine to render all viewports
       if (renderingEngine) {
-        renderingEngine.renderViewports(renderingEngine.getViewportIds());
+        const viewportIds = viewports.map(vp => vp.id);
+        renderingEngine.renderViewports(viewportIds);
         console.log('✅ Forced rendering engine to render all viewports');
         console.log(`✅ [ScrewInteractionTool] Viewport update completed - camera: ✓, crosshairs: ${crosshairsUpdated ? '✓' : '✗'}`);
       }

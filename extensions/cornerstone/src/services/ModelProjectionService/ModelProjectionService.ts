@@ -480,7 +480,7 @@ class ModelProjectionService extends PubSubService {
 
     // Force render to show updates
     viewport.render?.();
-    this._log(`Rendered VTK overlay for model ${modelId} in viewport ${viewportId} (relation=${relation})`);
+    // this._log(`Rendered VTK overlay for model ${modelId} in viewport ${viewportId} (relation=${relation})`);
   }
 
   private _buildWorldPolyline(
