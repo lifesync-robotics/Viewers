@@ -2,20 +2,40 @@
  * Volume Rendering Performance Commands - Browser Console Test Script
  * 
  * Copy and paste this into the browser console to test volume rendering optimizations.
+ * 
+ * NOTE: Commands require the 'CORNERSTONE' context to be specified as the third parameter.
+ * This is because the commands are registered in the cornerstone extension.
  */
 
 // Wait for OHIF to be fully loaded
 console.log('🔍 Checking OHIF availability...');
 
-if (typeof window.commandsManager === 'undefined') {
-  console.error('❌ window.commandsManager not available. Make sure OHIF is fully loaded.');
-} else {
-  console.log('✅ window.commandsManager available');
+// Function to find commandsManager in various locations
+function findCommandsManager() {
+  const locations = [
+    { path: 'window.commandsManager', obj: window.commandsManager },
+    { path: 'window.ohif.commandsManager', obj: window.ohif?.commandsManager },
+    { path: 'window.OHIF.commandsManager', obj: window.OHIF?.commandsManager },
+  ];
+  
+  for (const loc of locations) {
+    if (loc.obj && typeof loc.obj.runCommand === 'function') {
+      console.log(`✅ Found commandsManager at: ${loc.path}`);
+      return loc.obj;
+    }
+  }
+  
+  console.error('❌ commandsManager not available. Wait a few seconds and try again.');
+  return null;
 }
+
+const commandsManager = findCommandsManager();
 
 if (typeof window.cornerstoneCommandsModule !== 'undefined') {
   console.log('✅ window.cornerstoneCommandsModule available');
   console.log('📋 Available volume rendering commands:', Object.keys(window.cornerstoneCommandsModule.definitions).filter(k => k.includes('Volume')));
+} else {
+  console.warn('⚠️ window.cornerstoneCommandsModule not yet exposed');
 }
 
 // Helper function to get active viewport ID
@@ -25,7 +45,16 @@ function getActiveViewportId() {
     console.log('🎯 Active viewport ID:', activeViewportId);
     return activeViewportId;
   }
-  console.error('❌ Could not get active viewport ID');
+  console.error('❌ Could not get active viewport ID. Make sure a viewport is active.');
+  return null;
+}
+
+// Helper to get commandsManager (finds it dynamically)
+function getCommandsManager() {
+  if (window.commandsManager) return window.commandsManager;
+  if (window.ohif?.commandsManager) return window.ohif.commandsManager;
+  if (window.OHIF?.commandsManager) return window.OHIF.commandsManager;
+  console.error('❌ commandsManager not found');
   return null;
 }
 
@@ -45,95 +74,120 @@ function listCommands() {
 
 // Helper function to test volume rendering image sample distance
 function testImageSampleDistance(imageSampleDistance = 2.0) {
+  const cm = getCommandsManager();
+  if (!cm) return false;
+  
   const viewportId = getActiveViewportId();
-  if (!viewportId) return;
+  if (!viewportId) return false;
 
   console.log(`🔧 Testing setVolumeRenderingImageSampleDistance with value: ${imageSampleDistance}`);
   
   try {
-    window.commandsManager.runCommand('setVolumeRenderingImageSampleDistance', {
+    cm.runCommand('setVolumeRenderingImageSampleDistance', {
       viewportId,
       imageSampleDistance,
-    });
-    console.log('✅ Command executed successfully');
+    }, 'CORNERSTONE');
+    console.log(`✅ Command executed successfully! Image sample distance set to ${imageSampleDistance}`);
+    return true;
   } catch (error) {
     console.error('❌ Command failed:', error);
+    return false;
   }
 }
 
 // Helper function to test volume rendering interaction sample distance
 function testInteractionSampleDistance(initialScale = 2.0, interactionFactor = 2.0) {
+  const cm = getCommandsManager();
+  if (!cm) return false;
+  
   const viewportId = getActiveViewportId();
-  if (!viewportId) return;
+  if (!viewportId) return false;
 
   console.log(`🔧 Testing setVolumeRenderingInteractionSampleDistance with initialScale: ${initialScale}, interactionFactor: ${interactionFactor}`);
   
   try {
-    window.commandsManager.runCommand('setVolumeRenderingInteractionSampleDistance', {
+    cm.runCommand('setVolumeRenderingInteractionSampleDistance', {
       viewportId,
       initialScale,
       interactionFactor,
-    });
-    console.log('✅ Command executed successfully');
+    }, 'CORNERSTONE');
+    console.log(`✅ Command executed successfully! Interaction quality set to ${initialScale}x`);
+    return true;
   } catch (error) {
     console.error('❌ Command failed:', error);
+    return false;
   }
 }
 
 // Helper function to test volume rendering quality
 function testVolumeQuality(quality = 2) {
+  const cm = getCommandsManager();
+  if (!cm) return false;
+  
   const viewportId = getActiveViewportId();
-  if (!viewportId) return;
+  if (!viewportId) return false;
 
   console.log(`🔧 Testing setVolumeRenderingQulaity with quality: ${quality}`);
   
   try {
-    window.commandsManager.runCommand('setVolumeRenderingQulaity', {
+    cm.runCommand('setVolumeRenderingQulaity', {
       viewportId,
       volumeQuality: quality,
-    });
-    console.log('✅ Command executed successfully');
+    }, 'CORNERSTONE');
+    console.log(`✅ Command executed successfully! Volume quality set to ${quality}`);
+    return true;
   } catch (error) {
     console.error('❌ Command failed:', error);
+    return false;
   }
 }
 
 // Helper function to apply full performance optimization preset
 function applyPerformancePreset() {
-  const viewportId = getActiveViewportId();
-  if (!viewportId) return;
-
   console.log('🚀 Applying full performance optimization preset...');
   
+  let success = true;
+  
   // Set image sample distance (fewer rays per pixel)
-  testImageSampleDistance(1.5);
+  success = testImageSampleDistance(1.5) && success;
   
   // Set interaction quality reduction
-  testInteractionSampleDistance(2.0, 2.0);
+  success = testInteractionSampleDistance(2.0, 2.0) && success;
   
   // Set lower volume quality
-  testVolumeQuality(2);
+  success = testVolumeQuality(2) && success;
   
-  console.log('✅ Performance preset applied!');
+  if (success) {
+    console.log('✅ Performance preset applied successfully!');
+    return true;
+  } else {
+    console.error('❌ Some commands failed. Check errors above.');
+    return false;
+  }
 }
 
 // Helper function to apply quality preset (reset to high quality)
 function applyQualityPreset() {
-  const viewportId = getActiveViewportId();
-  if (!viewportId) return;
-
   console.log('🎨 Applying quality preset...');
   
+  let success = true;
+  
   // Reset image sample distance (normal ray density)
-  testImageSampleDistance(1.0);
+  success = testImageSampleDistance(1.0) && success;
   
   // Minimal interaction quality reduction
-  testInteractionSampleDistance(1.0, 1.0);
+  success = testInteractionSampleDistance(1.0, 1.0) && success;
   
   // Set higher volume quality
-  testVolumeQuality(4);
+  success = testVolumeQuality(4) && success;
   
-  console.log('✅ Quality preset applied!');
+  if (success) {
+    console.log('✅ Quality preset applied successfully!');
+    return true;
+  } else {
+    console.error('❌ Some commands failed. Check errors above.');
+    return false;
+  }
 }
 
 // Expose helper functions to window

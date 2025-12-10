@@ -64,6 +64,9 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
     },
   };
 
+  public readonly EVENTS = EVENTS;
+  public static readonly EVENTS = EVENTS;
+
   renderingEngine: Types.IRenderingEngine | null;
   viewportsById: Map<string, ViewportInfo> = new Map();
   viewportGridResizeObserver: ResizeObserver | null;
@@ -1100,27 +1103,65 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
       // console.log(`[VolumeRenderer] Installing hooks for viewport type: ${viewport.type}, id: ${viewport.id}`);
       // First, patch the render method to always ensure safe maximum samples
       const originalRender = viewport.render.bind(viewport);
+      let lastSlabThickness = undefined;
+      
       viewport.render = () => {
         this._ensureSafeMaximumSamplesPerRay(viewport);
+        
+        // Also check for slab thickness changes on render (backup mechanism)
+        try {
+          const props = viewport.getProperties?.();
+          const currentThickness = props?.slabThickness;
+          
+          if (currentThickness !== undefined && currentThickness !== lastSlabThickness) {
+            console.log(`🔍 [CornerstoneViewportService] Detected slab thickness change in render: ${lastSlabThickness} → ${currentThickness} (viewport: ${viewport.id})`);
+            lastSlabThickness = currentThickness;
+            
+            // Emit the event
+            this._broadcastEvent(this.EVENTS.VIEWPORT_PROPERTIES_CHANGED, {
+              viewportId: viewport.id,
+              properties: { slabThickness: currentThickness },
+              volumeId: undefined,
+            });
+          }
+        } catch (e) {
+          // Ignore errors in slab thickness check
+        }
+        
         return originalRender();
       };
 
       // Also patch setProperties to fix it right after properties are set
       const originalSetProperties = viewport.setProperties.bind(viewport);
       viewport.setProperties = (properties, volumeId?) => {
+        console.log(`🔧 [CornerstoneViewportService] setProperties called on viewport ${viewport.id}`, {
+          properties,
+          volumeId,
+          hasSlabThickness: properties?.slabThickness !== undefined,
+        });
+        
         const result = originalSetProperties(properties, volumeId);
+        
         // If preset was set, immediately fix the maximum samples
         if (properties && properties.preset) {
           this._ensureSafeMaximumSamplesPerRay(viewport);
         }
+        
         // Emit event for slab thickness changes
         if (properties && (properties.slabThickness !== undefined || properties.blendMode !== undefined)) {
+          console.log(`📢 [CornerstoneViewportService] VIEWPORT_PROPERTIES_CHANGED event`, {
+            viewportId: viewport.id,
+            slabThickness: properties.slabThickness,
+            blendMode: properties.blendMode,
+            volumeId,
+          });
           this._broadcastEvent(this.EVENTS.VIEWPORT_PROPERTIES_CHANGED, {
             viewportId: viewport.id,
             properties,
             volumeId,
           });
         }
+        
         return result;
       };
 

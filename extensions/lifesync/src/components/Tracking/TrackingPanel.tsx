@@ -375,7 +375,7 @@ function PanelTracking() {
       // Check if model exists for this tool
       const modelData = instrumentModelsRef.current.get(toolId);
       if (!modelData || !modelData.loaded) {
-        console.warn(`⚠️ [setTransformationMatrices] No 3D model loaded for tool ${toolId}`);
+      //   console.warn(`⚠️ [setTransformationMatrices] No 3D model loaded for tool ${toolId}`);
         skippedCount++;
         return;
       }
@@ -412,14 +412,14 @@ function PanelTracking() {
       updatedCount++;
 
       // Log successful updates (throttled to every 100th update)
-      if (updatedCount === 1 || updatedCount % 100 === 0) {
-        console.log(`✅ [setTransformationMatrices] Updated ${toolId} transform (count: ${updatedCount})`);
-        console.log(`   Position (DICOM space):`, [
-          dicomMatrix[0][3].toFixed(1),
-          dicomMatrix[1][3].toFixed(1),
-          dicomMatrix[2][3].toFixed(1)
-        ]);
-      }
+      // if (updatedCount === 1 || updatedCount % 100 === 0) {
+        // console.log(`✅ [setTransformationMatrices] Updated ${toolId} transform (count: ${updatedCount})`);
+        // console.log(`   Position (DICOM space):`, [
+          // dicomMatrix[0][3].toFixed(1),
+          // dicomMatrix[1][3].toFixed(1),
+          // dicomMatrix[2][3].toFixed(1)
+        // ]);
+      // }
     });
 
     // Log summary for first few calls
