@@ -1470,7 +1470,7 @@ function WorkList({
                   {isActiveCase && <span className="text-blue-400 text-lg">★</span>}
                   <Icons.Database className="h-5 w-5 text-blue-400" />
                   <span className="text-base font-bold text-blue-200">📁 {caseItem.caseId}</span>
-                  {isActiveCase && <span className="ml-2 text-xs bg-blue-600/60 px-2 py-0.5 rounded text-blue-200">ACTIVE</span>}
+                  {/* {isActiveCase && <span className="ml-2 text-xs bg-blue-600/60 px-2 py-0.5 rounded text-blue-200">ACTIVE</span>} */}
                 </div>
               ),
               // title: caseItem.caseId,
