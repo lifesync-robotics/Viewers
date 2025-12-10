@@ -2609,9 +2609,57 @@ async setModelTransform(modelId: string, transform: number[] | Float32Array, len
     this._updatePolyDataWithTransform(model, newMatrix);
 
     // Also rotate the cap if it exists (using same rotation, keeping relative position)
-    const capId = `${modelId}-Cap`;
-    const capModel = this.loadedModels.get(capId);
+    // Cap model ID can be in different formats:
+    // 1. `${modelId}-cap` (lowercase, from loadCapModel when screwId is provided)
+    // 2. `${modelId}-Cap` (uppercase C, alternative format)
+    // 3. Find by modelName pattern (contains "-Cap" suffix and matches screw label)
+
+    console.log(`🔍 [rotateScrew] Looking for cap model for screw: ${modelId}`);
+    console.log(`   Screw model name: ${model.metadata.name}`);
+    console.log(`   All loaded models: ${Array.from(this.loadedModels.keys()).join(', ')}`);
+
+    let capModel = this.loadedModels.get(`${modelId}-cap`) || this.loadedModels.get(`${modelId}-Cap`);
+
+    // If not found by ID, try to find by name pattern
+    if (!capModel && model.metadata.name) {
+      const screwLabel = model.metadata.name;
+      console.log(`   Searching by name pattern for screw label: "${screwLabel}"`);
+
+      for (const [id, m] of this.loadedModels) {
+        const modelName = m.metadata.name || '';
+        const isCap = modelName.includes('-Cap') || modelName === 'Screw Cap';
+        const matchesLabel = modelName.includes(screwLabel);
+
+        console.log(`   Checking model: ${id} (${modelName}) - isCap: ${isCap}, matchesLabel: ${matchesLabel}`);
+
+        if (isCap && matchesLabel) {
+          console.log(`   ✅ Found cap model by name pattern: ${id} (${modelName})`);
+          capModel = m;
+          break;
+        }
+      }
+    }
+
+    // Last resort: find any cap model that was loaded after this screw
+    // (This handles the case where both screw and cap have auto-generated IDs)
+    if (!capModel) {
+      console.log(`   Trying to find cap by loading order...`);
+      const allModels = Array.from(this.loadedModels.entries());
+      const screwIndex = allModels.findIndex(([id]) => id === modelId);
+
+      if (screwIndex >= 0 && screwIndex < allModels.length - 1) {
+        // Check the next model (cap is usually loaded right after screw)
+        const nextModel = allModels[screwIndex + 1][1];
+        const nextModelName = nextModel.metadata.name || '';
+        if (nextModelName.includes('-Cap') || nextModelName === 'Screw Cap') {
+          console.log(`   ✅ Found cap model by loading order: ${allModels[screwIndex + 1][0]} (${nextModelName})`);
+          capModel = nextModel;
+        }
+      }
+    }
+
     if (capModel) {
+      console.log(`✅ Found cap model: ${capModel.metadata.id} (${capModel.metadata.name})`);
       const capMatrix = capModel.actor.getUserMatrix();
       if (capMatrix) {
         // Get cap's relative position to screw origin
