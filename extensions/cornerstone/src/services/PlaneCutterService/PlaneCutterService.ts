@@ -78,6 +78,10 @@ class PlaneCutterService extends PubSubService {
   private isEnabled: boolean;
   private colorIndex: number;
   private modelColors: Map<string, [number, number, number]>; // Map modelId -> color
+  private svgOverlays: Map<string, SVGElement> = new Map(); // viewportId -> SVGElement
+  private resizeObservers: Map<string, ResizeObserver> = new Map(); // viewportId -> ResizeObserver
+  private animationFrameId: number | null = null; // For continuous updates during drag
+  private lastCameraStates: Map<string, any> = new Map(); // Track camera state to detect changes
 
   constructor({ servicesManager }) {
     super(EVENTS);
@@ -296,7 +300,17 @@ class PlaneCutterService extends PubSubService {
       console.log('═══════════════════════════════════════════════════════');
 
       // Set up synchronized updates across all viewports
-      this._setupSynchronizedUpdates();
+      // Note: This is async but we don't await it - it sets up event listeners and starts the loop
+      console.log('🔄 [PlaneCutterService] About to call _setupSynchronizedUpdates()...');
+      console.log(`  📊 Plane cutters available: ${this.planeCutters.length}`);
+
+      try {
+        await this._setupSynchronizedUpdates();
+        console.log('  ✅ _setupSynchronizedUpdates() completed successfully');
+      } catch (error) {
+        console.error('❌ [PlaneCutterService] Error setting up synchronized updates:', error);
+        console.error('  Error stack:', error.stack);
+      }
 
       return this.planeCutters.length > 0;
 
@@ -313,6 +327,18 @@ class PlaneCutterService extends PubSubService {
    */
   private async _setupSynchronizedUpdates(): Promise<void> {
     console.log('🔗 [PlaneCutterService] Setting up synchronized updates');
+    console.log(`  📊 Current plane cutters count: ${this.planeCutters.length}`);
+
+    if (this.planeCutters.length === 0) {
+      console.warn('  ⚠️ No plane cutters to set up - skipping synchronized updates');
+      return;
+    }
+    console.log(`  📊 Current plane cutters count: ${this.planeCutters.length}`);
+
+    if (this.planeCutters.length === 0) {
+      console.warn('  ⚠️ No plane cutters to set up - skipping synchronized updates');
+      return;
+    }
 
     // Create centralized update function that updates ALL plane cutters
     const updateAllPlaneCutters = () => {
@@ -340,11 +366,36 @@ class PlaneCutterService extends PubSubService {
 
     for (const planeCutter of this.planeCutters) {
       const viewport = this._getViewportById(planeCutter.viewportId);
-      if (viewport && viewport.element && Enums?.Events?.CAMERA_MODIFIED) {
-        viewport.element.addEventListener(Enums.Events.CAMERA_MODIFIED, updateAllPlaneCutters);
+      if (viewport && viewport.element) {
+        // Listen to CAMERA_MODIFIED for major camera changes
+        if (Enums?.Events?.CAMERA_MODIFIED) {
+          viewport.element.addEventListener(Enums.Events.CAMERA_MODIFIED, updateAllPlaneCutters);
+        }
+
+        // Listen to IMAGE_RENDERED for continuous updates during drag
+        // This fires more frequently than CAMERA_MODIFIED during interactions
+        if (Enums?.Events?.IMAGE_RENDERED) {
+          const imageRenderedHandler = () => {
+            // Throttle updates to avoid excessive computation
+            // Only update if camera actually changed
+            const camera = viewport.getCamera();
+            const currentState = JSON.stringify({
+              focalPoint: camera.focalPoint,
+              viewPlaneNormal: camera.viewPlaneNormal
+            });
+            const lastState = this.lastCameraStates.get(planeCutter.viewportId);
+
+            if (currentState !== lastState) {
+              this.lastCameraStates.set(planeCutter.viewportId, currentState);
+              this._updateSinglePlaneCutter(planeCutter, null);
+            }
+          };
+          viewport.element.addEventListener(Enums.Events.IMAGE_RENDERED, imageRenderedHandler);
+        }
+
         planeCutter.updateCallback = updateAllPlaneCutters;
         planeCutter.eventListenerElement = viewport.element;
-        console.log(`  📡 ${planeCutter.orientation} viewport subscribed to synchronized updates`);
+        console.log(`  📡 ${planeCutter.orientation} viewport subscribed to CAMERA_MODIFIED and IMAGE_RENDERED events`);
       }
     }
 
@@ -352,7 +403,85 @@ class PlaneCutterService extends PubSubService {
     console.log('🔄 [PlaneCutterService] Performing initial synchronized update');
     updateAllPlaneCutters();
 
+    // Start continuous update loop using requestAnimationFrame
+    // This ensures SVG overlay updates smoothly during drag operations
+    // IMPORTANT: Start loop AFTER initial update to ensure plane cutters exist
+    console.log('🔄 [PlaneCutterService] About to start continuous update loop...');
+    console.log(`  📊 Plane cutters count: ${this.planeCutters.length}`);
+    try {
+      this._startContinuousUpdateLoop();
+      console.log('  ✅ _startContinuousUpdateLoop() method called successfully');
+    } catch (error) {
+      console.error('❌ [PlaneCutterService] Failed to start continuous update loop:', error);
+      console.error('  Error stack:', error.stack);
+    }
+
     console.log('✅ [PlaneCutterService] Synchronized updates configured');
+  }
+
+  /**
+   * Start continuous update loop using requestAnimationFrame
+   * This ensures SVG overlay updates smoothly during drag operations
+   */
+  private _startContinuousUpdateLoop(): void {
+    console.log('🔄 [PlaneCutterService] Attempting to start continuous update loop...');
+
+    // Stop any existing loop
+    if (this.animationFrameId !== null) {
+      console.log('  ⚠️ Stopping existing animation frame loop');
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // Check if we have any plane cutters to update
+    if (this.planeCutters.length === 0) {
+      console.warn('  ⚠️ No plane cutters to update - skipping loop start');
+      return;
+    }
+
+    console.log(`  📊 Starting loop for ${this.planeCutters.length} plane cutters`);
+
+    const updateLoop = () => {
+      // Update all plane cutters every frame during drag operations
+      // This ensures SVG overlay follows camera changes in real-time
+      for (const planeCutter of this.planeCutters) {
+        const viewport = this._getViewportById(planeCutter.viewportId);
+        if (!viewport) {
+          continue;
+        }
+
+        try {
+          const camera = viewport.getCamera();
+          if (!camera || !camera.focalPoint || !camera.viewPlaneNormal) {
+            continue;
+          }
+
+          // TEMPORARY: Update every frame without state comparison
+          // This ensures SVG overlay updates smoothly during drag
+          // TODO: Re-enable state comparison for performance once working
+          this._updateSinglePlaneCutter(planeCutter, null);
+        } catch (error) {
+          // Silently ignore errors (viewport might be destroyed)
+        }
+      }
+
+      // Continue loop
+      this.animationFrameId = requestAnimationFrame(updateLoop);
+    };
+
+    // Start the loop
+    this.animationFrameId = requestAnimationFrame(updateLoop);
+    console.log('🔄 [PlaneCutterService] Started continuous update loop for real-time SVG overlay');
+  }
+
+  /**
+   * Stop continuous update loop
+   */
+  private _stopContinuousUpdateLoop(): void {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
   }
 
   /**
@@ -396,10 +525,30 @@ class PlaneCutterService extends PubSubService {
       planeCutter.plane.setOrigin(planeOrigin[0], planeOrigin[1], planeOrigin[2]);
       planeCutter.plane.setNormal(planeNormal[0], planeNormal[1], planeNormal[2]);
 
+      // Method 3: Update SVG overlay instead of VTK actors
+      const svgOverlay = this._getOrCreateSVGOverlay(viewport);
+      if (!svgOverlay) {
+        console.warn(`⚠️ SVG overlay not available for viewport ${planeCutter.viewportId}`);
+        return;
+      }
+
       // Update all model cutters in this plane
       for (const modelCutterData of planeCutter.modelCutters.values()) {
         modelCutterData.cutter.modified();
         modelCutterData.cutter.update();
+
+        // Get updated cut output
+        const cutOutput = modelCutterData.cutter.getOutputData();
+        if (!cutOutput) {
+          continue;
+        }
+
+        // Get color for this model
+        const color = this._getColorForModel(modelCutterData.modelId);
+        const colorHex = this._rgbToHex(color[0], color[1], color[2]);
+
+        // Update SVG overlay with new cut contour
+        this._renderCutContourToSVG(viewport, svgOverlay, modelCutterData.modelId, cutOutput, colorHex);
       }
     } catch (error) {
       console.warn(`⚠️ [${planeCutter.orientation}] Error updating plane:`, error.message);
@@ -665,88 +814,73 @@ class PlaneCutterService extends PubSubService {
     const bounds = loadedModel.polyData.getBounds();
     console.log(`  📊 PolyData info: ${numPoints} points, bounds:`, bounds);
 
-    // Create cutter for this model
-    const cutter = vtkCutter.newInstance();
-    cutter.setCutFunction(planeCutter.plane);
-    cutter.setInputData(loadedModel.polyData);
-
-    // Create mapper
-    const mapper = vtkMapper.newInstance();
-    mapper.setInputConnection(cutter.getOutputPort());
-
-    // Create actor
-    const actor = vtkActor.newInstance();
-    actor.setMapper(mapper);
-
-    // Assign color from palette (same color for same model across all viewports)
-    const color = this._getColorForModel(modelId);
-    actor.getProperty().setColor(color[0], color[1], color[2]);
-    actor.getProperty().setLineWidth(3);
-
-    // Configure rendering for visibility
-    if (mapper.setResolveCoincidentTopologyToPolygonOffset) {
-      mapper.setResolveCoincidentTopologyToPolygonOffset();
-    }
-
-    if (mapper.setRelativeCoincidentTopologyLineOffsetParameters) {
-      mapper.setRelativeCoincidentTopologyLineOffsetParameters(-1, -1);
-    }
-
-    actor.getProperty().setOpacity(0.999);
-
-    // Add actor to viewport's renderer
+    // Get viewport for SVG overlay
     const viewport = this._getViewportById(planeCutter.viewportId);
     if (!viewport) {
       console.error(`❌ Viewport ${planeCutter.viewportId} not found`);
       return;
     }
 
-    const vtkRenderer = viewport.getRenderer();
-    if (!vtkRenderer) {
-      console.error(`❌ No VTK renderer found for viewport ${planeCutter.viewportId}`);
-      return;
-    }
-
     console.log(`  📍 Target viewport ID: ${planeCutter.viewportId}`);
     console.log(`  📍 Viewport lookup result:`, viewport ? `✅ Found (${viewport.type})` : '❌ Not found');
 
-    vtkRenderer.addActor(actor);
-    console.log(`  📐 Actor added to renderer for viewport ${planeCutter.viewportId}`);
+    // Method 3: Use SVG Overlay - completely independent of 3D rendering pipeline
+    // This ensures cutter plane always renders on top, regardless of volume rendering or slab thickness
+    const svgOverlay = this._getOrCreateSVGOverlay(viewport);
+    if (!svgOverlay) {
+      console.error(`❌ Failed to create SVG overlay for viewport ${planeCutter.viewportId}`);
+      return;
+    }
+
+    // Create cutter for this model (still needed to compute the cut geometry)
+    const cutter = vtkCutter.newInstance();
+    cutter.setCutFunction(planeCutter.plane);
+    cutter.setInputData(loadedModel.polyData);
 
     // Force immediate cutter update
     cutter.modified();
     cutter.update();
 
-    // Check cutter output immediately
-    const initialOutput = cutter.getOutputData();
-    if (initialOutput) {
-      const numCutPoints = initialOutput.getPoints()?.getNumberOfPoints() || 0;
-      console.log(`  🔍 Initial cutter output: ${numCutPoints} cut points`);
-      if (numCutPoints === 0) {
-        console.warn(`  ⚠️ Cutter produced 0 points - plane may not intersect model`);
-        const planeOrigin = planeCutter.plane.getOrigin();
-        const planeNormal = planeCutter.plane.getNormal();
-        console.warn(`  ⚠️ Plane: origin=[${planeOrigin}], normal=[${planeNormal}]`);
-      }
-    } else {
-      console.warn(`  ⚠️ Cutter output is null`);
+    // Get cutter output and convert to SVG
+    const cutOutput = cutter.getOutputData();
+    if (!cutOutput) {
+      console.warn(`  ⚠️ Cutter output is null for model ${modelId}`);
+      return;
     }
 
-    // Store model cutter data
+    const numCutPoints = cutOutput.getPoints()?.getNumberOfPoints() || 0;
+    console.log(`  🔍 Cutter output: ${numCutPoints} cut points`);
+
+    if (numCutPoints === 0) {
+      console.warn(`  ⚠️ Cutter produced 0 points - plane may not intersect model`);
+      const planeOrigin = planeCutter.plane.getOrigin();
+      const planeNormal = planeCutter.plane.getNormal();
+      console.warn(`  ⚠️ Plane: origin=[${planeOrigin}], normal=[${planeNormal}]`);
+      // Still store the cutter data even if no points (might intersect later)
+    }
+
+    // Get color for this model
+    const color = this._getColorForModel(modelId);
+    const colorHex = this._rgbToHex(color[0], color[1], color[2]);
+
+    // Render cut contour to SVG overlay
+    this._renderCutContourToSVG(viewport, svgOverlay, modelId, cutOutput, colorHex);
+
+    // Store model cutter data (cutter is still needed for updates)
     const modelCutterData: ModelCutterData = {
       cutter,
-      mapper,
-      actor,
+      mapper: null, // No longer using VTK mapper
+      actor: null,   // No longer using VTK actor
       modelId,
       polyData: loadedModel.polyData,
     };
 
     planeCutter.modelCutters.set(modelId, modelCutterData);
 
-    // Render viewport
-    viewport.render();
+    // Trigger viewport render to show SVG overlay
+    viewport.render?.();
 
-    console.log(`  ✅ Model ${modelId} added to ${planeCutter.orientation} cutter with color [${color}]`);
+    console.log(`  ✅ Model ${modelId} added to ${planeCutter.orientation} cutter with SVG overlay (color: ${colorHex})`);
   }
 
   /**
@@ -761,35 +895,30 @@ class PlaneCutterService extends PubSubService {
 
     console.log(`  🗑️ Removing model ${modelId} from ${planeCutter.orientation} cutter`);
 
-    // Remove actor from viewport
-    try {
-      const viewport = this._getViewportById(planeCutter.viewportId);
-      if (viewport) {
-        const vtkRenderer = viewport.getRenderer();
-        if (vtkRenderer) {
-          vtkRenderer.removeActor(modelCutterData.actor);
-          viewport.render();
-        }
-      } else {
-        console.log(`  ℹ️ Viewport ${planeCutter.viewportId} no longer exists`);
+    // Method 3: Remove SVG path element from overlay
+    const svg = this.svgOverlays.get(planeCutter.viewportId);
+    if (svg) {
+      const path = svg.querySelector(`path[data-model-id="${modelId}"]`);
+      if (path) {
+        path.remove();
+        console.log(`  ✅ Removed SVG contour for model ${modelId}`);
       }
-    } catch (error) {
-      console.warn(`  ⚠️ Error removing actor from viewport:`, error.message);
     }
 
-    // Clean up VTK objects
+    // Clean up VTK objects (cutter is still needed for computation)
     try {
-      if (modelCutterData.actor) {
-        modelCutterData.actor.delete();
-      }
-      if (modelCutterData.mapper) {
-        modelCutterData.mapper.delete();
-      }
       if (modelCutterData.cutter) {
         modelCutterData.cutter.delete();
       }
+      // Note: mapper and actor are null in SVG overlay mode, so no need to delete
     } catch (error) {
       console.warn(`  ⚠️ Error deleting VTK objects:`, error.message);
+    }
+
+    // Trigger viewport render
+    const viewport = this._getViewportById(planeCutter.viewportId);
+    if (viewport) {
+      viewport.render?.();
     }
 
     // Remove from map
@@ -915,7 +1044,220 @@ class PlaneCutterService extends PubSubService {
   }
 
   /**
-   * Cleanup - remove all plane cutters
+   * Get or create SVG overlay element for viewport (Method 3: SVG Overlay)
+   */
+  private _getOrCreateSVGOverlay(viewport: any): SVGElement | null {
+    const viewportId = viewport.id;
+
+    // Check if we already have an SVG element
+    if (this.svgOverlays.has(viewportId)) {
+      const existing = this.svgOverlays.get(viewportId);
+      if (existing && document.body.contains(existing)) {
+        return existing;
+      }
+    }
+
+    // Get viewport container element
+    const container = viewport.element;
+    if (!container) {
+      console.error(`❌ Viewport ${viewportId} has no element`);
+      return null;
+    }
+
+    // Find canvas element inside container
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+    if (!canvas) {
+      console.error(`❌ Viewport ${viewportId} has no canvas element`);
+      return null;
+    }
+
+    // Create SVG overlay
+    // CRITICAL: pointer-events: none ensures mouse events pass through to canvas below
+    // This allows drag-and-drop and other interactions to work normally
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'plane-cutter-overlay');
+    svg.setAttribute('data-viewport-id', viewportId);
+    svg.setAttribute('style', `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1000;
+    `);
+    // Also set pointer-events on SVG element itself (redundant but ensures compatibility)
+    (svg as any).style.pointerEvents = 'none';
+
+    // Match canvas display dimensions (not internal resolution)
+    // Use clientWidth/clientHeight to match the actual displayed size
+    const svgWidth = canvas.clientWidth || canvas.width;
+    const svgHeight = canvas.clientHeight || canvas.height;
+    svg.setAttribute('width', svgWidth.toString());
+    svg.setAttribute('height', svgHeight.toString());
+    // Set viewBox to match for proper coordinate scaling
+    svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+
+    // Insert SVG as sibling to canvas (position it absolutely over canvas)
+    if (canvas.parentElement) {
+      // Make parent relative if not already
+      const parentStyle = window.getComputedStyle(canvas.parentElement);
+      if (parentStyle.position === 'static') {
+        canvas.parentElement.style.position = 'relative';
+      }
+
+      canvas.parentElement.appendChild(svg);
+    } else {
+      console.error(`❌ Canvas parent element not found for viewport ${viewportId}`);
+      return null;
+    }
+
+    // Store reference
+    this.svgOverlays.set(viewportId, svg);
+
+    // Update size on canvas resize
+    const resizeObserver = new ResizeObserver(() => {
+      const svgWidth = canvas.clientWidth || canvas.width;
+      const svgHeight = canvas.clientHeight || canvas.height;
+      svg.setAttribute('width', svgWidth.toString());
+      svg.setAttribute('height', svgHeight.toString());
+      svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+      // Re-render all contours when canvas resizes
+      this._updateSVGContoursForViewport(viewport);
+    });
+    resizeObserver.observe(canvas);
+    this.resizeObservers.set(viewportId, resizeObserver);
+
+    console.log(`✅ Created SVG overlay for viewport ${viewportId}`);
+    return svg;
+  }
+
+  /**
+   * Render cut contour to SVG overlay
+   */
+  private _renderCutContourToSVG(
+    viewport: any,
+    svg: SVGElement,
+    modelId: string,
+    cutOutput: any,
+    colorHex: string
+  ): void {
+    // Remove existing contour for this model
+    const existingPath = svg.querySelector(`[data-model-id="${modelId}"]`);
+    if (existingPath) {
+      existingPath.remove();
+    }
+
+    const points = cutOutput.getPoints();
+    if (!points || points.getNumberOfPoints() === 0) {
+      // No points to render, but don't log warning (plane may not intersect)
+      return;
+    }
+
+    // Get point coordinates
+    const numPoints = points.getNumberOfPoints();
+    const pointData = points.getData();
+
+    // Convert 3D world coordinates to 2D canvas coordinates
+    const canvasPoints: number[] = [];
+    for (let i = 0; i < numPoints; i++) {
+      const worldPoint = [
+        pointData[i * 3],
+        pointData[i * 3 + 1],
+        pointData[i * 3 + 2]
+      ];
+
+      try {
+        // Use viewport's worldToCanvas method
+        // This converts 3D world coordinates to 2D canvas pixel coordinates
+        const canvasPoint = viewport.worldToCanvas?.(worldPoint);
+        if (canvasPoint && Array.isArray(canvasPoint) && canvasPoint.length >= 2) {
+          // Ensure coordinates are valid numbers
+          if (!isNaN(canvasPoint[0]) && !isNaN(canvasPoint[1])) {
+            canvasPoints.push(canvasPoint[0], canvasPoint[1]);
+          }
+        }
+      } catch (error) {
+        // Silently skip invalid points (may be outside viewport)
+        continue;
+      }
+    }
+
+    if (canvasPoints.length < 4) {
+      // Need at least 2 points (4 coordinates) to draw
+      return;
+    }
+
+    // Create SVG path element
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('data-model-id', modelId);
+
+    // Build path data string
+    let pathData = `M ${canvasPoints[0]} ${canvasPoints[1]}`;
+    for (let i = 2; i < canvasPoints.length; i += 2) {
+      pathData += ` L ${canvasPoints[i]} ${canvasPoints[i + 1]}`;
+    }
+    // Close path if we have enough points
+    if (canvasPoints.length >= 6) {
+      pathData += ' Z';
+    }
+
+    path.setAttribute('d', pathData);
+    path.setAttribute('stroke', colorHex);
+    path.setAttribute('stroke-width', '3');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('opacity', '1.0');
+    // CRITICAL: Ensure path does not intercept mouse events - allow events to pass through to canvas
+    path.setAttribute('style', 'pointer-events: none;');
+
+    // Add to SVG
+    svg.appendChild(path);
+  }
+
+  /**
+   * Update all SVG contours for a viewport (called on resize)
+   */
+  private _updateSVGContoursForViewport(viewport: any): void {
+    const viewportId = viewport.id;
+    const planeCutter = this.planeCutters.find(pc => pc.viewportId === viewportId);
+    if (!planeCutter) {
+      return;
+    }
+
+    const svg = this.svgOverlays.get(viewportId);
+    if (!svg) {
+      return;
+    }
+
+    // Re-render all contours
+    for (const modelCutterData of planeCutter.modelCutters.values()) {
+      modelCutterData.cutter.modified();
+      modelCutterData.cutter.update();
+
+      const cutOutput = modelCutterData.cutter.getOutputData();
+      if (!cutOutput) {
+        continue;
+      }
+
+      const color = this._getColorForModel(modelCutterData.modelId);
+      const colorHex = this._rgbToHex(color[0], color[1], color[2]);
+      this._renderCutContourToSVG(viewport, svg, modelCutterData.modelId, cutOutput, colorHex);
+    }
+  }
+
+  /**
+   * Convert RGB values (0-1) to hex color string
+   */
+  private _rgbToHex(r: number, g: number, b: number): string {
+    const toHex = (value: number) => {
+      const hex = Math.round(Math.max(0, Math.min(255, value * 255))).toString(16);
+      return hex.length === 1 ? '0' + hex : hex;
+    };
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  /**
+   * Cleanup - remove all plane cutters and SVG overlays
    */
   public cleanup(): void {
     console.log('🗑️ [PlaneCutterService] Cleaning up all plane cutters');
@@ -947,9 +1289,34 @@ class PlaneCutterService extends PubSubService {
       }
     }
 
+    // Clean up SVG overlays
+    for (const [viewportId, svg] of this.svgOverlays.entries()) {
+      try {
+        // Remove resize observer
+        const observer = this.resizeObservers.get(viewportId);
+        if (observer) {
+          observer.disconnect();
+          this.resizeObservers.delete(viewportId);
+        }
+
+        // Remove SVG element from DOM
+        if (svg && svg.parentElement) {
+          svg.parentElement.removeChild(svg);
+        }
+      } catch (error) {
+        console.warn(`⚠️ [PlaneCutterService] Error removing SVG overlay for ${viewportId}:`, error.message);
+      }
+    }
+
+    this.svgOverlays.clear();
+    this.resizeObservers.clear();
+    this.lastCameraStates.clear();
     this.planeCutters = [];
     this.colorIndex = 0;
     this.modelColors.clear(); // Clear model color assignments
+
+    // Stop continuous update loop
+    this._stopContinuousUpdateLoop();
 
     console.log('✅ [PlaneCutterService] Cleanup complete');
   }

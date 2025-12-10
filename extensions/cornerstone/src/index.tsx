@@ -23,7 +23,6 @@ import CornerstoneViewportService from './services/ViewportService/CornerstoneVi
 import ColorbarService from './services/ColorbarService';
 import { ModelStateService, ViewportStateService, ViewportStatePanel } from '@ohif/extension-lifesync';
 import PlaneCutterService from './services/PlaneCutterService';
-import ModelProjectionService from './services/ModelProjectionService';
 import * as CornerstoneExtensionTypes from './types';
 
 import { toolNames } from './initCornerstoneTools';
@@ -184,7 +183,6 @@ const cornerstoneExtension: Types.Extensions.Extension = {
     servicesManager.registerService(ColorbarService.REGISTRATION);
     servicesManager.registerService(ModelStateService.REGISTRATION);
     servicesManager.registerService(PlaneCutterService.REGISTRATION);
-    servicesManager.registerService(ModelProjectionService.REGISTRATION);
 
     const { syncGroupService } = servicesManager.services;
     syncGroupService.registerCustomSynchronizer('frameview', createFrameViewSynchronizer);
