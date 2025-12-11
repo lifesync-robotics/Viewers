@@ -2578,7 +2578,7 @@ async setInstrumentModelTransform(modelId: string, transform: number[] | Float32
     // Cap model ID can be in different formats:
     // 1. `${modelId}-cap` (lowercase, from loadCapModel when screwId is provided)
     // 2. `${modelId}-Cap` (uppercase C, alternative format)
-    // 3. Find by modelName pattern (contains "-Cap" suffix and matches screw label)
+    // 3. Find by modelName pattern (EXACT match with "-Cap" suffix)
 
     console.log(`🔍 [translateScrew] Looking for cap model for screw: ${modelId}`);
     console.log(`   Screw model name: ${model.metadata.name}`);
@@ -2586,55 +2586,80 @@ async setInstrumentModelTransform(modelId: string, transform: number[] | Float32
 
     let capModel = this.loadedModels.get(`${modelId}-cap`) || this.loadedModels.get(`${modelId}-Cap`);
 
-    // If not found by ID, try to find by name pattern
+    // If not found by ID, try to find by EXACT name pattern (not includes!)
+    // This prevents matching wrong caps (e.g., "L3-L1-Cap" when looking for "L3-R1")
     if (!capModel && model.metadata.name) {
       const screwLabel = model.metadata.name;
-      console.log(`   Searching by name pattern for screw label: "${screwLabel}"`);
+      // Expected cap names: "L3-R1-Cap" or "L3-R1 Cap"
+      const expectedCapName1 = `${screwLabel}-Cap`;
+      const expectedCapName2 = `${screwLabel} Cap`;
+      console.log(`   Searching by EXACT name pattern: "${expectedCapName1}" or "${expectedCapName2}"`);
 
       for (const [id, m] of this.loadedModels) {
         const modelName = m.metadata.name || '';
-        const isCap = modelName.includes('-Cap') || modelName === 'Screw Cap';
-        const matchesLabel = modelName.includes(screwLabel);
+        // Use EXACT match instead of includes() to avoid matching wrong caps
+        const isExactMatch = modelName === expectedCapName1 || modelName === expectedCapName2;
 
-        console.log(`   Checking model: ${id} (${modelName}) - isCap: ${isCap}, matchesLabel: ${matchesLabel}`);
-
-        if (isCap && matchesLabel) {
-          console.log(`   ✅ Found cap model by name pattern: ${id} (${modelName})`);
+        if (isExactMatch) {
+          console.log(`   ✅ Found cap model by EXACT name match: ${id} (${modelName})`);
           capModel = m;
           break;
         }
       }
     }
 
-    // Last resort: find any cap model that was loaded after this screw
-    // (This handles the case where both screw and cap have auto-generated IDs)
+    // Last resort: find cap by loading order (only if name matches screw label exactly)
     if (!capModel) {
       console.log(`   Trying to find cap by loading order...`);
       const allModels = Array.from(this.loadedModels.entries());
       const screwIndex = allModels.findIndex(([id]) => id === modelId);
 
       if (screwIndex >= 0 && screwIndex < allModels.length - 1) {
-        // Check the next model (cap is usually loaded right after screw)
         const nextModel = allModels[screwIndex + 1][1];
         const nextModelName = nextModel.metadata.name || '';
-        if (nextModelName.includes('-Cap') || nextModelName === 'Screw Cap') {
+        const nextModelId = nextModel.metadata.id || '';
+        // Validate: next model must be a cap AND its ID should relate to this screw
+        const isCap = nextModelName.includes('-Cap') || nextModelName === 'Screw Cap';
+        const idRelated = nextModelId === `${modelId}-cap` || nextModelId === `${modelId}-Cap`;
+        if (isCap && idRelated) {
           console.log(`   ✅ Found cap model by loading order: ${allModels[screwIndex + 1][0]} (${nextModelName})`);
           capModel = nextModel;
         }
       }
     }
 
+    // VALIDATION: Verify the found cap model is correct before updating
     if (capModel) {
-      console.log(`✅ Found cap model: ${capModel.metadata.id} (${capModel.metadata.name})`);
-      const capMatrix = capModel.actor.getUserMatrix();
-      if (capMatrix) {
-        const newCapMatrix = new Float32Array(capMatrix);
-        newCapMatrix[12] += delta[0];
-        newCapMatrix[13] += delta[1];
-        newCapMatrix[14] += delta[2];
-        capModel.actor.setUserMatrix(newCapMatrix);
-        this._updatePolyDataWithTransform(capModel, newCapMatrix);
-        console.log(`✅ Cap translated by [${delta.map(v => v.toFixed(2)).join(', ')}]`);
+      const capId = capModel.metadata.id;
+      const expectedCapId1 = `${modelId}-cap`;
+      const expectedCapId2 = `${modelId}-Cap`;
+      const capName = capModel.metadata.name || '';
+      const screwLabel = model.metadata.name || '';
+      const expectedCapName1 = `${screwLabel}-Cap`;
+      const expectedCapName2 = `${screwLabel} Cap`;
+
+      // Validate by ID or exact name match
+      const validById = capId === expectedCapId1 || capId === expectedCapId2;
+      const validByName = capName === expectedCapName1 || capName === expectedCapName2;
+
+      if (!validById && !validByName) {
+        console.warn(`⚠️ [translateScrew] Found cap ${capId} (${capName}) but validation failed!`);
+        console.warn(`   Expected cap ID: "${expectedCapId1}" or "${expectedCapId2}"`);
+        console.warn(`   Expected cap name: "${expectedCapName1}" or "${expectedCapName2}"`);
+        console.warn(`   Skipping cap update to prevent incorrect contour drawing`);
+        capModel = null;  // Don't update the wrong cap
+      } else {
+        console.log(`✅ Found and validated cap model: ${capId} (${capName})`);
+        const capMatrix = capModel.actor.getUserMatrix();
+        if (capMatrix) {
+          const newCapMatrix = new Float32Array(capMatrix);
+          newCapMatrix[12] += delta[0];
+          newCapMatrix[13] += delta[1];
+          newCapMatrix[14] += delta[2];
+          capModel.actor.setUserMatrix(newCapMatrix);
+          this._updatePolyDataWithTransform(capModel, newCapMatrix);
+          console.log(`✅ Cap translated by [${delta.map(v => v.toFixed(2)).join(', ')}]`);
+        }
       }
     } else {
       console.warn(`⚠️ Cap model not found for screw ${modelId} (${model.metadata.name})`);
@@ -2796,7 +2821,7 @@ async setInstrumentModelTransform(modelId: string, transform: number[] | Float32
     // Cap model ID can be in different formats:
     // 1. `${modelId}-cap` (lowercase, from loadCapModel when screwId is provided)
     // 2. `${modelId}-Cap` (uppercase C, alternative format)
-    // 3. Find by modelName pattern (contains "-Cap" suffix and matches screw label)
+    // 3. Find by modelName pattern (EXACT match with "-Cap" suffix)
 
     console.log(`🔍 [rotateScrew] Looking for cap model for screw: ${modelId}`);
     console.log(`   Screw model name: ${model.metadata.name}`);
@@ -2804,46 +2829,73 @@ async setInstrumentModelTransform(modelId: string, transform: number[] | Float32
 
     let capModel = this.loadedModels.get(`${modelId}-cap`) || this.loadedModels.get(`${modelId}-Cap`);
 
-    // If not found by ID, try to find by name pattern
+    // If not found by ID, try to find by EXACT name pattern (not includes!)
+    // This prevents matching wrong caps (e.g., "L3-L1-Cap" when looking for "L3-R1")
     if (!capModel && model.metadata.name) {
       const screwLabel = model.metadata.name;
-      console.log(`   Searching by name pattern for screw label: "${screwLabel}"`);
+      // Expected cap names: "L3-R1-Cap" or "L3-R1 Cap"
+      const expectedCapName1 = `${screwLabel}-Cap`;
+      const expectedCapName2 = `${screwLabel} Cap`;
+      console.log(`   Searching by EXACT name pattern: "${expectedCapName1}" or "${expectedCapName2}"`);
 
       for (const [id, m] of this.loadedModels) {
         const modelName = m.metadata.name || '';
-        const isCap = modelName.includes('-Cap') || modelName === 'Screw Cap';
-        const matchesLabel = modelName.includes(screwLabel);
+        // Use EXACT match instead of includes() to avoid matching wrong caps
+        const isExactMatch = modelName === expectedCapName1 || modelName === expectedCapName2;
 
-        console.log(`   Checking model: ${id} (${modelName}) - isCap: ${isCap}, matchesLabel: ${matchesLabel}`);
-
-        if (isCap && matchesLabel) {
-          console.log(`   ✅ Found cap model by name pattern: ${id} (${modelName})`);
+        if (isExactMatch) {
+          console.log(`   ✅ Found cap model by EXACT name match: ${id} (${modelName})`);
           capModel = m;
           break;
         }
       }
     }
 
-    // Last resort: find any cap model that was loaded after this screw
-    // (This handles the case where both screw and cap have auto-generated IDs)
+    // Last resort: find cap by loading order (only if ID matches screw)
     if (!capModel) {
       console.log(`   Trying to find cap by loading order...`);
       const allModels = Array.from(this.loadedModels.entries());
       const screwIndex = allModels.findIndex(([id]) => id === modelId);
 
       if (screwIndex >= 0 && screwIndex < allModels.length - 1) {
-        // Check the next model (cap is usually loaded right after screw)
         const nextModel = allModels[screwIndex + 1][1];
         const nextModelName = nextModel.metadata.name || '';
-        if (nextModelName.includes('-Cap') || nextModelName === 'Screw Cap') {
+        const nextModelId = nextModel.metadata.id || '';
+        // Validate: next model must be a cap AND its ID should relate to this screw
+        const isCap = nextModelName.includes('-Cap') || nextModelName === 'Screw Cap';
+        const idRelated = nextModelId === `${modelId}-cap` || nextModelId === `${modelId}-Cap`;
+        if (isCap && idRelated) {
           console.log(`   ✅ Found cap model by loading order: ${allModels[screwIndex + 1][0]} (${nextModelName})`);
           capModel = nextModel;
         }
       }
     }
 
+    // VALIDATION: Verify the found cap model is correct before updating
     if (capModel) {
-      console.log(`✅ Found cap model: ${capModel.metadata.id} (${capModel.metadata.name})`);
+      const capId = capModel.metadata.id;
+      const expectedCapId1 = `${modelId}-cap`;
+      const expectedCapId2 = `${modelId}-Cap`;
+      const capName = capModel.metadata.name || '';
+      const screwLabel = model.metadata.name || '';
+      const expectedCapName1 = `${screwLabel}-Cap`;
+      const expectedCapName2 = `${screwLabel} Cap`;
+
+      // Validate by ID or exact name match
+      const validById = capId === expectedCapId1 || capId === expectedCapId2;
+      const validByName = capName === expectedCapName1 || capName === expectedCapName2;
+
+      if (!validById && !validByName) {
+        console.warn(`⚠️ [rotateScrew] Found cap ${capId} (${capName}) but validation failed!`);
+        console.warn(`   Expected cap ID: "${expectedCapId1}" or "${expectedCapId2}"`);
+        console.warn(`   Expected cap name: "${expectedCapName1}" or "${expectedCapName2}"`);
+        console.warn(`   Skipping cap update to prevent incorrect contour drawing`);
+        capModel = null;  // Don't update the wrong cap
+      }
+    }
+
+    if (capModel) {
+      console.log(`✅ Found and validated cap model: ${capModel.metadata.id} (${capModel.metadata.name})`);
       const capMatrix = capModel.actor.getUserMatrix();
       if (capMatrix) {
         // Get cap's relative position to screw origin

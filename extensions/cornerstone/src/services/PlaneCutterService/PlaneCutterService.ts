@@ -82,6 +82,7 @@ class PlaneCutterService extends PubSubService {
   private resizeObservers: Map<string, ResizeObserver> = new Map(); // viewportId -> ResizeObserver
   private animationFrameId: number | null = null; // For continuous updates during drag
   private lastCameraStates: Map<string, any> = new Map(); // Track camera state to detect changes
+  private isUpdating: Set<string> = new Set(); // viewportId -> Set of viewportIds currently being updated (prevents duplicate updates)
 
   constructor({ servicesManager }) {
     super(EVENTS);
@@ -369,7 +370,7 @@ class PlaneCutterService extends PubSubService {
       if (viewport && viewport.element) {
         // Listen to CAMERA_MODIFIED for major camera changes
         if (Enums?.Events?.CAMERA_MODIFIED) {
-          viewport.element.addEventListener(Enums.Events.CAMERA_MODIFIED, updateAllPlaneCutters);
+        viewport.element.addEventListener(Enums.Events.CAMERA_MODIFIED, updateAllPlaneCutters);
         }
 
         // Listen to IMAGE_RENDERED for continuous updates during drag
@@ -495,6 +496,17 @@ class PlaneCutterService extends PubSubService {
     planeCutter: PlaneCutterData,
     _unused: [number, number, number] | null = null
   ): void {
+    // CRITICAL: Prevent duplicate updates in the same frame
+    // Multiple event listeners (requestAnimationFrame, CAMERA_MODIFIED, IMAGE_RENDERED)
+    // can trigger updates simultaneously, causing duplicate cutter executions and duplicate SVG paths
+    if (this.isUpdating.has(planeCutter.viewportId)) {
+      // Already updating this viewport, skip duplicate call
+      return;
+    }
+
+    // Mark as updating
+    this.isUpdating.add(planeCutter.viewportId);
+
     try {
       const viewport = this._getViewportById(planeCutter.viewportId);
       if (!viewport) {
@@ -532,6 +544,20 @@ class PlaneCutterService extends PubSubService {
         return;
       }
 
+      // CRITICAL: Clear all existing paths first to avoid duplicate/old contours
+      // Get list of current model IDs
+      const currentModelIds = new Set(planeCutter.modelCutters.keys());
+
+      // Remove any paths that don't belong to current models
+      const allPaths = svgOverlay.querySelectorAll('path[data-model-id]');
+      allPaths.forEach((path: Element) => {
+        const modelId = path.getAttribute('data-model-id');
+        if (modelId && !currentModelIds.has(modelId)) {
+          path.remove();
+          console.log(`  🗑️ Removed stale SVG path for model ${modelId}`);
+        }
+      });
+
       // Update all model cutters in this plane
       for (const modelCutterData of planeCutter.modelCutters.values()) {
         modelCutterData.cutter.modified();
@@ -552,6 +578,10 @@ class PlaneCutterService extends PubSubService {
       }
     } catch (error) {
       console.warn(`⚠️ [${planeCutter.orientation}] Error updating plane:`, error.message);
+    } finally {
+      // Always remove from updating set, even if error occurred
+      // This ensures the viewport can be updated again in the next frame
+      this.isUpdating.delete(planeCutter.viewportId);
     }
   }
 
@@ -635,6 +665,10 @@ class PlaneCutterService extends PubSubService {
       console.warn(`⚠️ [PlaneCutterService] Model ${modelId} not found`);
       return;
     }
+
+    // Allow cap models to be added to plane cutters so they are visible in MPR viewports
+    // Cap models will show their 2D cross-section contours in MPR viewports
+    // while remaining fully visible in 3D viewport
 
     if (this.planeCutters.length === 0) {
       console.log(`ℹ️ [PlaneCutterService] No plane cutters initialized yet, skipping model ${modelId}`);
@@ -851,11 +885,11 @@ class PlaneCutterService extends PubSubService {
     const numCutPoints = cutOutput.getPoints()?.getNumberOfPoints() || 0;
     console.log(`  🔍 Cutter output: ${numCutPoints} cut points`);
 
-    if (numCutPoints === 0) {
-      console.warn(`  ⚠️ Cutter produced 0 points - plane may not intersect model`);
-      const planeOrigin = planeCutter.plane.getOrigin();
-      const planeNormal = planeCutter.plane.getNormal();
-      console.warn(`  ⚠️ Plane: origin=[${planeOrigin}], normal=[${planeNormal}]`);
+      if (numCutPoints === 0) {
+        console.warn(`  ⚠️ Cutter produced 0 points - plane may not intersect model`);
+        const planeOrigin = planeCutter.plane.getOrigin();
+        const planeNormal = planeCutter.plane.getNormal();
+        console.warn(`  ⚠️ Plane: origin=[${planeOrigin}], normal=[${planeNormal}]`);
       // Still store the cutter data even if no points (might intersect later)
     }
 
@@ -1045,9 +1079,17 @@ class PlaneCutterService extends PubSubService {
 
   /**
    * Get or create SVG overlay element for viewport (Method 3: SVG Overlay)
+   * IMPORTANT: Only create SVG overlay for MPR (orthographic) viewports, NOT for 3D viewports
    */
   private _getOrCreateSVGOverlay(viewport: any): SVGElement | null {
     const viewportId = viewport.id;
+
+    // CRITICAL: Do not create SVG overlay for 3D viewports
+    // SVG overlay is only for 2D MPR viewports where we show plane cutter contours
+    if (viewport.type === 'volume3d') {
+      console.warn(`⚠️ [PlaneCutterService] SVG overlay not created for 3D viewport ${viewportId} - only for MPR viewports`);
+      return null;
+    }
 
     // Check if we already have an SVG element
     if (this.svgOverlays.has(viewportId)) {
@@ -1084,7 +1126,7 @@ class PlaneCutterService extends PubSubService {
       width: 100%;
       height: 100%;
       pointer-events: none;
-      z-index: 1000;
+      z-index: 1;
     `);
     // Also set pointer-events on SVG element itself (redundant but ensures compatibility)
     (svg as any).style.pointerEvents = 'none';
@@ -1142,10 +1184,13 @@ class PlaneCutterService extends PubSubService {
     cutOutput: any,
     colorHex: string
   ): void {
-    // Remove existing contour for this model
-    const existingPath = svg.querySelector(`[data-model-id="${modelId}"]`);
-    if (existingPath) {
-      existingPath.remove();
+    // CRITICAL: Remove ALL existing contours for this model
+    // Use querySelectorAll to remove duplicate paths (can occur if cutter is called multiple times)
+    const existingPaths = svg.querySelectorAll(`path[data-model-id="${modelId}"]`);
+    if (existingPaths.length > 0) {
+      existingPaths.forEach((path: Element) => {
+        path.remove();
+      });
     }
 
     const points = cutOutput.getPoints();
@@ -1155,54 +1200,88 @@ class PlaneCutterService extends PubSubService {
     }
 
     // Get point coordinates
-    const numPoints = points.getNumberOfPoints();
     const pointData = points.getData();
 
-    // Convert 3D world coordinates to 2D canvas coordinates
-    const canvasPoints: number[] = [];
-    for (let i = 0; i < numPoints; i++) {
-      const worldPoint = [
-        pointData[i * 3],
-        pointData[i * 3 + 1],
-        pointData[i * 3 + 2]
-      ];
+    // CRITICAL FIX: Use vtkCutter's line connectivity information (getLines)
+    // instead of just iterating through points in order.
+    // The cutter outputs polylines with proper vertex connectivity.
+    const lines = cutOutput.getLines();
 
-      try {
-        // Use viewport's worldToCanvas method
-        // This converts 3D world coordinates to 2D canvas pixel coordinates
-        const canvasPoint = viewport.worldToCanvas?.(worldPoint);
-        if (canvasPoint && Array.isArray(canvasPoint) && canvasPoint.length >= 2) {
-          // Ensure coordinates are valid numbers
-          if (!isNaN(canvasPoint[0]) && !isNaN(canvasPoint[1])) {
-            canvasPoints.push(canvasPoint[0], canvasPoint[1]);
-          }
-        }
-      } catch (error) {
-        // Silently skip invalid points (may be outside viewport)
-        continue;
-      }
-    }
-
-    if (canvasPoints.length < 4) {
-      // Need at least 2 points (4 coordinates) to draw
+    // Validate lines data exists
+    if (!lines) {
       return;
     }
 
-    // Create SVG path element
+    const linesData = lines.getData();
+    const numCells = lines.getNumberOfCells();
+
+    if (numCells === 0 || !linesData || linesData.length === 0) {
+      return;
+    }
+
+    // Helper function to convert world point to canvas point
+    const worldToCanvas = (pointIndex: number): [number, number] | null => {
+      const worldPoint = [
+        pointData[pointIndex * 3],
+        pointData[pointIndex * 3 + 1],
+        pointData[pointIndex * 3 + 2]
+      ];
+
+      try {
+        const canvasPoint = viewport.worldToCanvas?.(worldPoint);
+        if (canvasPoint && Array.isArray(canvasPoint) && canvasPoint.length >= 2) {
+          if (!isNaN(canvasPoint[0]) && !isNaN(canvasPoint[1])) {
+            return [canvasPoint[0], canvasPoint[1]];
+          }
+        }
+      } catch (error) {
+        // Skip invalid points
+      }
+      return null;
+    };
+
+    // Create a single path element with multiple subpaths
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('data-model-id', modelId);
 
-    // Build path data string
-    let pathData = `M ${canvasPoints[0]} ${canvasPoints[1]}`;
-    for (let i = 2; i < canvasPoints.length; i += 2) {
-      pathData += ` L ${canvasPoints[i]} ${canvasPoints[i + 1]}`;
-    }
-    // Close path if we have enough points
-    if (canvasPoints.length >= 6) {
-      pathData += ' Z';
+    let pathData = '';
+    let offset = 0;
+
+    // Iterate through each line cell
+    // Format: [numPoints, pointId0, pointId1, ..., numPoints, pointId0, ...]
+    while (offset < linesData.length) {
+      const numPointsInLine = linesData[offset];
+      if (numPointsInLine < 2) {
+        offset += numPointsInLine + 1;
+        continue;
+      }
+
+      // Get first point of this line segment
+      const firstPointIdx = linesData[offset + 1];
+      const firstCanvasPoint = worldToCanvas(firstPointIdx);
+
+      if (firstCanvasPoint) {
+        // Start new subpath
+        pathData += `M ${firstCanvasPoint[0]} ${firstCanvasPoint[1]} `;
+
+        // Add remaining points in this line
+        for (let i = 2; i <= numPointsInLine; i++) {
+          const pointIdx = linesData[offset + i];
+          const canvasPoint = worldToCanvas(pointIdx);
+          if (canvasPoint) {
+            pathData += `L ${canvasPoint[0]} ${canvasPoint[1]} `;
+          }
+        }
+      }
+
+      offset += numPointsInLine + 1;
     }
 
-    path.setAttribute('d', pathData);
+    if (pathData.length === 0) {
+      return;
+    }
+
+    path.setAttribute('d', pathData.trim());
     path.setAttribute('stroke', colorHex);
     path.setAttribute('stroke-width', '3');
     path.setAttribute('fill', 'none');
