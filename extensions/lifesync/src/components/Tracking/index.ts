@@ -5,8 +5,12 @@ export { default as ControlButtons } from './ControlButtons';
 export { default as PositionDisplay } from './PositionDisplay';
 export { default as CaseSelector } from './CaseSelector';
 export { default as TrackingConfigDialog } from './TrackingConfigDialog';
+export { default as TrackingPanelLayout } from './TrackingPanelLayout';
 export { default as ReferenceMarkerSelector } from './ReferenceMarkerSelector';
 export { default as InstrumentSelector } from './InstrumentSelector';
 export { default as TrackingModeToggle } from './TrackingModeToggle';
 export { default as NDIConnectionSettings } from './NDIConnectionSettings';
 export { default as ConfigurationManager } from './ConfigurationManager';
+
+// Utility functions for external use
+export * from './utils';

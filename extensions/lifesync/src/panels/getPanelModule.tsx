@@ -2,6 +2,7 @@ import React from 'react';
 
 // Import LifeSync components
 import ScrewManagementPanel from '../components/ScrewManagement/ScrewManagementPanel';
+import ScrewListPanel from '../components/ScrewManagement/ScrewListPanel';
 import NavigationPanel from '../components/Navigation/NavigationPanel';
 import RegistrationPanelContainer from '../components/Registration/RegistrationPanelContainer';
 import LifeSyncWorklist from '../components/Worklist/LifeSyncWorklist';
@@ -10,6 +11,20 @@ import SimpleTrackingPanel from '../components/Tracking/SimpleTrackingPanel';
 
 const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: withAppTypes) => {
   return [
+    {
+      name: 'screw-list',
+      label: 'Screw List',
+      iconName: 'tool-more-menu',
+      iconLabel: 'Screws',
+      component: props => (
+        <ScrewListPanel
+          servicesManager={servicesManager}
+          commandsManager={commandsManager}
+          extensionManager={extensionManager}
+          {...props}
+        />
+      ),
+    },
     // LifeSync panels (Updated: Added SimpleTrackingPanel)
     {
       name: 'screw-management',

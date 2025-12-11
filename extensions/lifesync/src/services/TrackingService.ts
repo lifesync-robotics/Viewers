@@ -17,6 +17,7 @@ const EVENTS = {
   TRACKING_STOPPED: 'event::tracking_stopped',
   TRACKING_UPDATE: 'event::tracking_update',
   CONNECTION_STATUS: 'event::connection_status',
+  SELECTED_SCREW_UPDATED: 'event::selected_screw_updated',
 };
 
 class TrackingService extends PubSubService {
@@ -99,6 +100,12 @@ class TrackingService extends PubSubService {
     markerToTooltipMatrix?: number[][];
     prToDicomMatrix?: number[][];
   } = {};
+  private lastSelectedScrew: {
+    key: string | null;
+    position: number[] | null;
+    transform: number[] | null;
+    length: number | null;
+  } = { key: null, position: null, transform: null, length: null };
 
   constructor(servicesManager, config: any = {}) {
     super(EVENTS);
@@ -112,6 +119,31 @@ class TrackingService extends PubSubService {
     console.log('🎯 TrackingService initialized', {
       apiUrl: this.apiUrl || '(relative - using webpack proxy)',
       mode: this.apiUrl ? 'absolute URL' : 'relative (proxied)',
+    });
+  }
+
+  /**
+   * Broadcast currently selected screw info so other modules (e.g., navigation, measurement)
+   * can react (draw distance lines, jump view, etc).
+   */
+  public publishSelectedScrew(payload: {
+    key: string | null;
+    position: number[] | null;
+    transform?: number[] | null;
+    length?: number | null;
+  }) {
+    this.lastSelectedScrew = {
+      key: payload.key,
+      position: payload.position,
+      transform: payload.transform || null,
+      length: payload.length ?? null,
+    };
+
+    this._broadcastEvent(EVENTS.SELECTED_SCREW_UPDATED, {
+      key: payload.key,
+      position: payload.position,
+      transform: payload.transform || null,
+      length: payload.length ?? null,
     });
   }
 

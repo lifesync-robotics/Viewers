@@ -8,6 +8,15 @@ import { getRenderingEngine, utilities as csUtils } from '@cornerstonejs/core';
 import { annotation } from '@cornerstonejs/tools';
 import type { Fiducial } from './types';
 
+// Extend Window interface for viewport ID storage
+declare global {
+  interface Window {
+    __viewportIds?: {
+      [viewportId: string]: string; // Maps viewport ID to its imageId or volumeId
+    };
+  }
+}
+
 /**
  * Add a fiducial at the current crosshair position
  * Returns the created fiducial data or null if failed
@@ -112,18 +121,34 @@ export function addFiducialAtCrosshairPosition(servicesManager: any): {
 
     const frameOfReferenceUID = viewport.getFrameOfReferenceUID();
     const camera = viewport.getCamera();
+    const viewportId = (viewport as any).id;
 
     // Get referencedImageId from viewport
     let referencedImageId = '';
-    try {
-      if (viewport.type === 'orthographic' || viewport.type === 'volume3d') {
-        const imageIds = (viewport as any).getImageIds?.();
-        if (imageIds && imageIds.length > 0) {
-          referencedImageId = imageIds[0];
+    
+    // PRIORITY 1: Try to use globally stored viewport ID (captured on mode enter)
+    if (window.__viewportIds && window.__viewportIds[viewportId]) {
+      referencedImageId = window.__viewportIds[viewportId];
+      console.log('✅ [FiducialUtils] Using stored viewport ID:', referencedImageId);
+    }
+    
+    // PRIORITY 2: Fall back to getting from viewport
+    if (!referencedImageId) {
+      try {
+        if (viewport.type === 'orthographic' || viewport.type === 'volume3d') {
+          const imageIds = (viewport as any).getImageIds?.();
+          if (imageIds && imageIds.length > 0) {
+            const rawId = imageIds[0];
+            // Ensure proper prefix format
+            referencedImageId = rawId.startsWith('imageId:') || rawId.startsWith('volumeId:') 
+              ? rawId 
+              : `imageId:${rawId}`;
+            console.log('✅ [FiducialUtils] Got viewport imageId:', referencedImageId);
+          }
         }
+      } catch (error) {
+        console.warn('⚠️ Could not get referencedImageId:', error);
       }
-    } catch (error) {
-      console.warn('⚠️ Could not get referencedImageId:', error);
     }
 
     // Create fiducial annotation

@@ -15,11 +15,19 @@
  * - Tracking mode (simulation/hardware) is now controlled by the selected configuration
  * - Users can only select from pre-saved configurations (no manual mode switching)
  * - Configuration management is done through the TrackingConfigDialog
+ *
+ * ARCHITECTURE:
+ * - Business logic and state management in this file
+ * - UI rendering in TrackingPanelLayout.tsx
  */
 
 import React from 'react';
 import { useSystem } from '@ohif/core';
-import TrackingConfigDialog from './TrackingConfigDialog';
+import TrackingPanelLayout from './TrackingPanelLayout';
+import {
+  updateDistanceAnnotationsForMprViewports,
+  extractTooltipPosition
+} from './utils';
 
 // Extend Window interface for NavigationController
 declare global {
@@ -39,13 +47,16 @@ interface InstrumentModel3D {
 }
 
 interface TrackingConfig {
-  version: string;
-  tracking_mode: {
+  config_id?: string;
+  name?: string;
+  description?: string;
+  version?: string;
+  tracking_mode?: {
     current: string;
     type: string;
     options: string[];
   };
-  active_tools: {
+  active_tools?: {
     [toolKey: string]: {
       asset_id: string;
       enabled: boolean;
@@ -53,7 +64,7 @@ interface TrackingConfig {
       description?: string;
     };
   };
-  quality_thresholds: {
+  quality_thresholds?: {
     min_quality_score: number;
   };
   patient_reference?: {
@@ -66,6 +77,9 @@ interface TrackingConfig {
     primary: string;
     include_tracker_space: boolean;
     include_pr_space: boolean;
+  };
+  settings?: {
+    tracking_mode?: 'simulation' | 'hardware';
   };
 }
 
@@ -159,6 +173,19 @@ function PanelTracking() {
 
   // Selected tool for visualization
   const [selectedToolId, setSelectedToolId] = React.useState<string | null>(null);
+  const [isRealTimeDistanceEnabled, setIsRealTimeDistanceEnabled] = React.useState<boolean>(false);
+  const selectedScrewRef = React.useRef<{
+    key: string | null;
+    position: number[] | null;
+    transform: number[] | null;
+    length: number | null;
+  }>({ key: null, position: null, transform: null, length: null });
+  const isRealTimeDistanceEnabledRef = React.useRef<boolean>(false);
+  React.useEffect(() => {
+    isRealTimeDistanceEnabledRef.current = isRealTimeDistanceEnabled;
+  }, [isRealTimeDistanceEnabled]);
+  const lastDistanceUpdateRef = React.useRef<number>(0);
+  const distanceUpdateThrottleMs = 50; // ~20 Hz distance updates
 
   // Registration matrices state
   const identityMatrix = [
@@ -375,14 +402,14 @@ function PanelTracking() {
     });
 
     // Log summary for first few calls
-    if (updatedCount + skippedCount + throttledCount <= 10) {
-      console.log(`📊 [setTransformationMatrices] Summary:`, {
-        updated: updatedCount,
-        skipped: skippedCount,
-        throttled: throttledCount,
-        totalModels: instrumentModelsRef.current.size
-      });
-    }
+    // if (updatedCount + skippedCount + throttledCount <= 10) {
+    //   console.log(`📊 [setTransformationMatrices] Summary:`, {
+    //     updated: updatedCount,
+    //     skipped: skippedCount,
+    //     throttled: throttledCount,
+    //     totalModels: instrumentModelsRef.current.size
+    //   });
+    // }
   }, [servicesManager, matrix4x4ToFlat]);
 
   // Sync coordinate system with TrackingService
@@ -734,7 +761,7 @@ function PanelTracking() {
       return;
     }
 
-    console.log('📡 TrackingPanel: Subscribing to TrackingService events');
+    // console.log('📡 TrackingPanel: Subscribing to TrackingService events');
 
     // Subscribe to tracking updates
     const trackingSub = trackingService.subscribe(
@@ -841,10 +868,32 @@ function PanelTracking() {
         // Update 3D model transformations (throttled to 20Hz per model)
         // Pass tools data directly to avoid React state closure issue
         setTransformationMatrices(data.tools);
-        
 
+        // Real-time distance annotation updates (throttled)
+        if (
+          isRealTimeDistanceEnabledRef.current &&
+          selectedToolId &&
+          data.tools?.[selectedToolId]
+        ) {
+          const toolData = data.tools[selectedToolId];
+          const screwInfo = selectedScrewRef.current;
 
+          if (toolData?.visible && screwInfo?.key) {
+            const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+            if (now - lastDistanceUpdateRef.current >= distanceUpdateThrottleMs) {
+              const tooltipPosition = extractTooltipPosition(toolData, selectedToolId);
+              const screwPosition = computeScrewCenterPosition({
+                position: screwInfo.position,
+                transform: screwInfo.transform,
+              });
 
+              if (tooltipPosition && screwPosition) {
+                drawDistanceMeasurement(screwPosition, tooltipPosition);
+                lastDistanceUpdateRef.current = now;
+              }
+            }
+          }
+        }
 
         
         // 📍 [PR-DEBUG] Log PR data every 5 seconds
@@ -886,10 +935,103 @@ function PanelTracking() {
       }
     );
 
+    const screwSelectionSub = trackingService.subscribe(
+      trackingService.EVENTS.SELECTED_SCREW_UPDATED,
+      data => {
+        try {
+          selectedScrewRef.current = {
+            key: (data as any)?.key ?? null,
+            position: (data as any)?.position ?? null,
+            transform: (data as any)?.transform ?? null,
+            length: (data as any)?.length ?? null,
+          };
+
+          if (!selectedToolId || !trackingFrame?.tools?.[selectedToolId]) {
+            return;
+          }
+          const toolData = trackingFrame.tools[selectedToolId];
+          if (!toolData.visible) {
+            return;
+          }
+
+          const tooltipPosition = extractTooltipPosition(toolData, selectedToolId);
+          // const screwTipPosition = computeScrewTipPosition({
+          //   position: data?.position as number[] | null,
+          //   transform: data?.transform as number[] | null,
+          //   length: data?.length as number | null
+          // });
+          const screwTipPosition = computeScrewCenterPosition({
+            position: data?.position as number[] | null,
+            transform: data?.transform as number[] | null,
+          });
+
+          if (!tooltipPosition || !screwTipPosition) {
+            return;
+          }
+
+          drawDistanceMeasurement(screwTipPosition, tooltipPosition);
+        } catch (error) {
+          console.warn('⚠️ Failed to draw distance measurement:', error);
+        }
+      }
+    );
+
     return () => {
       trackingSub?.unsubscribe();
+      screwSelectionSub?.unsubscribe();
     };
-  }, [trackingService]);
+  }, [trackingService, selectedToolId, trackingFrame]);
+
+  // extractTooltipPosition moved to utils.ts
+
+  const computeScrewTipPosition = (payload: {
+    position?: number[] | null;
+    transform?: number[] | null;
+    length?: number | null;
+  }): number[] | null => {
+    const transform = payload?.transform;
+    const length = payload?.length;
+    const transformIsValid = Array.isArray(transform) && transform.length === 16;
+
+    const axisY = transformIsValid ? [transform[1], transform[5], transform[9]] as number[] : null;
+    const translation = transformIsValid ? [transform[3], transform[7], transform[11]] as number[] : null;
+    const basePosition = (payload?.position as number[] | undefined) || translation || null;
+
+    if (!axisY || !basePosition || !length || length <= 0) {
+      return basePosition;
+    }
+
+    const axisMag = Math.hypot(axisY[0], axisY[1], axisY[2]);
+    if (axisMag === 0) {
+      return basePosition;
+    }
+
+    const halfLength = length / 2;
+    const unitY = [axisY[0] / axisMag, axisY[1] / axisMag, axisY[2] / axisMag];
+
+    return [
+      basePosition[0] + unitY[0] * halfLength,
+      basePosition[1] + unitY[1] * halfLength,
+      basePosition[2] + unitY[2] * halfLength,
+    ];
+  };
+
+  const computeScrewCenterPosition = (payload: {
+    position?: number[] | null;
+    transform?: number[] | null;
+  }): number[] | null => {
+    const transform = payload?.transform;
+    const transformIsValid = Array.isArray(transform) && transform.length === 16;
+
+    const translation = transformIsValid ? [transform[3], transform[7], transform[11]] as number[] : null;
+    const basePosition = (payload?.position as number[] | undefined) || translation || null;
+
+    return basePosition;
+  };
+
+  const drawDistanceMeasurement = (screwPos: number[], tooltipPos: number[]) => {
+    updateDistanceAnnotationsForMprViewports(screwPos, tooltipPos);
+  };
 
   // Auto-register loaded 3D models that match tracking tool IDs
   React.useEffect(() => {
@@ -973,481 +1115,50 @@ function PanelTracking() {
       : 'bg-green-600 hover:bg-green-700';
 
   return (
-    <div className="h-full overflow-hidden bg-black p-4">
-      <div className="h-full overflow-auto">
-        <h2 className="text-2xl font-bold text-white mb-4">Navigation Control</h2>
+    <TrackingPanelLayout
+      // State
+      config={config}
+      status={status}
+      trackingFrame={trackingFrame}
+      loading={loading}
+      error={error}
+      isNavigating={isNavigating}
+      selectedToolId={selectedToolId}
+      availableConfigs={availableConfigs}
+      selectedConfigId={selectedConfigId}
+      currentTrackingConfig={currentTrackingConfig}
+      configDialogOpen={configDialogOpen}
+      prToDicomMatrix={prToDicomMatrix}
+      markerToTooltipMatrix={markerToTooltipMatrix}
+      prToDicomMatrixInput={prToDicomMatrixInput}
+      markerToTooltipMatrixInput={markerToTooltipMatrixInput}
+      matricesExpanded={matricesExpanded}
+      matricesApplied={matricesApplied}
+      coordinateSystem={coordinateSystem}
+      isRealTimeDistanceEnabled={isRealTimeDistanceEnabled}
+      alerts={alerts}
 
-        {error && (
-          <div className="mb-4 p-3 bg-red-900 border border-red-700 rounded text-red-200">
-            ⚠️ {error}
-          </div>
-        )}
-
-        {loading && (
-          <div className="mb-4 text-center text-secondary-light">
-            Loading...
-          </div>
-        )}
-
-        {/* Simplified Workflow Info */}
-        {availableConfigs.length === 0 && !loading && (
-          <div className="mb-4 p-3 bg-blue-900 border border-blue-700 rounded">
-            <div className="flex items-start gap-2">
-              <span className="text-lg">💡</span>
-              <div className="flex-1">
-                <div className="text-blue-200 text-sm font-medium mb-1">Simplified Workflow</div>
-                <div className="text-xs text-blue-300">
-                  No configurations available. Click "Select Configuration" to create and save your first tracking setup.
-                  Each configuration includes tracking mode (simulation/hardware) and all tool settings.
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Phase 4: Alerts */}
-        {alerts.length > 0 && (
-          <div className="mb-4 space-y-2">
-            {alerts.map(alert => (
-              <div
-                key={alert.id}
-                className={`p-3 rounded border ${
-                  alert.severity === 'high'
-                    ? 'bg-red-900 border-red-700 text-red-200'
-                    : alert.severity === 'warning'
-                    ? 'bg-yellow-900 border-yellow-700 text-yellow-200'
-                    : 'bg-blue-900 border-blue-700 text-blue-200'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="font-medium">
-                      {alert.severity === 'high' ? '🚨' : alert.severity === 'warning' ? '⚠️' : 'ℹ️'} {alert.message}
-                    </div>
-                    <div className="text-xs mt-1 opacity-75">
-                      {new Date(alert.timestamp).toLocaleTimeString()}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setAlerts(prev => prev.filter(a => a.id !== alert.id))}
-                    className="ml-2 text-white opacity-50 hover:opacity-100"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Phase 4: Patient Reference Status */}
-        {trackingFrame && trackingFrame.patient_reference && (
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-3">Patient Reference</h3>
-            <div className={`p-3 rounded border ${
-              !trackingFrame.patient_reference.visible
-                ? 'bg-red-900 border-red-700'
-                : trackingFrame.patient_reference.moved
-                ? 'bg-yellow-900 border-yellow-700'
-                : 'bg-green-900 border-green-700'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2 text-white font-mono text-lg font-bold">
-                    <span>{trackingFrame.patient_reference.visible ? '🟢' : '🔴'}</span>
-                    <span>{trackingFrame.patient_reference.id?.toUpperCase() || 'PR'}</span>
-                  </div>
-                  {trackingFrame.patient_reference.name && (
-                    <div className="text-xs text-gray-400 mt-1">
-                      {trackingFrame.patient_reference.name}
-                    </div>
-                  )}
-                </div>
-                <div className="text-right text-xs text-gray-200 space-y-1 font-mono">
-                  <div>Quality: {(trackingFrame.patient_reference.quality * 100).toFixed(0)}%</div>
-                  <div className={trackingFrame.patient_reference.moved ? 'text-yellow-200 font-semibold' : ''}>
-                    Move: {trackingFrame.patient_reference.movement_mm.toFixed(2)} mm {trackingFrame.patient_reference.moved ? '⚠️' : ''}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Registration Matrices */}
-        <div className="mb-6">
-          <div
-            className="flex items-center justify-between mb-3 cursor-pointer p-2 rounded hover:bg-gray-800 transition-colors"
-            onClick={() => setMatricesExpanded(!matricesExpanded)}
-          >
-            <h3 className="text-lg font-semibold text-white">🔧 Registration Matrices</h3>
-            <div className="flex items-center gap-2">
-              {matricesApplied && (
-                <span className="text-xs text-green-400 font-medium">✅ Applied</span>
-              )}
-              <span className="text-gray-400 text-sm">{matricesExpanded ? '▼' : '▶'}</span>
-            </div>
-          </div>
-
-          {matricesExpanded && (
-            <div className="p-4 bg-gray-900 border border-gray-700 rounded space-y-4">
-              <div className="text-xs text-gray-400 mb-3">
-                Configure the transformation pipeline: Marker Array → Tooltip → DICOM Space
-              </div>
-
-              {/* PR to DICOM Matrix */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm text-gray-300 font-medium">PR to DICOM Matrix (Registration)</label>
-                  <button
-                    onClick={() => {
-                      const identity = identityMatrix.map(row => [...row]);
-                      setPrToDicomMatrix(identity);
-                      setPrToDicomMatrixInput(identity.map(row => row.map(val => val.toString())));
-                      setMatricesApplied(false);
-                    }}
-                    className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
-                  >
-                    Reset to Identity
-                  </button>
-                </div>
-                <div className="grid grid-cols-4 gap-1">
-                  {prToDicomMatrixInput.map((row, i) =>
-                    row.map((val, j) => (
-                      <input
-                        key={`prdicom-${i}-${j}`}
-                        type="text"
-                        value={val}
-                        onChange={(e) => {
-                          const inputValue = e.target.value;
-                          // Update input state immediately to allow intermediate states
-                          const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = inputValue;
-                          setPrToDicomMatrixInput(newInputMatrix);
-                          
-                          // Try to parse as number for the actual matrix
-                          const parsed = parseFloat(inputValue);
-                          if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
-                            const newMatrix = prToDicomMatrix.map(r => [...r]);
-                            newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
-                            setPrToDicomMatrix(newMatrix);
-                          }
-                          setMatricesApplied(false);
-                        }}
-                        onBlur={(e) => {
-                          // On blur, clean up the input to show valid number
-                          const parsed = parseFloat(e.target.value);
-                          const finalValue = isNaN(parsed) ? 0 : parsed;
-                          const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = finalValue.toString();
-                          setPrToDicomMatrixInput(newInputMatrix);
-                          
-                          const newMatrix = prToDicomMatrix.map(r => [...r]);
-                          newMatrix[i][j] = finalValue;
-                          setPrToDicomMatrix(newMatrix);
-                        }}
-                        className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Marker to Tooltip Matrix (Calibration) */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm text-gray-300 font-medium">Marker to Tooltip Matrix (Calibration)</label>
-                  <button
-                    onClick={() => {
-                      const identity = identityMatrix.map(row => [...row]);
-                      setMarkerToTooltipMatrix(identity);
-                      setMarkerToTooltipMatrixInput(identity.map(row => row.map(val => val.toString())));
-                      setMatricesApplied(false);
-                    }}
-                    className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
-                  >
-                    Reset to Identity
-                  </button>
-                </div>
-                <div className="grid grid-cols-4 gap-1">
-                  {markerToTooltipMatrixInput.map((row, i) =>
-                    row.map((val, j) => (
-                      <input
-                        key={`marker-${i}-${j}`}
-                        type="text"
-                        value={val}
-                        onChange={(e) => {
-                          const inputValue = e.target.value;
-                          // Update input state immediately to allow intermediate states
-                          const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = inputValue;
-                          setMarkerToTooltipMatrixInput(newInputMatrix);
-                          
-                          // Try to parse as number for the actual matrix
-                          const parsed = parseFloat(inputValue);
-                          if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
-                            const newMatrix = markerToTooltipMatrix.map(r => [...r]);
-                            newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
-                            setMarkerToTooltipMatrix(newMatrix);
-                          }
-                          setMatricesApplied(false);
-                        }}
-                        onBlur={(e) => {
-                          // On blur, clean up the input to show valid number
-                          const parsed = parseFloat(e.target.value);
-                          const finalValue = isNaN(parsed) ? 0 : parsed;
-                          const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = finalValue.toString();
-                          setMarkerToTooltipMatrixInput(newInputMatrix);
-                          
-                          const newMatrix = markerToTooltipMatrix.map(r => [...r]);
-                          newMatrix[i][j] = finalValue;
-                          setMarkerToTooltipMatrix(newMatrix);
-                        }}
-                        className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Apply Button */}
-              <button
-                onClick={() => {
-                  if (trackingService) {
-                    trackingService.setPrToDicomMatrix(prToDicomMatrix);
-                    trackingService.setMarkerToTooltipMatrix(markerToTooltipMatrix);
-                    setMatricesApplied(true);
-                    console.log('✅ Transformation matrices applied to TrackingService:', {
-                      prToDicom: prToDicomMatrix,
-                      markerToTooltip: markerToTooltipMatrix
-                    });
-                  }
-                }}
-                disabled={!trackingService}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors text-sm"
-              >
-                Apply Matrices
-              </button>
-
-              {!matricesApplied && (
-                <div className="text-xs text-yellow-400 text-center">
-                  ⚠️ Changes not applied yet - click "Apply Matrices"
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Phase 4: Real-time Tool Tracking */}
-        {trackingFrame && trackingFrame.tools && Object.keys(trackingFrame.tools).length > 0 && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-semibold text-white">Tool Coordinates</h3>
-            </div>
-
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {Object.entries(trackingFrame.tools)
-                .filter(([toolId, toolData]) => !toolData.is_patient_reference)  // 🆕 过滤掉 Patient Reference
-                .map(([toolId, toolData]) => {
-                const coords = toolData.coordinates[coordinateSystem];
-                const isSelected = selectedToolId === toolId;
-                return (
-                  <div
-                    key={toolId}
-                    onClick={() => {
-                      if (toolData.visible) {
-                        setSelectedToolId(toolId);
-                        trackingService.setSelectedTool(toolId);
-                        console.log(`🎯 Selected tool for visualization: ${toolId}`);
-                      }
-                    }}
-                    className={`p-3 rounded border cursor-pointer transition-all ${
-                      isSelected
-                        ? 'bg-blue-900 border-blue-500 ring-2 ring-blue-400'
-                        : toolData.visible
-                          ? 'bg-gray-800 border-gray-600 hover:bg-gray-700'
-                          : 'bg-gray-900 border-gray-700 opacity-50 cursor-not-allowed'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <div className="text-white font-medium font-mono">
-                          {toolData.visible ? (toolData.is_patient_reference ? '✅' : '🎯') : '❌'} {toolId.toUpperCase()}
-                        </div>
-                        {isSelected && (
-                          <div className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">
-                            VISUALIZED
-                          </div>
-                        )}
-                      </div>
-                      <div className={`text-xs font-mono ${
-                        toolData.visible ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {toolData.visible ? '● Visible' : '● Hidden'}
-                      </div>
-                    </div>
-
-                    {toolData.visible && coords && (
-                      <div className="space-y-1 text-xs font-mono">
-                        {/* Position */}
-                        <div className="flex justify-between text-gray-300">
-                          <span>Pos (mm):</span>
-                          <span className="text-blue-300">
-                            [{coords.position_mm[0].toFixed(1).padStart(7)}, {coords.position_mm[1].toFixed(1).padStart(7)}, {coords.position_mm[2].toFixed(1).padStart(7)}]
-                          </span>
-                        </div>
-                        
-                        {/* Quaternion (w, x, y, z) */}
-                        {toolData.quaternion && (
-                          <div className="flex justify-between text-gray-300">
-                            <span>Quat:</span>
-                            <span className="text-purple-300">
-                              [{toolData.quaternion[0] >= 0 ? '+' : ''}{toolData.quaternion[0].toFixed(3)}, 
-                              {toolData.quaternion[1] >= 0 ? '+' : ''}{toolData.quaternion[1].toFixed(3)}, 
-                              {toolData.quaternion[2] >= 0 ? '+' : ''}{toolData.quaternion[2].toFixed(3)}, 
-                              {toolData.quaternion[3] >= 0 ? '+' : ''}{toolData.quaternion[3].toFixed(3)}]
-                            </span>
-                          </div>
-                        )}
-                        
-                        {/* Quality */}
-                        <div className="flex justify-between text-gray-300">
-                          <span>Q:</span>
-                          <span className={
-                            toolData.quality_score > 0.8 ? 'text-green-400' :
-                            toolData.quality_score > 0.5 ? 'text-yellow-400' : 'text-red-400'
-                          }>
-                            {toolData.quality_score.toFixed(3)}
-                          </span>
-                        </div>
-                        
-                        {/* Delta (frame-to-frame changes) */}
-                        {(toolData.delta_position_mm !== undefined || toolData.delta_rotation_deg !== undefined) && (
-                          <div className="flex justify-between text-gray-300">
-                            <span>Δ:</span>
-                            <span className="text-orange-300">
-                              {(toolData.delta_position_mm || 0).toFixed(2)}mm, {(toolData.delta_rotation_deg || 0).toFixed(2)}°
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* Not Found - Show ROM file */}
-                    {!toolData.visible && toolData.rom_file && (
-                      <div className="text-xs text-red-400 font-mono mt-2">
-                        ❌ NOT FOUND (ROM: {toolData.rom_file})
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-          </div>
-        )}
-
-        {/* Mode Selection - REMOVED: Now controlled by configuration only */}
-
-        {/* Actions */}
-        <div className="space-y-3">
-          {/* Configuration Selection */}
-          {availableConfigs.length > 0 ? (
-            <div>
-              <label className="block text-sm font-medium text-white mb-2">Select Configuration</label>
-              <select
-                value={selectedConfigId || ''}
-                onChange={(e) => {
-                  const configId = e.target.value;
-                  setSelectedConfigId(configId);
-                  if (configId) {
-                    loadSpecificConfig(configId);
-                  }
-                }}
-                className="w-full p-3 bg-gray-800 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500"
-                disabled={loading}
-              >
-                <option value="">Select a configuration...</option>
-                {availableConfigs.map((config) => (
-                  <option key={config.config_id || config.name} value={config.config_id || config.name}>
-                    {config.name} {config.settings?.tracking_mode === 'simulation' ? '(SIM)' : '(HW)'}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="p-3 bg-yellow-900 border border-yellow-700 rounded">
-              <div className="text-yellow-200 text-sm">
-                ⚠️ No configurations available
-              </div>
-              <div className="text-xs text-yellow-300 mt-1">
-                Please create and save configurations using the "Select Configuration" button below
-              </div>
-            </div>
-          )}
-
-          {/* Current Configuration Display */}
-          {currentTrackingConfig ? (
-            <button
-              type="button"
-              onClick={handleOpenConfigDialog}
-              className="w-full text-left p-3 bg-gray-800 border border-gray-600 rounded hover:border-blue-500 transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="text-xs text-gray-400">Active Configuration (click to manage)</div>
-                  <div className="text-white font-medium">{currentTrackingConfig.name}</div>
-                  {currentTrackingConfig.description && (
-                    <div className="text-xs text-gray-500 mt-1">{currentTrackingConfig.description}</div>
-                  )}
-                </div>
-                <div className={`text-xs px-2 py-1 rounded ${
-                  currentTrackingConfig.settings?.tracking_mode === 'simulation'
-                    ? 'bg-blue-900 text-blue-300'
-                    : 'bg-green-900 text-green-300'
-                }`}>
-                  {currentTrackingConfig.settings?.tracking_mode === 'simulation' ? '🖥️ SIM' : '🔧 HW'}
-                </div>
-              </div>
-            </button>
-          ) : selectedConfigId ? (
-            <div className="p-3 bg-orange-900 border border-orange-700 rounded">
-              <div className="text-orange-200 text-sm">
-                ⚠️ Configuration selected but not loaded
-              </div>
-              <div className="text-xs text-orange-300 mt-1">
-                Click "Load Configuration" to apply the selected configuration
-              </div>
-            </div>
-          ) : null}
-
-          <button
-            onClick={primaryButtonAction}
-            disabled={primaryButtonDisabled}
-            className={`w-full p-3 ${primaryButtonClass} disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors flex items-center justify-center gap-2`}
-          >
-            <span className="text-lg">
-              {!selectedConfigId ? '⚙️' : !currentTrackingConfig ? '📥' : isNavigating ? '⏹️' : '▶️'}
-            </span>
-            <span>{primaryButtonLabel}</span>
-            {currentTrackingConfig && !isNavigating && (
-              <span className="text-xs opacity-75">
-                ({currentTrackingConfig.settings?.tracking_mode === 'simulation' ? 'SIM' : 'HW'})
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Phase 7: Tracking Configuration Dialog */}
-      <TrackingConfigDialog
-        open={configDialogOpen}
-        onClose={handleCloseConfigDialog}
-        onConfigurationSaved={handleConfigSaved}
-        onConfigurationApplied={handleConfigApplied}
-      />
-    </div>
+      // Handlers
+      handleStartNavigation={handleStartNavigation}
+      handleStopNavigation={handleStopNavigation}
+      handleSetCenter={handleSetCenter}
+      handleOpenConfigDialog={handleOpenConfigDialog}
+      handleCloseConfigDialog={handleCloseConfigDialog}
+      handleConfigSaved={handleConfigSaved}
+      handleConfigApplied={handleConfigApplied}
+      loadSpecificConfig={loadSpecificConfig}
+      setMatricesExpanded={setMatricesExpanded}
+      setPrToDicomMatrix={setPrToDicomMatrix}
+      setPrToDicomMatrixInput={setPrToDicomMatrixInput}
+      setMarkerToTooltipMatrix={setMarkerToTooltipMatrix}
+      setMarkerToTooltipMatrixInput={setMarkerToTooltipMatrixInput}
+      setMatricesApplied={setMatricesApplied}
+      setSelectedToolId={setSelectedToolId}
+      setSelectedConfigId={setSelectedConfigId}
+      setAlerts={setAlerts}
+      trackingService={trackingService}
+      onToggleRealTimeDistance={setIsRealTimeDistanceEnabled}
+    />
   );
 }
 

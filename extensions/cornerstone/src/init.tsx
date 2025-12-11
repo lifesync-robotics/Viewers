@@ -47,6 +47,16 @@ const { registerColormap } = csUtilities.colormap;
 // TODO: Cypress tests are currently grabbing this from the window?
 (window as any).cornerstone = cornerstone;
 (window as any).cornerstoneTools = cornerstoneTools;
+
+// Extend Window interface for viewport ID storage
+declare global {
+  interface Window {
+    __viewportIds?: {
+      [viewportId: string]: string; // Maps viewport ID to its imageId or volumeId
+    };
+  }
+}
+
 /**
  *
  */
@@ -278,6 +288,53 @@ export default async function init({
     const { element } = evt.detail;
     const { viewport } = getEnabledElement(element);
     initViewTiming({ element });
+
+    // Capture and store viewport ID for consistent annotation targetId across all viewports
+    try {
+      const viewportId = viewport.id;
+      let targetId = null;
+
+      // Initialize global storage if not exists
+      if (!window.__viewportIds) {
+        window.__viewportIds = {};
+      }
+
+      // PRIORITY 1: For volume/MPR viewports, try getImageIds (most reliable for axial/coronal/sagittal)
+      const imageIds = (viewport as any).getImageIds?.();
+      if (imageIds && imageIds.length > 0) {
+        const rawId = imageIds[0];
+        targetId = rawId.startsWith('imageId:') || rawId.startsWith('volumeId:') 
+          ? rawId 
+          : `imageId:${rawId}`;
+        console.log(`📐 [Cornerstone Init] MPR viewport ${viewportId} -> ${targetId}`);
+      }
+
+      // PRIORITY 2: For stack viewports, get the current image ID
+      if (!targetId && typeof viewport.getCurrentImageId === 'function') {
+        const imageId = viewport.getCurrentImageId();
+        if (imageId) {
+          targetId = imageId.startsWith('imageId:') ? imageId : `imageId:${imageId}`;
+          console.log(`📷 [Cornerstone Init] Stack viewport ${viewportId} -> ${targetId}`);
+        }
+      }
+
+      // PRIORITY 3: For volume viewports, get the volume ID
+      if (!targetId && typeof (viewport as any).getVolumeIds === 'function') {
+        const volumeIds = (viewport as any).getVolumeIds();
+        if (volumeIds && volumeIds.length > 0) {
+          const volumeId = volumeIds[0];
+          targetId = volumeId.startsWith('volumeId:') ? volumeId : `volumeId:${volumeId}`;
+          console.log(`🎬 [Cornerstone Init] Volume viewport ${viewportId} -> ${targetId}`);
+        }
+      }
+
+      if (targetId) {
+        window.__viewportIds[viewportId] = targetId;
+        console.log(`✅ [Cornerstone Init] Stored viewport ID: ${viewportId} = ${targetId}`);
+      }
+    } catch (error) {
+      console.warn('⚠️ [Cornerstone Init] Error capturing viewport ID:', error);
+    }
 
     element.addEventListener(EVENTS.CAMERA_RESET, evt => {
       const { element } = evt.detail;

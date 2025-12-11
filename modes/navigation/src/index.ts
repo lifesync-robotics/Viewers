@@ -10,6 +10,7 @@ import { initToolGroups, toolbarButtons, cornerstone,
   mode as basicMode,
   modeInstance as basicModeInstance,
 } from '@ohif/mode-basic';
+import { getRenderingEngine } from '@cornerstonejs/core';
 // import navigationToolbarButtons from './toolbarButtons';
 
 export const tracked = {
@@ -17,7 +18,7 @@ export const tracked = {
   thumbnailList: '@ohif/extension-measurement-tracking.panelModule.seriesList',
   viewport: '@ohif/extension-measurement-tracking.viewportModule.cornerstone-tracked',
   viewportState: '@ohif/extension-cornerstone.panelModule.viewport-state',
-  screwManagement: '@ohif/extension-lifesync.panelModule.screw-management',
+  screwManagement: '@ohif/extension-lifesync.panelModule.screw-list',
   trackingPanel: '@ohif/extension-lifesync.panelModule.trackingPanel',
   registrationPanel: '@ohif/extension-lifesync.panelModule.registration-panel',
 };
@@ -28,6 +29,16 @@ export const extensionDependencies = {
   '@ohif/extension-measurement-tracking': '^3.0.0',
   '@ohif/extension-lifesync': '^3.12.0-beta.56',
 };
+
+// Global storage for viewport IDs (imageId/volumeId)
+// Used to ensure consistent targetId format throughout the application
+declare global {
+  interface Window {
+    __viewportIds?: {
+      [viewportId: string]: string; // Maps viewport ID to its imageId or volumeId
+    };
+  }
+}
 
 export const navigationInstance = {
   ...basicLayout,
@@ -48,6 +59,78 @@ export const navigationInstance = {
     ],
   },
 };
+
+/**
+ * Captures and stores viewport IDs (imageId or volumeId) globally
+ * This ensures consistent targetId format throughout the application
+ */
+function captureViewportIds({ servicesManager }) {
+  try {
+    console.log('🔍 [Navigation Mode] Capturing viewport IDs...');
+    
+    // Initialize global storage
+    if (!window.__viewportIds) {
+      window.__viewportIds = {};
+    }
+
+    // Get viewports directly from the rendering engine
+    const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
+    
+    if (!renderingEngine) {
+      console.warn('⚠️ [Navigation Mode] No rendering engine found');
+      return;
+    }
+
+    const viewports = renderingEngine.getViewports();
+    console.log(`🔍 [Navigation Mode] Found ${viewports.length} viewports`);
+
+    viewports.forEach((viewport) => {
+      const viewportId = viewport.id;
+      let targetId = null;
+
+      // PRIORITY 1: For volume/MPR viewports, try getImageIds (most reliable for axial/coronal/sagittal)
+      const imageIds = (viewport as any).getImageIds?.();
+      if (imageIds && imageIds.length > 0) {
+        const rawId = imageIds[0];
+        targetId = rawId.startsWith('imageId:') || rawId.startsWith('volumeId:') 
+          ? rawId 
+          : `imageId:${rawId}`;
+        console.log(`📐 [Navigation Mode] MPR viewport ${viewportId} -> ${targetId}`);
+      }
+
+      // PRIORITY 2: For stack viewports, get the current image ID
+      if (!targetId && typeof (viewport as any).getCurrentImageId === 'function') {
+        const imageId = (viewport as any).getCurrentImageId();
+        if (imageId) {
+          targetId = imageId.startsWith('imageId:') ? imageId : `imageId:${imageId}`;
+          console.log(`📷 [Navigation Mode] Stack viewport ${viewportId} -> ${targetId}`);
+        }
+      }
+
+      // PRIORITY 3: For volume viewports, get the volume ID
+      if (!targetId && typeof (viewport as any).getVolumeIds === 'function') {
+        const volumeIds = (viewport as any).getVolumeIds();
+        if (volumeIds && volumeIds.length > 0) {
+          const volumeId = volumeIds[0];
+          targetId = volumeId.startsWith('volumeId:') ? volumeId : `volumeId:${volumeId}`;
+          console.log(`🎬 [Navigation Mode] Volume viewport ${viewportId} -> ${targetId}`);
+        }
+      }
+
+      if (targetId) {
+        window.__viewportIds[viewportId] = targetId;
+        console.log(`✅ [Navigation Mode] Stored viewport ID: ${viewportId} = ${targetId}`);
+      } else {
+        console.warn(`⚠️ [Navigation Mode] Could not capture ID for viewport: ${viewportId}`);
+        console.warn(`   Viewport type: ${viewport.type}, hasImageIds: ${!!imageIds}, hasVolumeIds: ${!!(viewport as any).getVolumeIds?.()}`);
+      }
+    });
+
+    console.log('✅ [Navigation Mode] Viewport IDs captured:', window.__viewportIds);
+  } catch (error) {
+    console.error('❌ [Navigation Mode] Error capturing viewport IDs:', error);
+  }
+}
 
 /**
  * Navigation mode entry hook
@@ -193,6 +276,9 @@ function navigationOnModeEnter(args) {
             } catch (error) {
               console.warn('⚠️ [Navigation Mode] Error activating Crosshairs:', error);
             }
+
+            // Capture viewport IDs after viewports are ready
+            captureViewportIds({ servicesManager });
           }, 100);
           
           try {
