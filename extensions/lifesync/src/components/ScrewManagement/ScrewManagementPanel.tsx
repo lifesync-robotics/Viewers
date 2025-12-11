@@ -123,6 +123,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [crosshairBookmarks, setCrosshairBookmarks] = useState<CrosshairBookmark[]>([]);
   const [selectedBookmarkId, setSelectedBookmarkId] = useState<string | null>(null);
 
+  // Screw dimension update state
+  const [updatingScrewId, setUpdatingScrewId] = useState<string | null>(null);
+  const [availableDiameters, setAvailableDiameters] = useState<number[]>([]);
+  const [availableLengths, setAvailableLengths] = useState<number[]>([]);
+
   // Debug: Log screws whenever they change
   useEffect(() => {
     console.log(`🔍 [ScrewManagement] Screws state changed. Count: ${screws.length}`);
@@ -182,7 +187,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       sessionStorage.removeItem(NEW_LOAD_FLAG);  // Clear to trigger generation
       localStorage.removeItem(FROM_CASE_FLAG);  // Clear after use
 
-      // 保留核心渲染清除（去除不需要的逻辑，如额外日志）
+      // Keep core rendering cleanup (remove unnecessary logic, such as extra logs)
       modelStateService.clearAllModels();
       viewportStateService.clearAll();
     }
@@ -311,6 +316,112 @@ export default function ScrewManagementPanel({ servicesManager }) {
       loadScrews(sessionId);
     }
   }, [sessionId]);
+
+  /**
+   * Load available screw dimensions from catalog
+   */
+  const loadAvailableDimensions = async () => {
+    try {
+      console.log('📦 Loading available screw dimensions from catalog...');
+      const response = await fetch('http://localhost:3001/api/planning/catalog/screws');
+      const data = await response.json();
+
+      if (data.success && data.manufacturers) {
+        const diameters = new Set<number>();
+        const lengths = new Set<number>();
+
+        data.manufacturers.forEach((mfr) => {
+          mfr.screw_types?.forEach((st) => {
+            st.variants?.forEach((variant) => {
+              if (variant.diameter) diameters.add(variant.diameter);
+              if (variant.length) lengths.add(variant.length);
+            });
+          });
+        });
+
+        // Also add dimensions from existing screws
+        screws.forEach((screw) => {
+          try {
+            const displayInfo = getScrewDisplayInfo(screw);
+            diameters.add(displayInfo.radius * 2);
+            lengths.add(displayInfo.length);
+          } catch (error) {
+            // Skip invalid screws
+          }
+        });
+
+        // Add common standard sizes if catalog is empty
+        if (diameters.size === 0) {
+          [3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0].forEach(d => diameters.add(d));
+        }
+        if (lengths.size === 0) {
+          [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80].forEach(l => lengths.add(l));
+        }
+
+        setAvailableDiameters(Array.from(diameters).sort((a, b) => a - b));
+        setAvailableLengths(Array.from(lengths).sort((a, b) => a - b));
+
+        console.log(`✅ Loaded ${diameters.size} diameters and ${lengths.size} lengths`);
+      } else {
+        // Fallback: use common standard sizes
+        setAvailableDiameters([3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0]);
+        setAvailableLengths([20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]);
+        console.log('⚠️ Using fallback standard dimensions');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load available dimensions:', error);
+      // Fallback: use common standard sizes
+      setAvailableDiameters([3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0]);
+      setAvailableLengths([20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]);
+    }
+  };
+
+  // Load available dimensions on mount
+  useEffect(() => {
+    loadAvailableDimensions();
+  }, []);
+
+  // Update available dimensions when screws change
+  useEffect(() => {
+    if (screws.length > 0) {
+      // Get getScrewDisplayInfo function reference (it's defined later in the component)
+      // We'll use a safe approach by checking if it exists
+      const updateDimensions = () => {
+        const diameters = new Set(availableDiameters);
+        const lengths = new Set(availableLengths);
+
+        screws.forEach((screw) => {
+          try {
+            // Try to get dimensions from screw data directly
+            const radius = parseFloat(screw.radius);
+            const length = parseFloat(screw.length);
+            if (!isNaN(radius) && radius > 0) {
+              diameters.add(radius * 2);
+            }
+            if (!isNaN(length) && length > 0) {
+              lengths.add(length);
+            }
+          } catch (error) {
+            // Skip invalid screws
+          }
+        });
+
+        const newDiameters = Array.from(diameters).sort((a, b) => a - b);
+        const newLengths = Array.from(lengths).sort((a, b) => a - b);
+
+        // Only update if there are changes to avoid infinite loops
+        if (JSON.stringify(newDiameters) !== JSON.stringify(availableDiameters)) {
+          setAvailableDiameters(newDiameters);
+        }
+        if (JSON.stringify(newLengths) !== JSON.stringify(availableLengths)) {
+          setAvailableLengths(newLengths);
+        }
+      };
+
+      updateDimensions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screws]);
 
   /**
    * Load screws from planning API
@@ -2149,6 +2260,300 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
+  /**
+   * Delete screw models (body and cap) by screw ID
+   * Note: Cap is NOT deleted when updating dimensions - it's universal and position should be preserved
+   */
+  const deleteScrewModels = async (screwId: string, screwLabel: string, deleteCap: boolean = true) => {
+    const allModels = modelStateService.getAllModels();
+    let modelsRemoved = 0;
+
+    // Delete body model
+    const bodyModel = allModels.find(
+      m => m.metadata.id === screwId || m.metadata.name === screwLabel
+    );
+    if (bodyModel) {
+      console.log(`🗑️ Removing body model: ${bodyModel.metadata.id} (${bodyModel.metadata.name})`);
+      modelStateService.removeModel(bodyModel.metadata.id);
+      modelsRemoved++;
+    }
+
+    // Delete cap model only if explicitly requested (not during dimension updates)
+    if (deleteCap) {
+      const capModelId = `${screwId}-cap`;
+      const capModelName = `${screwLabel}-Cap`;
+      const capModel = allModels.find(
+        m => m.metadata.id === capModelId || m.metadata.name === capModelName
+      );
+      if (capModel) {
+        console.log(`🗑️ Removing cap model: ${capModel.metadata.id} (${capModel.metadata.name})`);
+        modelStateService.removeModel(capModel.metadata.id);
+        modelsRemoved++;
+      }
+    } else {
+      console.log(`ℹ️ Preserving cap model for screw ${screwId} (cap is universal)`);
+    }
+
+    console.log(`✅ Removed ${modelsRemoved} model(s) for screw ${screwId}`);
+    return modelsRemoved;
+  };
+
+  /**
+   * Calculate screw transform from cap position
+   * This is used when updating screw dimensions - the cap position is fixed,
+   * and we calculate the new screw position based on the new length
+   */
+  const calculateScrewTransformFromCap = (
+    capTransform: number[],
+    newLength: number
+  ): number[] => {
+    // Extract coronal direction (Y-axis, column 1 in row-major)
+    const coronalX = capTransform[1];
+    const coronalY = capTransform[5];
+    const coronalZ = capTransform[9];
+
+    // Cap dimensions (same as in loadCapModel)
+    const capHeight = 15.0;
+    const capCenterOffset = 2.5;
+
+    // Calculate the offset that was used to position the cap
+    // capOffset = (oldLength / 2) + (capHeight / 2) + capCenterOffset
+    // We need to reverse this: screw position = cap position - capOffset
+    // But since we're using new length, we calculate:
+    // newCapOffset = (newLength / 2) + (capHeight / 2) + capCenterOffset
+    const newCapOffset = (newLength / 2) + (capHeight / 2) + capCenterOffset;
+
+    // Create screw transform by offsetting backwards from cap position
+    const screwTransform = capTransform instanceof Float32Array 
+      ? Array.from(capTransform) 
+      : [...capTransform];
+
+    // Reverse the offset: move backwards along coronal direction
+    screwTransform[3] = capTransform[3] - (coronalX * newCapOffset);
+    screwTransform[7] = capTransform[7] - (coronalY * newCapOffset);
+    screwTransform[11] = capTransform[11] - (coronalZ * newCapOffset);
+
+    console.log(`📐 Calculated screw transform from cap:`);
+    console.log(`   Cap position: [${capTransform[3].toFixed(2)}, ${capTransform[7].toFixed(2)}, ${capTransform[11].toFixed(2)}]`);
+    console.log(`   New length: ${newLength}mm`);
+    console.log(`   Cap offset: ${newCapOffset}mm`);
+    console.log(`   Screw position: [${screwTransform[3].toFixed(2)}, ${screwTransform[7].toFixed(2)}, ${screwTransform[11].toFixed(2)}]`);
+
+    return screwTransform;
+  };
+
+  /**
+   * Update screw diameter
+   */
+  const handleUpdateDiameter = async (screwData: any, newDiameter: number) => {
+    const newRadius = newDiameter / 2;
+    await updateScrewDimensions(screwData, newRadius, undefined);
+  };
+
+  /**
+   * Update screw length
+   */
+  const handleUpdateLength = async (screwData: any, newLength: number) => {
+    await updateScrewDimensions(screwData, undefined, newLength);
+  };
+
+  /**
+   * Update screw dimensions (radius and/or length)
+   */
+  const updateScrewDimensions = async (
+    screwData: any,
+    newRadius?: number,
+    newLength?: number
+  ) => {
+    const screwId = screwData.screw_id || screwData.id;
+    if (!screwId) {
+      console.error('❌ Cannot update screw: no screw ID');
+      alert('Cannot update screw: missing screw ID');
+      return;
+    }
+
+    setUpdatingScrewId(screwId);
+
+    try {
+      const displayInfo = getScrewDisplayInfo(screwData);
+      const updatedRadius = newRadius !== undefined ? newRadius : displayInfo.radius;
+      const updatedLength = newLength !== undefined ? newLength : displayInfo.length;
+
+      console.log('═══════════════════════════════════════════════════════');
+      console.log(`🔄 [UpdateScrew] Updating screw ${screwId}:`);
+      console.log(`   Label: ${displayInfo.label}`);
+      console.log(`   Old: R=${displayInfo.radius}mm, L=${displayInfo.length}mm`);
+      console.log(`   New: R=${updatedRadius}mm, L=${updatedLength}mm`);
+      console.log('═══════════════════════════════════════════════════════');
+
+      // Step 1: Get cap model and its transform (cap position is the reference)
+      const allModels = modelStateService.getAllModels();
+      const capModelId = `${screwId}-cap`;
+      const capModelName = `${displayInfo.label}-Cap`;
+      const capModel = allModels.find(
+        m => m.metadata.id === capModelId || m.metadata.name === capModelName
+      );
+
+      let newScrewTransform: number[] | null = null;
+
+      if (capModel) {
+        // ✅ Cap exists - use cap position as reference
+        console.log(`✅ Found cap model - using cap position as reference`);
+        const capTransform = modelStateService.getScrewTransform(capModel.metadata.id);
+        
+        if (capTransform && capTransform.length === 16) {
+          // Calculate new screw transform from cap position
+          newScrewTransform = calculateScrewTransformFromCap(capTransform, updatedLength);
+          console.log(`✅ Calculated new screw transform from cap position`);
+        } else {
+          console.warn('⚠️ Could not get cap transform, falling back to screw transform');
+        }
+      }
+
+      // Fallback: Get transform from existing screw model if cap not found
+      if (!newScrewTransform) {
+        const existingModel = allModels.find(
+          m => m.metadata.id === screwId || m.metadata.name === displayInfo.label
+        );
+
+        if (!existingModel) {
+          throw new Error('Cannot find 3D model or cap model for this screw');
+        }
+
+        const currentTransform = modelStateService.getScrewTransform(existingModel.metadata.id);
+        if (!currentTransform || currentTransform.length !== 16) {
+          throw new Error('Cannot get transform matrix for screw');
+        }
+
+        newScrewTransform = currentTransform instanceof Float32Array 
+          ? Array.from(currentTransform) 
+          : [...currentTransform];
+        console.log(`⚠️ Using existing screw transform (cap not found or invalid)`);
+      }
+
+      // Step 2: Delete only the body model (preserve cap)
+      await deleteScrewModels(screwId, displayInfo.label, false); // false = don't delete cap
+
+      // Step 3: Update backend data
+      if (sessionId) {
+        console.log('📤 Updating screw in backend...');
+        const updateResponse = await planningBackendService.updateScrew(
+          screwId,
+          sessionId,
+          {
+            radius: updatedRadius,
+            length: updatedLength,
+            // Update transform matrix if length changed
+            transformMatrix: newScrewTransform
+          }
+        );
+
+        if (!updateResponse.success) {
+          throw new Error(updateResponse.error || 'Backend update failed');
+        }
+        console.log('✅ Screw updated in backend');
+        
+        // ✅ IMPORTANT: Reload the updated screw from backend to ensure state sync
+        // This prevents the issue where panel reopen shows old data
+        try {
+          const getScrewResponse = await planningBackendService.getScrew(screwId, sessionId);
+          if (getScrewResponse.success && getScrewResponse.screw) {
+            // Update only this specific screw in state with backend data
+            setScrews(prevScrews =>
+              prevScrews.map(screw => {
+                const id = screw.screw_id || screw.id;
+                if (id === screwId) {
+                  // Merge backend response with our updates to ensure all fields are correct
+                  return {
+                    ...screw,
+                    ...getScrewResponse.screw,
+                    radius: updatedRadius, // Explicitly set to ensure correctness
+                    length: updatedLength,
+                    transform_matrix: newScrewTransform
+                  };
+                }
+                return screw;
+              })
+            );
+            console.log('✅ Frontend state synced with backend data');
+          } else {
+            console.warn('⚠️ Could not reload screw from backend, using frontend state');
+            // Fallback to frontend state update
+            setScrews(prevScrews =>
+              prevScrews.map(screw => {
+                const id = screw.screw_id || screw.id;
+                if (id === screwId) {
+                  return {
+                    ...screw,
+                    radius: updatedRadius,
+                    length: updatedLength,
+                    transform_matrix: newScrewTransform
+                  };
+                }
+                return screw;
+              })
+            );
+          }
+        } catch (reloadError) {
+          console.warn('⚠️ Error reloading screw from backend:', reloadError);
+          // Fallback to frontend state update
+          setScrews(prevScrews =>
+            prevScrews.map(screw => {
+              const id = screw.screw_id || screw.id;
+              if (id === screwId) {
+                return {
+                  ...screw,
+                  radius: updatedRadius,
+                  length: updatedLength,
+                  transform_matrix: newScrewTransform
+                };
+              }
+              return screw;
+            })
+          );
+        }
+      } else {
+        // No sessionId - only update frontend state
+        setScrews(prevScrews =>
+          prevScrews.map(screw => {
+            const id = screw.screw_id || screw.id;
+            if (id === screwId) {
+              return {
+                ...screw,
+                radius: updatedRadius,
+                length: updatedLength,
+                transform_matrix: newScrewTransform
+              };
+            }
+            return screw;
+          })
+        );
+      }
+
+      // Step 5: Reload 3D body model with new dimensions and position
+      console.log('📦 Reloading 3D body model with new dimensions...');
+      await loadScrewModel(
+        updatedRadius,
+        updatedLength,
+        newScrewTransform,
+        displayInfo.label,
+        screwId
+      );
+
+      // Step 6: Cap is already in place, no need to reload it
+      console.log(`✅ Cap model preserved at original position`);
+
+      console.log(`✅ Successfully updated screw ${screwId}`);
+      console.log('═══════════════════════════════════════════════════════');
+
+    } catch (error) {
+      console.error('❌ Failed to update screw dimensions:', error);
+      alert(`Failed to update screw dimensions: ${error.message}\n\nPlease check the console for details.`);
+    } finally {
+      setUpdatingScrewId(null);
+    }
+  };
+
   const clearAllScrews = async () => {
     try {
       console.log('═══════════════════════════════════════════════════════');
@@ -2916,6 +3321,11 @@ export default function ScrewManagementPanel({ servicesManager }) {
               onEdit={editScrew}
               onDelete={deleteScrew}
               showEditButton={false}
+              onUpdateDiameter={handleUpdateDiameter}
+              onUpdateLength={handleUpdateLength}
+              availableDiameters={availableDiameters}
+              availableLengths={availableLengths}
+              updatingScrewId={updatingScrewId}
             />
           )}
         </ScrewListScrollArea>
