@@ -7,6 +7,10 @@ import vtkActor from '@kitware/vtk.js/Rendering/Core/Actor';
 // Note: Plane cutters now use camera.focalPoint directly instead of crosshairs center
 // This ensures proper synchronization when scrolling MPR slices
 
+// Threshold for switching to projection mode (mm)
+// When slab thickness > this value, use projection instead of cutting
+const PROJECTION_SLAB_THRESHOLD = 5.0; // 5mm threshold
+
 /**
  * Per-model cutter data within a viewport's plane cutter
  */
@@ -558,23 +562,51 @@ class PlaneCutterService extends PubSubService {
         }
       });
 
+      // Get slab thickness from viewport properties (for thick slab mode)
+      const slabThickness = this._getViewportSlabThickness(viewport);
+      const useProjection = slabThickness > PROJECTION_SLAB_THRESHOLD;
+
       // Update all model cutters in this plane
       for (const modelCutterData of planeCutter.modelCutters.values()) {
-        modelCutterData.cutter.modified();
-        modelCutterData.cutter.update();
-
-        // Get updated cut output
-        const cutOutput = modelCutterData.cutter.getOutputData();
-        if (!cutOutput) {
-          continue;
-        }
-
         // Get color for this model
         const color = this._getColorForModel(modelCutterData.modelId);
         const colorHex = this._rgbToHex(color[0], color[1], color[2]);
 
-        // Update SVG overlay with new cut contour
-        this._renderCutContourToSVG(viewport, svgOverlay, modelCutterData.modelId, cutOutput, colorHex);
+        if (useProjection) {
+          // THICK SLAB MODE: Use projection instead of cutting
+          // Project the entire model along the view direction
+
+          // Get latest polyData from modelStateService (ensure we have transformed data)
+          const { modelStateService } = this.servicesManager.services;
+          const latestModel = modelStateService?.getModel(modelCutterData.modelId);
+          const polyDataToUse = latestModel?.polyData || modelCutterData.polyData;
+
+          if (!polyDataToUse) {
+            continue;
+          }
+
+          this._renderProjectionContourToSVG(
+            viewport,
+            svgOverlay,
+            modelCutterData.modelId,
+            polyDataToUse,
+            planeNormal,
+            planeOrigin,
+            slabThickness,
+            colorHex
+          );
+        } else {
+          // THIN SLICE MODE: Use regular plane cutting
+          modelCutterData.cutter.modified();
+          modelCutterData.cutter.update();
+
+          const cutOutput = modelCutterData.cutter.getOutputData();
+          if (!cutOutput) {
+            continue;
+          }
+
+          this._renderCutContourToSVG(viewport, svgOverlay, modelCutterData.modelId, cutOutput, colorHex);
+        }
       }
     } catch (error) {
       console.warn(`⚠️ [${planeCutter.orientation}] Error updating plane:`, error.message);
@@ -755,6 +787,9 @@ class PlaneCutterService extends PubSubService {
 
       if (modelCutterData) {
         console.log(`  🔄 Updating ${planeCutter.orientation} cutter`);
+
+        // CRITICAL: Update stored polyData reference for projection mode
+        modelCutterData.polyData = loadedModel.polyData;
 
         // Update the cutter with latest polyData
         modelCutterData.cutter.setInputData(loadedModel.polyData);
@@ -1322,6 +1357,190 @@ class PlaneCutterService extends PubSubService {
       const colorHex = this._rgbToHex(color[0], color[1], color[2]);
       this._renderCutContourToSVG(viewport, svg, modelCutterData.modelId, cutOutput, colorHex);
     }
+  }
+
+  /**
+   * Get viewport's slab thickness (0 if not in slab mode)
+   */
+  private _getViewportSlabThickness(viewport: any): number {
+    try {
+      const props = viewport.getProperties?.();
+      if (props && typeof props.slabThickness === 'number') {
+        return props.slabThickness;
+      }
+    } catch (error) {
+      // Ignore errors, return 0
+    }
+    return 0;
+  }
+
+  /**
+   * Render projection contour for thick slab mode
+   * Projects the 3D model along the view direction onto the 2D viewport
+   *
+   * This is used when slabThickness > PROJECTION_SLAB_THRESHOLD to show
+   * the full outline of screws that are within the slab range.
+   */
+  private _renderProjectionContourToSVG(
+    viewport: any,
+    svg: SVGElement,
+    modelId: string,
+    polyData: any,
+    viewNormal: number[],
+    planeOrigin: number[],
+    slabThickness: number,
+    colorHex: string
+  ): void {
+    // Remove existing paths for this model
+    const existingPaths = svg.querySelectorAll(`path[data-model-id="${modelId}"]`);
+    existingPaths.forEach((path: Element) => path.remove());
+
+    if (!polyData) {
+      return;
+    }
+
+    const points = polyData.getPoints();
+    if (!points || points.getNumberOfPoints() === 0) {
+      return;
+    }
+
+    const pointData = points.getData();
+    const numPoints = points.getNumberOfPoints();
+
+    // Calculate half slab thickness for bounds checking
+    const halfSlab = slabThickness / 2;
+
+    // Filter points that are within the slab range
+    // Project each point onto the view plane and check if within slab bounds
+    const projectedPoints: [number, number][] = [];
+
+    for (let i = 0; i < numPoints; i++) {
+      const worldPoint = [
+        pointData[i * 3],
+        pointData[i * 3 + 1],
+        pointData[i * 3 + 2]
+      ];
+
+      // Calculate distance from point to plane along view normal
+      const dx = worldPoint[0] - planeOrigin[0];
+      const dy = worldPoint[1] - planeOrigin[1];
+      const dz = worldPoint[2] - planeOrigin[2];
+      const distanceToPlane = dx * viewNormal[0] + dy * viewNormal[1] + dz * viewNormal[2];
+
+      // Check if point is within slab range
+      if (Math.abs(distanceToPlane) <= halfSlab) {
+        try {
+          const canvasPoint = viewport.worldToCanvas?.(worldPoint);
+          if (canvasPoint && Array.isArray(canvasPoint) && canvasPoint.length >= 2) {
+            if (!isNaN(canvasPoint[0]) && !isNaN(canvasPoint[1])) {
+              projectedPoints.push([canvasPoint[0], canvasPoint[1]]);
+            }
+          }
+        } catch (error) {
+          continue;
+        }
+      }
+    }
+
+    if (projectedPoints.length < 3) {
+      return; // Need at least 3 points to form a shape
+    }
+
+    // Compute convex hull of projected points for clean outline
+    const hull = this._computeConvexHull(projectedPoints);
+
+    if (hull.length < 3) {
+      return;
+    }
+
+    // Create SVG path for the convex hull
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('data-model-id', modelId);
+
+    let pathData = `M ${hull[0][0]} ${hull[0][1]}`;
+    for (let i = 1; i < hull.length; i++) {
+      pathData += ` L ${hull[i][0]} ${hull[i][1]}`;
+    }
+    pathData += ' Z'; // Close the path
+
+    path.setAttribute('d', pathData);
+    path.setAttribute('stroke', colorHex);
+    path.setAttribute('stroke-width', '3');
+    path.setAttribute('fill', colorHex);
+    path.setAttribute('fill-opacity', '0.15'); // Semi-transparent fill for projection
+    path.setAttribute('opacity', '1.0');
+    path.setAttribute('style', 'pointer-events: none;');
+
+    svg.appendChild(path);
+  }
+
+  /**
+   * Compute convex hull of 2D points using Gift Wrapping algorithm
+   * Returns points in counter-clockwise order
+   */
+  private _computeConvexHull(points: [number, number][]): [number, number][] {
+    if (points.length < 3) {
+      return points;
+    }
+
+    // Find the leftmost point
+    let leftmost = 0;
+    for (let i = 1; i < points.length; i++) {
+      if (points[i][0] < points[leftmost][0]) {
+        leftmost = i;
+      }
+    }
+
+    const hull: [number, number][] = [];
+    let current = leftmost;
+
+    do {
+      hull.push(points[current]);
+      let next = 0;
+
+      for (let i = 1; i < points.length; i++) {
+        if (next === current) {
+          next = i;
+          continue;
+        }
+
+        // Cross product to determine turn direction
+        const cross = this._crossProduct(
+          points[current],
+          points[next],
+          points[i]
+        );
+
+        // If counter-clockwise turn or collinear but farther, update next
+        if (cross < 0 || (cross === 0 && this._distance(points[current], points[i]) > this._distance(points[current], points[next]))) {
+          next = i;
+        }
+      }
+
+      current = next;
+
+      // Safety check to prevent infinite loop
+      if (hull.length > points.length) {
+        break;
+      }
+    } while (current !== leftmost);
+
+    return hull;
+  }
+
+  /**
+   * Cross product of vectors (p1->p2) and (p1->p3)
+   * Returns positive if counter-clockwise, negative if clockwise
+   */
+  private _crossProduct(p1: [number, number], p2: [number, number], p3: [number, number]): number {
+    return (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0]);
+  }
+
+  /**
+   * Euclidean distance between two 2D points
+   */
+  private _distance(p1: [number, number], p2: [number, number]): number {
+    return Math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2);
   }
 
   /**
