@@ -1088,7 +1088,7 @@ class PlaneCutterService extends PubSubService {
         // Cache it for future lookups
         this.modelColors.set(modelId, color);
 
-        console.log(`🎨 [PlaneCutterService] Using metadata color [${color}] for model ${modelId}`);
+        // console.log(`🎨 [PlaneCutterService] Using metadata color [${color}] for model ${modelId}`);
         return color;
       }
     }

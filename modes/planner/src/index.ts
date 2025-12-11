@@ -11,7 +11,7 @@ import { initToolGroups, toolbarButtons as basicToolbarButtons, cornerstone,
   modeInstance as basicModeInstance,
 } from '@ohif/mode-basic';
 import { HangingProtocol } from 'platform/core/src/types';
-import plannerToolbarButtons from './toolbarButtons';
+// import plannerToolbarButtons from './toolbarButtons';
 
 export const tracked = {
   screwManagement: '@ohif/extension-lifesync.panelModule.screw-management',
@@ -135,41 +135,41 @@ function plannerOnModeEnter(args) {
     }
   };
 
-  // Register planner-specific toolbar buttons
-  try {
-    if (toolbarService && plannerToolbarButtons) {
-      // Register the buttons first
-      toolbarService.register(plannerToolbarButtons);
-      console.log('✅ [Planner Mode] PlannerOrientationMarker toolbar button registered');
-      
-      // Update MoreTools section to include our button
-      toolbarService.updateSection('MoreTools', [
-        'Reset',
-        'rotate-right',
-        'flipHorizontal',
-        'ImageSliceSync',
-        'ReferenceLines',
-        'ImageOverlayViewer',
-        'StackScroll',
-        'invert',
-        'Probe',
-        'Cine',
-        'Angle',
-        'CobbAngle',
-        'Magnify',
-        'CalibrationLine',
-        'TagBrowser',
-        'AdvancedMagnify',
-        'UltrasoundDirectionalTool',
-        'WindowLevelRegion',
-        'SegmentLabelTool',
-        'PlannerOrientationMarker', // Our custom button (unique ID, no conflict!)
-      ]);
-      console.log('✅ [Planner Mode] PlannerOrientationMarker button added to MoreTools section');
-    }
-  } catch (error) {
-    console.error('❌ [Planner Mode] Failed to register toolbar buttons:', error);
-  }
+  // // Register planner-specific toolbar buttons (disabled for now)
+  // try {
+  //   if (toolbarService && plannerToolbarButtons) {
+  //     // Register the buttons first
+  //     toolbarService.register(plannerToolbarButtons);
+  //     console.log('✅ [Planner Mode] PlannerOrientationMarker toolbar button registered');
+  //     
+  //     // Update MoreTools section to include our button
+  //     toolbarService.updateSection('MoreTools', [
+  //       'Reset',
+  //       'rotate-right',
+  //       'flipHorizontal',
+  //       'ImageSliceSync',
+  //       'ReferenceLines',
+  //       'ImageOverlayViewer',
+  //       'StackScroll',
+  //       'invert',
+  //       'Probe',
+  //       'Cine',
+  //       'Angle',
+  //       'CobbAngle',
+  //       'Magnify',
+  //       'CalibrationLine',
+  //       'TagBrowser',
+  //       'AdvancedMagnify',
+  //       'UltrasoundDirectionalTool',
+  //       'WindowLevelRegion',
+  //       'SegmentLabelTool',
+  //       'PlannerOrientationMarker', // Our custom button (unique ID, no conflict!)
+  //     ]);
+  //     console.log('✅ [Planner Mode] PlannerOrientationMarker button added to MoreTools section');
+  //   }
+  // } catch (error) {
+  //   console.error('❌ [Planner Mode] Failed to register toolbar buttons:', error);
+  // }
 
   // Subscribe to VIEWPORTS_READY event to add tools and activate Crosshairs
   try {
@@ -265,10 +265,10 @@ export const modeInstance = {
   };
 
 // Combine basic toolbar buttons with planner-specific buttons
-export const toolbarButtons = [
-  ...basicToolbarButtons,
-  ...plannerToolbarButtons,
-];
+// export const toolbarButtons = [
+//   ...basicToolbarButtons,
+//   ...plannerToolbarButtons,
+// ];
 
 const mode = {
   ...basicMode,

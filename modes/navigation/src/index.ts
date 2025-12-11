@@ -10,7 +10,7 @@ import { initToolGroups, toolbarButtons, cornerstone,
   mode as basicMode,
   modeInstance as basicModeInstance,
 } from '@ohif/mode-basic';
-import navigationToolbarButtons from './toolbarButtons';
+// import navigationToolbarButtons from './toolbarButtons';
 
 export const tracked = {
   measurements: '@ohif/extension-measurement-tracking.panelModule.trackedMeasurements',
@@ -125,41 +125,41 @@ function navigationOnModeEnter(args) {
     }
   };
 
-  // Register navigation-specific toolbar buttons
-  try {
-    if (toolbarService && navigationToolbarButtons) {
-      // Register the buttons first
-      toolbarService.register(navigationToolbarButtons);
-      console.log('✅ [Navigation Mode] NavigationOrientationMarker toolbar button registered');
-      
-      // Update MoreTools section to include our button
-      toolbarService.updateSection('MoreTools', [
-        'Reset',
-        'rotate-right',
-        'flipHorizontal',
-        'ImageSliceSync',
-        'ReferenceLines',
-        'ImageOverlayViewer',
-        'StackScroll',
-        'invert',
-        'Probe',
-        'Cine',
-        'Angle',
-        'CobbAngle',
-        'Magnify',
-        'CalibrationLine',
-        'TagBrowser',
-        'AdvancedMagnify',
-        'UltrasoundDirectionalTool',
-        'WindowLevelRegion',
-        'SegmentLabelTool',
-        'NavigationOrientationMarker', // Our custom button (unique ID, no conflict!)
-      ]);
-      console.log('✅ [Navigation Mode] NavigationOrientationMarker button added to MoreTools section');
-    }
-  } catch (error) {
-    console.error('❌ [Navigation Mode] Failed to register toolbar buttons:', error);
-  }
+  // // Register navigation-specific toolbar buttons (disabled for now)
+  // try {
+  //   if (toolbarService && navigationToolbarButtons) {
+  //     // Register the buttons first
+  //     toolbarService.register(navigationToolbarButtons);
+  //     console.log('✅ [Navigation Mode] NavigationOrientationMarker toolbar button registered');
+  //     
+  //     // Update MoreTools section to include our button
+  //     toolbarService.updateSection('MoreTools', [
+  //       'Reset',
+  //       'rotate-right',
+  //       'flipHorizontal',
+  //       'ImageSliceSync',
+  //       'ReferenceLines',
+  //       'ImageOverlayViewer',
+  //       'StackScroll',
+  //       'invert',
+  //       'Probe',
+  //       'Cine',
+  //       'Angle',
+  //       'CobbAngle',
+  //       'Magnify',
+  //       'CalibrationLine',
+  //       'TagBrowser',
+  //       'AdvancedMagnify',
+  //       'UltrasoundDirectionalTool',
+  //       'WindowLevelRegion',
+  //       'SegmentLabelTool',
+  //       'NavigationOrientationMarker', // Our custom button (unique ID, no conflict!)
+  //     ]);
+  //     console.log('✅ [Navigation Mode] NavigationOrientationMarker button added to MoreTools section');
+  //   }
+  // } catch (error) {
+  //   console.error('❌ [Navigation Mode] Failed to register toolbar buttons:', error);
+  // }
 
   // Subscribe to VIEWPORTS_READY event to add tools and activate Crosshairs
   try {
@@ -265,10 +265,10 @@ export const modeInstance = {
   };
 
 // Combine basic toolbar buttons with navigation-specific buttons
-const navigationToolbarButtonsCombined = [
-  ...toolbarButtons,
-  ...navigationToolbarButtons,
-];
+// const navigationToolbarButtonsCombined = [
+//   ...toolbarButtons,
+//   ...navigationToolbarButtons,
+// ];
 
 const mode = {
   ...basicMode,
@@ -278,5 +278,5 @@ const mode = {
 };
 
 export default mode;
-export { initToolGroups, navigationToolbarButtonsCombined as toolbarButtons };
+// export { initToolGroups, navigationToolbarButtonsCombined as toolbarButtons };
 

@@ -228,6 +228,10 @@ function PanelTracking() {
   const [configDialogOpen, setConfigDialogOpen] = React.useState(false);
   const [currentTrackingConfig, setCurrentTrackingConfig] = React.useState<any>(null);
 
+  // Configuration selection state
+  const [availableConfigs, setAvailableConfigs] = React.useState<any[]>([]);
+  const [selectedConfigId, setSelectedConfigId] = React.useState<string | null>(null);
+
   // 📍 [PR-DEBUG] Time-based PR logging
   const lastPrDebugLogRef = React.useRef<number>(0);
   const prDebugInterval = 5000; // 5 seconds
@@ -397,14 +401,14 @@ function PanelTracking() {
 
       // Phase 4: Always use relative API paths (webpack proxy handles routing)
       const response = await fetch('/api/tracking/config');
-      
+
       // Check if response is OK before parsing JSON
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Server error response:', response.status, errorText);
         throw new Error(`Server returned ${response.status}: ${errorText.substring(0, 100)}`);
       }
-      
+
       // Parse JSON response
       const result = await response.json();
 
@@ -415,7 +419,7 @@ function PanelTracking() {
         if (result.config.tracking_mode?.current) {
           setSelectedMode(result.config.tracking_mode.current as 'simulation' | 'hardware');
         }
-        
+
         // Log the source of configuration (database or file)
         if (result.source) {
           console.log(`✅ Configuration loaded from: ${result.source}`);
@@ -435,6 +439,83 @@ function PanelTracking() {
       setLoading(false);
     }
   }, []);
+
+  // Fetch all available configurations
+  const fetchAvailableConfigs = React.useCallback(async () => {
+    try {
+      const response = await fetch('/api/tracking/configurations');
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Server error response:', response.status, errorText);
+        throw new Error(`Server returned ${response.status}: ${errorText.substring(0, 100)}`);
+      }
+
+      const result = await response.json();
+
+      if (result.success && result.configurations) {
+        setAvailableConfigs(result.configurations);
+        console.log(`✅ Loaded ${result.configurations.length} available configurations`);
+
+        // Auto-select the first configuration if none is selected and we have configs
+        if (result.configurations.length > 0 && !selectedConfigId && !currentTrackingConfig) {
+          setSelectedConfigId(result.configurations[0].config_id || result.configurations[0].name);
+          console.log(`🎯 Auto-selected first configuration: ${result.configurations[0].name}`);
+        }
+      } else {
+        console.warn('No configurations found or API returned unexpected format');
+        setAvailableConfigs([]);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      console.error('Error fetching available configurations:', errorMessage);
+      setAvailableConfigs([]);
+    }
+  }, [selectedConfigId, currentTrackingConfig]);
+
+  // Load a specific configuration by ID
+  const loadSpecificConfig = React.useCallback(async (configId: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const selectedConfig = availableConfigs.find(config => (config.config_id || config.name) === configId);
+      if (!selectedConfig) {
+        setError('Selected configuration not found');
+        return;
+      }
+
+      // Apply the configuration directly (similar to how the dialog applies configs)
+      setCurrentTrackingConfig(selectedConfig);
+      setSelectedMode(selectedConfig.settings?.tracking_mode || 'simulation');
+
+      // Sync to backend
+      try {
+        const syncResponse = await fetch('/api/tracking/config/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ configuration: selectedConfig })
+        });
+
+        const syncResult = await syncResponse.json();
+        if (syncResult.success) {
+          console.log('✅ Configuration synced to backend');
+        } else {
+          console.warn('⚠️ Failed to sync configuration to backend:', syncResult.error);
+        }
+      } catch (syncError) {
+        console.warn('⚠️ Error syncing configuration:', syncError);
+      }
+
+      console.log(`✅ Configuration "${selectedConfig.name}" loaded and applied`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to load configuration: ${errorMessage}`);
+      console.error('Error loading specific configuration:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [availableConfigs]);
 
   // Switch tracking mode
   const switchMode = React.useCallback(async (mode: string) => {
@@ -608,31 +689,43 @@ function PanelTracking() {
     setConfigDialogOpen(false);
 
     // Sync tracking mode from saved configuration
-    if (savedConfig.tracking_mode) {
-      setSelectedMode(savedConfig.tracking_mode as 'simulation' | 'hardware');
-      console.log(`  - Tracking mode set to: ${savedConfig.tracking_mode}`);
+    if (savedConfig.settings?.tracking_mode) {
+      setSelectedMode(savedConfig.settings.tracking_mode as 'simulation' | 'hardware');
+      console.log(`  - Tracking mode set to: ${savedConfig.settings.tracking_mode}`);
     }
+
+    // Update selected config ID
+    setSelectedConfigId(savedConfig.config_id || savedConfig.name);
+
+    // Refresh available configurations list
+    await fetchAvailableConfigs();
 
     // Reload the tracking configuration to apply changes
     await loadConfig();
 
     // Show success message
     setError(null);
-  }, [loadConfig]);
+  }, [loadConfig, fetchAvailableConfigs]);
 
   const handleConfigApplied = React.useCallback(async (appliedConfig: any) => {
     console.log('✅ Configuration applied:', appliedConfig);
     setCurrentTrackingConfig(appliedConfig);
 
     // Sync tracking mode from applied configuration
-    if (appliedConfig.tracking_mode) {
-      setSelectedMode(appliedConfig.tracking_mode as 'simulation' | 'hardware');
-      console.log(`  - Tracking mode set to: ${appliedConfig.tracking_mode}`);
+    if (appliedConfig.settings?.tracking_mode) {
+      setSelectedMode(appliedConfig.settings.tracking_mode as 'simulation' | 'hardware');
+      console.log(`  - Tracking mode set to: ${appliedConfig.settings.tracking_mode}`);
     }
+
+    // Update selected config ID
+    setSelectedConfigId(appliedConfig.config_id || appliedConfig.name);
+
+    // Refresh available configurations list
+    await fetchAvailableConfigs();
 
     // Reload the tracking configuration
     await loadConfig();
-  }, [loadConfig]);
+  }, [loadConfig, fetchAvailableConfigs]);
 
   // Subscribe to TrackingService events
   React.useEffect(() => {
@@ -837,20 +930,28 @@ function PanelTracking() {
     });
   }, [trackingFrame, servicesManager]);
 
-  // Load config on mount
+  // Load available configurations on mount
   React.useEffect(() => {
-    loadConfig();
-  }, [loadConfig]);
+    fetchAvailableConfigs();
+  }, [fetchAvailableConfigs]);
 
-  const primaryButtonLabel = !currentTrackingConfig
+  const primaryButtonLabel = !selectedConfigId
     ? 'Select Configuration'
-    : isNavigating
-      ? 'Stop Navigation'
-      : 'Start Navigation';
+    : !currentTrackingConfig
+      ? 'Load Configuration'
+      : isNavigating
+        ? 'Stop Navigation'
+        : 'Start Navigation';
 
   const primaryButtonAction = () => {
-    if (!currentTrackingConfig) {
+    if (!selectedConfigId) {
       handleOpenConfigDialog();
+      return;
+    }
+    if (!currentTrackingConfig) {
+      if (selectedConfigId) {
+        loadSpecificConfig(selectedConfigId);
+      }
       return;
     }
     if (isNavigating) {
@@ -861,7 +962,9 @@ function PanelTracking() {
   };
 
   const primaryButtonDisabled =
-    (!!currentTrackingConfig && !isNavigating && (!trackingService || !commandsManager));
+    (!selectedConfigId) ||
+    (!!currentTrackingConfig && !isNavigating && (!trackingService || !commandsManager)) ||
+    (selectedConfigId && !currentTrackingConfig && loading);
 
   const primaryButtonClass = !currentTrackingConfig
     ? 'bg-blue-600 hover:bg-blue-700'
@@ -887,15 +990,15 @@ function PanelTracking() {
         )}
 
         {/* Simplified Workflow Info */}
-        {!currentTrackingConfig && !loading && (
+        {availableConfigs.length === 0 && !loading && (
           <div className="mb-4 p-3 bg-blue-900 border border-blue-700 rounded">
             <div className="flex items-start gap-2">
               <span className="text-lg">💡</span>
               <div className="flex-1">
                 <div className="text-blue-200 text-sm font-medium mb-1">Simplified Workflow</div>
                 <div className="text-xs text-blue-300">
-                  Select a pre-configured tracking setup using the "Select Configuration" button below. 
-                  The tracking mode (simulation/hardware) and all tool settings are included in each configuration.
+                  No configurations available. Click "Select Configuration" to create and save your first tracking setup.
+                  Each configuration includes tracking mode (simulation/hardware) and all tool settings.
                 </div>
               </div>
             </div>
@@ -1257,6 +1360,41 @@ function PanelTracking() {
 
         {/* Actions */}
         <div className="space-y-3">
+          {/* Configuration Selection */}
+          {availableConfigs.length > 0 ? (
+            <div>
+              <label className="block text-sm font-medium text-white mb-2">Select Configuration</label>
+              <select
+                value={selectedConfigId || ''}
+                onChange={(e) => {
+                  const configId = e.target.value;
+                  setSelectedConfigId(configId);
+                  if (configId) {
+                    loadSpecificConfig(configId);
+                  }
+                }}
+                className="w-full p-3 bg-gray-800 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500"
+                disabled={loading}
+              >
+                <option value="">Select a configuration...</option>
+                {availableConfigs.map((config) => (
+                  <option key={config.config_id || config.name} value={config.config_id || config.name}>
+                    {config.name} {config.settings?.tracking_mode === 'simulation' ? '(SIM)' : '(HW)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="p-3 bg-yellow-900 border border-yellow-700 rounded">
+              <div className="text-yellow-200 text-sm">
+                ⚠️ No configurations available
+              </div>
+              <div className="text-xs text-yellow-300 mt-1">
+                Please create and save configurations using the "Select Configuration" button below
+              </div>
+            </div>
+          )}
+
           {/* Current Configuration Display */}
           {currentTrackingConfig ? (
             <button
@@ -1266,31 +1404,31 @@ function PanelTracking() {
             >
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  <div className="text-xs text-gray-400">Active Configuration (click to change)</div>
+                  <div className="text-xs text-gray-400">Active Configuration (click to manage)</div>
                   <div className="text-white font-medium">{currentTrackingConfig.name}</div>
                   {currentTrackingConfig.description && (
                     <div className="text-xs text-gray-500 mt-1">{currentTrackingConfig.description}</div>
                   )}
                 </div>
                 <div className={`text-xs px-2 py-1 rounded ${
-                  currentTrackingConfig.tracking_mode === 'simulation'
+                  currentTrackingConfig.settings?.tracking_mode === 'simulation'
                     ? 'bg-blue-900 text-blue-300'
                     : 'bg-green-900 text-green-300'
                 }`}>
-                  {currentTrackingConfig.tracking_mode === 'simulation' ? '🖥️ SIM' : '🔧 HW'}
+                  {currentTrackingConfig.settings?.tracking_mode === 'simulation' ? '🖥️ SIM' : '🔧 HW'}
                 </div>
               </div>
             </button>
-          ) : (
-            <div className="p-3 bg-yellow-900 border border-yellow-700 rounded">
-              <div className="text-yellow-200 text-sm">
-                ⚠️ No configuration loaded
+          ) : selectedConfigId ? (
+            <div className="p-3 bg-orange-900 border border-orange-700 rounded">
+              <div className="text-orange-200 text-sm">
+                ⚠️ Configuration selected but not loaded
               </div>
-              <div className="text-xs text-yellow-300 mt-1">
-                Please load a configuration to start navigation
+              <div className="text-xs text-orange-300 mt-1">
+                Click "Load Configuration" to apply the selected configuration
               </div>
             </div>
-          )}
+          ) : null}
 
           <button
             onClick={primaryButtonAction}
@@ -1298,12 +1436,12 @@ function PanelTracking() {
             className={`w-full p-3 ${primaryButtonClass} disabled:bg-gray-700 disabled:opacity-50 text-white rounded font-medium transition-colors flex items-center justify-center gap-2`}
           >
             <span className="text-lg">
-              {!currentTrackingConfig ? '⚙️' : isNavigating ? '⏹️' : '▶️'}
+              {!selectedConfigId ? '⚙️' : !currentTrackingConfig ? '📥' : isNavigating ? '⏹️' : '▶️'}
             </span>
             <span>{primaryButtonLabel}</span>
             {currentTrackingConfig && !isNavigating && (
               <span className="text-xs opacity-75">
-                ({currentTrackingConfig.tracking_mode === 'simulation' ? 'SIM' : 'HW'})
+                ({currentTrackingConfig.settings?.tracking_mode === 'simulation' ? 'SIM' : 'HW'})
               </span>
             )}
           </button>
