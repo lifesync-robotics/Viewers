@@ -1159,23 +1159,15 @@ function PanelTracking() {
                   <label className="text-sm text-gray-300 font-medium">Marker to Tooltip Matrix (Calibration)</label>
                   <button
                     onClick={() => {
-                      const dr06cal = [
-                        [-1, 0, 0, -17.08],
-                        [0, 1, 0, 0.10],
-                        [0, 0, -1, -157.82],
-                        [0, 0, 0, 1]
-                      ];
-                      setMarkerToTooltipMatrix(dr06cal);
-                      setMarkerToTooltipMatrixInput(dr06cal.map(row => row.map(val => val.toString())));
+                      const identity = identityMatrix.map(row => [...row]);
+                      setMarkerToTooltipMatrix(identity);
+                      setMarkerToTooltipMatrixInput(identity.map(row => row.map(val => val.toString())));
                       setMatricesApplied(false);
                     }}
                     className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
                   >
-                    Reset to DR-VR06-A32
+                    Reset to Identity
                   </button>
-                </div>
-                <div className="text-xs text-gray-500 mb-2">
-                  📏 DR-VR06-A32: Tooltip is ~157.8mm from marker array
                 </div>
                 <div className="grid grid-cols-4 gap-1">
                   {markerToTooltipMatrixInput.map((row, i) =>

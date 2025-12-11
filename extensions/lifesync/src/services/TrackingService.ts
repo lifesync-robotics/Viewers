@@ -580,7 +580,7 @@ class TrackingService extends PubSubService {
             // Auto-select first tool if no selection
             if (!this.selectedToolId) {
               this.selectedToolId = toolId;
-              console.log(`🎯 Auto-selected tool for visualization: ${toolId}`);
+              // console.log(`🎯 Auto-selected tool for visualization: ${toolId}`);
             }
             break;
           }
@@ -844,7 +844,7 @@ class TrackingService extends PubSubService {
    */
   public setSelectedTool(toolId: string | null): void {
     this.selectedToolId = toolId;
-    console.log(`🎯 Selected tool for visualization: ${toolId || 'none'}`);
+    // console.log(`🎯 Selected tool for visualization: ${toolId || 'none'}`);
   }
 
   /**
