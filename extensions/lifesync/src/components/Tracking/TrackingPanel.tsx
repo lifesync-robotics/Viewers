@@ -167,9 +167,11 @@ function PanelTracking() {
   // Selected tracking mode for navigation (simulation or hardware)
   const [selectedMode, setSelectedMode] = React.useState<'simulation' | 'hardware'>('simulation');
 
-  // Navigation mode is fixed to instrument projection for instrument tracking
-  const navigationMode: 'instrument-projection' = 'instrument-projection';
-  const enableOrientation: boolean = true;
+  // Navigation mode selection (camera-follow or instrument-projection)
+  const [navigationMode, setNavigationMode] = React.useState<'camera-follow' | 'instrument-projection'>('instrument-projection');
+  
+  // Enable orientation tracking: always true for camera-follow, false for instrument-projection
+  const enableOrientation: boolean = navigationMode === 'camera-follow';
 
   // Selected tool for visualization
   const [selectedToolId, setSelectedToolId] = React.useState<string | null>(null);
@@ -652,7 +654,7 @@ function PanelTracking() {
       console.error('❌ Failed to start navigation:', error);
       setError(`Failed to start navigation: ${error.message}`);
     }
-  }, [commandsManager, trackingService, currentTrackingConfig, selectedMode, navigationMode, enableOrientation]);
+  }, [commandsManager, trackingService, currentTrackingConfig, selectedMode, navigationMode]);
 
   const handleStopNavigation = React.useCallback(() => {
     try {
@@ -1137,6 +1139,7 @@ function PanelTracking() {
       coordinateSystem={coordinateSystem}
       isRealTimeDistanceEnabled={isRealTimeDistanceEnabled}
       alerts={alerts}
+      navigationMode={navigationMode}
 
       // Handlers
       handleStartNavigation={handleStartNavigation}
@@ -1156,6 +1159,7 @@ function PanelTracking() {
       setSelectedToolId={setSelectedToolId}
       setSelectedConfigId={setSelectedConfigId}
       setAlerts={setAlerts}
+      setNavigationMode={setNavigationMode}
       trackingService={trackingService}
       onToggleRealTimeDistance={setIsRealTimeDistanceEnabled}
     />

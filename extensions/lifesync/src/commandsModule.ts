@@ -16,7 +16,7 @@ const commandsModule = ({ servicesManager, commandsManager }) => {
      * @param enableOrientation - Enable 6-DOF orientation tracking (default: false)
      * @param navigationMode - Navigation visualization mode ('camera-follow' or 'instrument-projection')
      */
-    startNavigation: ({ mode = 'circular', trackingMode, enableOrientation = false, navigationMode = 'camera-follow' }) => {
+    startNavigation: ({ mode = 'circular', trackingMode, enableOrientation = false, navigationMode = 'instrument-projection' }) => {
       console.log('🧭 [startNavigation] Starting navigation mode:', mode);
       console.log('🎯 [startNavigation] Tracking mode:', trackingMode || 'from config');
       console.log('🔄 [startNavigation] Orientation tracking:', enableOrientation ? 'ENABLED ✅' : 'DISABLED ❌');

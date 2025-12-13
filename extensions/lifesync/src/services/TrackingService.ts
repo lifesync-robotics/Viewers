@@ -107,6 +107,9 @@ class TrackingService extends PubSubService {
     length: number | null;
   } = { key: null, position: null, transform: null, length: null };
 
+  // Diagnostic state: Track which matrices have been logged as identity (prevent spam)
+  private loggedIdentityMatrices: Set<string> = new Set();
+
   constructor(servicesManager, config: any = {}) {
     super(EVENTS);
     this.servicesManager = servicesManager;
@@ -445,6 +448,9 @@ class TrackingService extends PubSubService {
     // Reset message throttling
     this.lastMessageTime = 0;
 
+    // Reset diagnostic logging state
+    this.loggedIdentityMatrices.clear();
+
     // Reset connection metadata
     this.connectionId = null;
     this.lastConnectionMode = null;
@@ -467,6 +473,9 @@ class TrackingService extends PubSubService {
 
     // Clear all data buffers
     this._clearBuffers();
+
+    // Reset diagnostic logging state
+    this.loggedIdentityMatrices.clear();
 
     // Clear wsUrl to prevent any reconnection attempts
     this.wsUrl = null;
@@ -621,23 +630,47 @@ class TrackingService extends PubSubService {
         // DEBUG: Log matrix data for first few frames to check if real NDI data
         if (this.statsData.framesReceived < 5) {
           console.log('🎯 RAW NDI DATA - Frame', this.statsData.framesReceived + 1);
+          console.log('   Available tool IDs:', Object.keys(tools));
           Object.entries(tools).forEach(([toolId, toolData]: [string, any]) => {
+            const isPR = (toolData as any).is_patient_reference;
             const coords = toolData.coordinates?.register;
             if (coords) {
-              console.log(`  ${toolId}: pos=[${coords.position_mm?.join(', ')}], visible=${toolData.visible}`);
-              if (coords.matrix && coords.matrix.length >= 16) {
-                // Show transformation matrix
-                const matrix = coords.matrix;
-                console.log(`    Matrix: [${matrix[12]?.toFixed(1)}, ${matrix[13]?.toFixed(1)}, ${matrix[14]?.toFixed(1)}]`);
+              console.log(`  [${toolId}] ${isPR ? '(Patient Reference)' : '(Tracked Tool)'}`);
+              console.log(`    tool_name: ${toolData.tool_name}`);
+              console.log(`    position: [${coords.position_mm?.join(', ')}]`);
+              console.log(`    visible: ${toolData.visible}`);
+              console.log(`    available coordinate keys:`, Object.keys(coords));
+              
+              // Try to find matrix with different possible keys
+              const matrixKeys = Object.keys(coords).filter(k => k.startsWith('rM') || k === 'matrix');
+              if (matrixKeys.length > 0) {
+                console.log(`    ✅ Found matrix keys: ${matrixKeys.join(', ')}`);
+                matrixKeys.forEach(key => {
+                  const mat = coords[key];
+                  if (mat && Array.isArray(mat)) {
+                    if (mat.length >= 16) {
+                      console.log(`      ${key}: [${mat[12]?.toFixed(1)}, ${mat[13]?.toFixed(1)}, ${mat[14]?.toFixed(1)}] (flat array)`);
+                    } else if (mat.length === 4 && Array.isArray(mat[0])) {
+                      console.log(`      ${key}: [${mat[0][3]?.toFixed(1)}, ${mat[1][3]?.toFixed(1)}, ${mat[2][3]?.toFixed(1)}] (2D array)`);
+                    }
+                  }
+                });
+              } else {
+                console.log(`    ❌ No matrix keys found (expected: rM${toolId})`);
               }
             }
           });
         }
 
-        // Fallback: Look for specific tool names for backward compatibility
+        // REMOVED PROBLEMATIC FALLBACK: Don't fall back to 'EE' or 'crosshair'
+        // If no primary tool found, log error instead of using non-existent fallback
         if (!primaryTool) {
-          primaryTool = tools.EE || tools.crosshair;
-          primaryToolId = tools.EE ? 'EE' : 'crosshair';
+          if (this.statsData.framesReceived < 5) {
+            console.error('❌ No primary tool found after scanning all tools');
+            console.error('   This should not happen if data is correctly formatted');
+            console.error('   Available tools:', Object.keys(tools));
+            console.error('   Selected tool ID:', this.selectedToolId);
+          }
         }
 
         if (primaryTool) {
@@ -652,11 +685,26 @@ class TrackingService extends PubSubService {
 
           // Construct matrix key dynamically (rM + toolId for register, matrix for tracker)
           let matrix;
+          let matrixKey = '';
+          
           if (this.coordinateSystem === 'tracker') {
+            matrixKey = 'matrix';
             matrix = coords?.matrix;
           } else {
-            const matrixKey = `rM${primaryToolId}`;
-            matrix = coords?.[matrixKey] || coords?.rMEE || coords?.rMcrosshair;
+            matrixKey = `rM${primaryToolId}`;
+            matrix = coords?.[matrixKey];
+            
+            // If matrix not found, try to find ANY matrix key in coords
+            if (!matrix && coords) {
+              const availableMatrixKeys = Object.keys(coords).filter(k => k.startsWith('rM'));
+              if (availableMatrixKeys.length > 0) {
+                matrixKey = availableMatrixKeys[0];
+                matrix = coords[matrixKey];
+                if (this.statsData.framesReceived < 3) {
+                  console.warn(`⚠️ Expected matrix key '${`rM${primaryToolId}`}' not found, using '${matrixKey}' instead`);
+                }
+              }
+            }
           }
 
           // Use data wrapper if present (new format) or direct message (old format)
@@ -668,12 +716,19 @@ class TrackingService extends PubSubService {
               toolName: primaryTool.tool_name,
               coordinateSystem: this.coordinateSystem,
               coordSysKey: coordSysKey,
+              matrixKey: matrixKey,
               hasPosition: !!position,
               position: position,
               hasMatrix: !!matrix,
               matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null',
               matrixSample: matrix ? (Array.isArray(matrix) && matrix.length > 0 ? `First element: ${Array.isArray(matrix[0]) ? `Array[${matrix[0].length}]` : matrix[0]}` : 'Not array') : 'null'
             });
+
+            if (!matrix && coords) {
+              console.error(`❌ Matrix not found for key '${matrixKey}'`);
+              console.error(`   Available keys in coords:`, Object.keys(coords));
+              console.error(`   This means matrix extraction failed - camera following mode will not work!`);
+            }
 
             if (matrix) {
               console.log('🔍 [TrackingService] Matrix details:', {
@@ -818,14 +873,23 @@ class TrackingService extends PubSubService {
                                  toolData.coordinates?.patient_reference?.[matrixKey];
 
         if (markerToPrMatrix) {
+          // DIAGNOSTIC: Check input matrix from tracking data
+          this._checkMatrixIdentity(markerToPrMatrix, `Tool ${toolId} Input Matrix (markerToPrMatrix)`);
+
           // Step 1: Calculate tooltip matrix in PR space
           // tooltipMatrix = markerToPrMatrix × markerToTooltipMatrix
           // This applies the calibration transform to the marker position
           const tooltipMatrix = this._multiplyMatrix4x4(markerToPrMatrix, this.markerToTooltipMatrix);
 
+          // DIAGNOSTIC: Check tooltip matrix result
+          this._checkMatrixIdentity(tooltipMatrix, `Tool ${toolId} Tooltip Matrix (tooltipMatrix)`);
+
           // Step 2: Calculate DICOM matrix (for 3D model rendering)
           // dicomMatrix = prToDicomMatrix × tooltipMatrix
           const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
+
+          // DIAGNOSTIC: Check final DICOM matrix result
+          this._checkMatrixIdentity(dicomMatrix, `Tool ${toolId} DICOM Matrix (dicomMatrix)`);
 
           // Add matrices to tool data
           if (!toolsWithTooltipMatrices[toolId].coordinates) {
@@ -840,7 +904,7 @@ class TrackingService extends PubSubService {
 
           // Store tooltip matrix (PR-relative space) as tM{toolId}
           toolsWithTooltipMatrices[toolId].coordinates.patient_reference[`tM${toolId}`] = tooltipMatrix;
-          
+
           // Store DICOM matrix (DICOM image space) as dM{toolId}
           // This is what should be used for 3D model transformations
           toolsWithTooltipMatrices[toolId].coordinates.dicom[`dM${toolId}`] = dicomMatrix;
@@ -959,6 +1023,147 @@ class TrackingService extends PubSubService {
       .catch(error => {
         console.error('Could not get server status:', error);
       });
+  }
+
+  /**
+   * DIAGNOSTIC: Check if a 4x4 matrix is identity or has zero translation
+   * Issues warning but continues with calculations
+   *
+   * @param matrix - 4x4 matrix to check
+   * @param matrixName - Descriptive name for logging
+   * @returns Object with identity checks
+   */
+  private _checkMatrixIdentity(matrix: number[] | number[][], matrixName: string): {
+    isIdentityRotation: boolean;
+    isZeroTranslation: boolean;
+    translation: number[];
+    rotation: number[][];
+  } {
+    // Convert to 2D format for analysis
+    let mat2D: number[][];
+    let is3x3Matrix = false;
+
+    if (Array.isArray(matrix) && matrix.length === 4 && Array.isArray(matrix[0])) {
+      // 4x4 matrix
+      mat2D = matrix as number[][];
+    } else if (Array.isArray(matrix) && matrix.length === 3 && Array.isArray(matrix[0]) && matrix[0].length === 3) {
+      // 3x3 matrix (rotation only)
+      mat2D = matrix as number[][];
+      is3x3Matrix = true;
+    } else if (Array.isArray(matrix) && matrix.length >= 16 && typeof matrix[0] === 'number') {
+      // Flat 4x4 array
+      const flat = matrix as number[];
+      mat2D = [
+        [flat[0], flat[1], flat[2], flat[3]],
+        [flat[4], flat[5], flat[6], flat[7]],
+        [flat[8], flat[9], flat[10], flat[11]],
+        [flat[12], flat[13], flat[14], flat[15]]
+      ];
+    } else {
+      console.warn(`⚠️ [${matrixName}] Invalid matrix format for identity check`);
+      return {
+        isIdentityRotation: false,
+        isZeroTranslation: false,
+        translation: [0, 0, 0],
+        rotation: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+      };
+    }
+
+    // Extract components based on matrix type
+    let translation: number[];
+    let rotation: number[][];
+
+    if (is3x3Matrix) {
+      // 3x3 matrix: pure rotation, no translation
+      translation = [0, 0, 0]; // No translation component
+      rotation = mat2D as number[][]; // The matrix itself is the rotation
+    } else {
+      // 4x4 matrix: extract rotation and translation
+      translation = [mat2D[0][3], mat2D[1][3], mat2D[2][3]];
+      rotation = [
+        [mat2D[0][0], mat2D[0][1], mat2D[0][2]],
+        [mat2D[1][0], mat2D[1][1], mat2D[1][2]],
+        [mat2D[2][0], mat2D[2][1], mat2D[2][2]]
+      ];
+    }
+
+    // Check for identity rotation (within tolerance)
+    const tol = 0.001;
+    const isIdentityRotation =
+      Math.abs(rotation[0][0] - 1) < tol && Math.abs(rotation[0][1]) < tol && Math.abs(rotation[0][2]) < tol &&
+      Math.abs(rotation[1][0]) < tol && Math.abs(rotation[1][1] - 1) < tol && Math.abs(rotation[1][2]) < tol &&
+      Math.abs(rotation[2][0]) < tol && Math.abs(rotation[2][1]) < tol && Math.abs(rotation[2][2] - 1) < tol;
+
+    // Check for zero translation (within tolerance)
+    const isZeroTranslation =
+      Math.abs(translation[0]) < tol && Math.abs(translation[1]) < tol && Math.abs(translation[2]) < tol;
+
+    // Create unique key for this matrix type
+    const matrixKey = matrixName;
+
+    // Only log warnings once per matrix type
+    if (is3x3Matrix) {
+      // For 3x3 matrices, only check rotation (no translation component)
+      if (isIdentityRotation) {
+        if (!this.loggedIdentityMatrices.has(`${matrixKey}_identity_rotation`)) {
+          console.warn(`⚠️ [${matrixName}] IDENTITY ROTATION MATRIX`);
+          console.warn(`   3x3 rotation matrix is identity (no orientation transform)`);
+          console.warn(`   Rotation: [${rotation[0].map(v => v.toFixed(4)).join(', ')}]`);
+          console.warn(`   ℹ️ Continuing with calculations... (this warning shown once)`);
+          this.loggedIdentityMatrices.add(`${matrixKey}_identity_rotation`);
+        }
+      } else {
+        // Non-identity 3x3 matrix
+        if (!this.loggedIdentityMatrices.has(`${matrixKey}_valid`)) {
+          console.log(`✅ [${matrixName}] Non-identity 3x3 rotation matrix detected`);
+          console.log(`   Rotation: [${rotation[0].map(v => v.toFixed(4)).join(', ')}]`);
+          this.loggedIdentityMatrices.add(`${matrixKey}_valid`);
+        }
+      }
+    } else {
+      // For 4x4 matrices, check both rotation and translation
+      if (isIdentityRotation && isZeroTranslation) {
+        if (!this.loggedIdentityMatrices.has(`${matrixKey}_full_identity`)) {
+          console.warn(`⚠️⚠️⚠️ [${matrixName}] FULL IDENTITY MATRIX ⚠️⚠️⚠️`);
+          console.warn(`   Matrix is complete identity (rotation + translation)`);
+          console.warn(`   Translation: [${translation.map(v => v.toFixed(4)).join(', ')}]`);
+          console.warn(`   Rotation: [${rotation[0].map(v => v.toFixed(4)).join(', ')}]`);
+          console.warn(`   ℹ️ Continuing with calculations... (this warning shown once)`);
+          this.loggedIdentityMatrices.add(`${matrixKey}_full_identity`);
+        }
+      } else if (isIdentityRotation) {
+        if (!this.loggedIdentityMatrices.has(`${matrixKey}_identity_rotation`)) {
+          console.warn(`⚠️ [${matrixName}] IDENTITY ROTATION`);
+          console.warn(`   Rotation matrix is identity (no orientation transform)`);
+          console.warn(`   Translation: [${translation.map(v => v.toFixed(2)).join(', ')}]`);
+          console.warn(`   ℹ️ Continuing with calculations... (this warning shown once)`);
+          this.loggedIdentityMatrices.add(`${matrixKey}_identity_rotation`);
+        }
+      } else if (isZeroTranslation) {
+        if (!this.loggedIdentityMatrices.has(`${matrixKey}_zero_translation`)) {
+          console.warn(`⚠️ [${matrixName}] ZERO TRANSLATION`);
+          console.warn(`   Translation vector is zero (no position transform)`);
+          console.warn(`   Rotation: [${rotation[0].map(v => v.toFixed(4)).join(', ')}]`);
+          console.warn(`   ℹ️ Continuing with calculations... (this warning shown once)`);
+          this.loggedIdentityMatrices.add(`${matrixKey}_zero_translation`);
+        }
+      } else {
+        // Non-identity matrices: only log once when first detected as valid
+        if (!this.loggedIdentityMatrices.has(`${matrixKey}_valid`)) {
+          console.log(`✅ [${matrixName}] Non-identity matrix detected`);
+          console.log(`   Translation: [${translation.map(v => v.toFixed(2)).join(', ')}]`);
+          this.loggedIdentityMatrices.add(`${matrixKey}_valid`);
+        }
+        // After first valid detection, don't log anymore for this matrix type
+      }
+    }
+
+    return {
+      isIdentityRotation,
+      isZeroTranslation,
+      translation,
+      rotation
+    };
   }
 
   /**
@@ -1112,14 +1317,25 @@ class TrackingService extends PubSubService {
       markerMatrix4x4 = markerToPrMatrix as number[][];
     }
 
+    // DIAGNOSTIC: Check input matrices for identity
+    this._checkMatrixIdentity(markerMatrix4x4, "Input Matrix (markerToPrMatrix)");
+    this._checkMatrixIdentity(this.markerToTooltipMatrix, "Calibration Matrix (markerToTooltipMatrix)");
+    this._checkMatrixIdentity(this.prToDicomMatrix, "Registration Matrix (prToDicomMatrix)");
+
     // Step 1: Transform from marker array to stylus tooltip
     // tooltipMatrix = markerToPrMatrix × markerToTooltipMatrix
     // This applies the calibration transform to the marker position
     const tooltipMatrix = this._multiplyMatrix4x4(markerMatrix4x4, this.markerToTooltipMatrix);
 
+    // DIAGNOSTIC: Check intermediate result
+    this._checkMatrixIdentity(tooltipMatrix, "Intermediate Matrix (tooltipMatrix)");
+
     // Step 2: Transform from PR-relative tooltip to DICOM space
     // dicomMatrix = prToDicomMatrix × tooltipMatrix
     const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
+
+    // DIAGNOSTIC: Check final result
+    this._checkMatrixIdentity(dicomMatrix, "Final DICOM Matrix (output result)");
 
     // Store debug info (deep copy to avoid reference issues)
     this.lastDebugInfo = {
@@ -1163,6 +1379,10 @@ class TrackingService extends PubSubService {
    */
   public setPrToDicomMatrix(matrix: number[][]): void {
     this.prToDicomMatrix = matrix;
+
+    // DIAGNOSTIC: Check the matrix being set
+    this._checkMatrixIdentity(matrix, "PR to DICOM Matrix (being set)");
+
     console.log('🔄 PR to DICOM matrix updated');
   }
 
@@ -1181,6 +1401,10 @@ class TrackingService extends PubSubService {
    */
   public setMarkerToTooltipMatrix(matrix: number[][]): void {
     this.markerToTooltipMatrix = matrix;
+
+    // DIAGNOSTIC: Check the matrix being set
+    this._checkMatrixIdentity(matrix, "Marker-to-Tooltip Matrix (being set)");
+
     console.log('🔄 Marker-to-Tooltip calibration matrix updated');
   }
 
@@ -1215,6 +1439,9 @@ class TrackingService extends PubSubService {
 
       this.setMarkerToTooltipMatrix(matrix);
       console.log('✅ Calibration matrix loaded from .cal file:', matrix);
+
+      // DIAGNOSTIC: Check loaded matrix (this will be done by setMarkerToTooltipMatrix, but let's be explicit)
+      this._checkMatrixIdentity(matrix, "Calibration Matrix (loaded from .cal file)");
     } catch (error) {
       console.error('❌ Failed to load calibration from .cal file:', error);
       throw error;

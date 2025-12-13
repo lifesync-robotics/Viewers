@@ -7,6 +7,13 @@
 
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { vec3 } from 'gl-matrix';
+import {
+  isValidCanvasPoint,
+  identifyViewportType,
+  getStandardPlaneNormal,
+  normalsMatch,
+  Logger
+} from './utils';
 
 export interface ToolRepresentation {
   origin: number[]; // [x, y, z] in world coordinates
@@ -21,7 +28,9 @@ export class ToolProjectionRenderer {
   private extensionLength: number = 50; // 50mm = 5cm default
   private instrumentLength: number = 200; // 200mm = 20cm default (instrument body length in -z direction)
   private debugCount: Map<string, number> = new Map(); // Per-viewport debug counter
-  private readonly LOG_PREFIX = '[ToolProj]';
+
+  // Logger for consistent logging
+  private logger = new Logger('[ToolProj]');
 
   constructor(servicesManager: any, extensionLength: number = 50, instrumentLength: number = 200) {
     this.servicesManager = servicesManager;
@@ -68,9 +77,9 @@ export class ToolProjectionRenderer {
       const shouldLog = currentCount >= 1 && currentCount <= 20;
 
       if (shouldLog) {
-        this._log(`\n${'='.repeat(80)}`);
-        this._log(`🎯 VIEWPORT PROJECTION UPDATE: ${viewport.id} (Frame ${currentCount + 1})`);
-        this._log(`${'='.repeat(80)}`);
+        this.logger.log(`\n${'='.repeat(80)}`);
+        this.logger.log(`🎯 VIEWPORT PROJECTION UPDATE: ${viewport.id} (Frame ${currentCount + 1})`);
+        this.logger.log(`${'='.repeat(80)}`);
       }
 
       // Render instrument body (solid line from base to origin)
@@ -127,74 +136,9 @@ export class ToolProjectionRenderer {
     ];
   }
 
-  /**
-   * Prefixed log helpers for easy filtering
-   */
-  private _log(...args: any[]): void {
-    console.log(this.LOG_PREFIX, ...args);
-  }
 
-  private _warn(...args: any[]): void {
-    console.warn(this.LOG_PREFIX, ...args);
-  }
 
-  private _error(...args: any[]): void {
-    console.error(this.LOG_PREFIX, ...args);
-  }
 
-  /**
-   * Identify viewport type by name (axial, coronal, sagittal)
-   * Returns the viewport type or null if unknown
-   */
-  private _identifyViewportType(viewport: any): 'axial' | 'coronal' | 'sagittal' | null {
-    const viewportId = viewport.id;
-    if (!viewportId) {
-      return null;  // ✅ Handle null/undefined gracefully
-    }
-    
-    const viewportIdLower = viewportId.toLowerCase();
-    
-    if (viewportIdLower.includes('axial')) {
-      return 'axial';
-    } else if (viewportIdLower.includes('coronal')) {
-      return 'coronal';
-    } else if (viewportIdLower.includes('sagittal')) {
-      return 'sagittal';
-    }
-    
-    return null;
-  }
-
-  /**
-   * Get the expected plane normal for a viewport type.
-   *
-   * We use axis-aligned unit vectors in patient space. Whether the
-   * underlying volume is LPS (DICOM default) or RAS, the plane orientation
-   * is defined by which axis is dominant, not the sign. Cross‑validation
-   * with the camera normal handles sign/direction; we just need the axis.
-   * - Axial: Z axis (superior–inferior)
-   * - Sagittal: X axis (left–right)
-   * - Coronal: Y axis (anterior–posterior)
-   */
-
-  private _getStandardPlaneNormal(viewportType: 'axial' | 'coronal' | 'sagittal'): vec3 {
-    const standardNormals = {
-      'axial': vec3.fromValues(0, 0, 1),      // Z-axis (superior-inferior)
-      'sagittal': vec3.fromValues(1, 0, 0),   // X-axis (left-right)
-      'coronal': vec3.fromValues(0, 1, 0)     // Y-axis (anterior-posterior)
-    };
-    
-    return standardNormals[viewportType];
-  }
-
-  /**
-   * Check if two normals are approximately equal (within tolerance)
-   */
-  private _normalsMatch(normal1: vec3, normal2: vec3, tolerance: number = 0.1): boolean {
-    const diff = vec3.subtract(vec3.create(), normal1, normal2);
-    const distance = vec3.length(diff);
-    return distance < tolerance;
-  }
 
 
 
@@ -215,15 +159,15 @@ export class ToolProjectionRenderer {
 
     try {
       // Step 1: Identify viewport type by name
-      const viewportType = this._identifyViewportType(viewport);
+      const viewportType = identifyViewportType(viewport);
       const viewportName = viewport.id || 'unknown';
 
       if (shouldLog) {
-        this._log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
-        this._log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
-        this._log(`📍 Tool Tip: [${tipPoint.map(v => v.toFixed(1)).join(', ')}]`);
-        this._log(`📍 Tool Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
-        this._log(`📏 Extension Length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
+        this.logger.log(`\n🎯 ====== PROJECTION RENDER [${viewportName}] (call #${currentCount + 1}) ======`);
+        this.logger.log(`📍 Tool Origin: [${origin.map(v => v.toFixed(1)).join(', ')}]`);
+        this.logger.log(`📍 Tool Tip: [${tipPoint.map(v => v.toFixed(1)).join(', ')}]`);
+        this.logger.log(`📍 Tool Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
+        this.logger.log(`📏 Extension Length: ${this.extensionLength}mm (${this.extensionLength / 10}cm)`);
       }
 
       // Step 2: Get viewport camera info (for slice plane)
@@ -250,7 +194,7 @@ export class ToolProjectionRenderer {
 
       if (!hasDirection) {
         if (shouldLog) {
-          this._warn('⚠️ Missing or invalid tool direction, skipping projection');
+          this.logger.warn('⚠️ Missing or invalid tool direction, skipping projection');
         }
         return;
       }
@@ -275,19 +219,19 @@ export class ToolProjectionRenderer {
       const minDistance = Math.min(Math.abs(signedOrigin), Math.abs(signedExtension));
 
       if (shouldLog) {
-        this._log(`\n🔧 Extension Geometry (With Intersection):`);
-        this._log(`   Direction (normalized): [${zAxisVec[0].toFixed(3)}, ${zAxisVec[1].toFixed(3)}, ${zAxisVec[2].toFixed(3)}]`);
-        this._log(`   Length: ${effectiveExtensionLength.toFixed(2)}mm`);
-        this._log(`   Extension end: [${extensionEnd[0].toFixed(1)}, ${extensionEnd[1].toFixed(1)}, ${extensionEnd[2].toFixed(1)}]`);
-        this._log(`   Signed origin dist: ${signedOrigin.toFixed(3)}mm`);
-        this._log(`   Signed extension dist: ${signedExtension.toFixed(3)}mm`);
-        this._log(`   n·dir: ${denom.toFixed(6)} (parallel thresh ${PARALLEL_THRESHOLD})`);
-        this._log(`   Drawing on viewport: ${viewport.id || 'unknown'}`);
+        this.logger.log(`\n🔧 Extension Geometry (With Intersection):`);
+        this.logger.log(`   Direction (normalized): [${zAxisVec[0].toFixed(3)}, ${zAxisVec[1].toFixed(3)}, ${zAxisVec[2].toFixed(3)}]`);
+        this.logger.log(`   Length: ${effectiveExtensionLength.toFixed(2)}mm`);
+        this.logger.log(`   Extension end: [${extensionEnd[0].toFixed(1)}, ${extensionEnd[1].toFixed(1)}, ${extensionEnd[2].toFixed(1)}]`);
+        this.logger.log(`   Signed origin dist: ${signedOrigin.toFixed(3)}mm`);
+        this.logger.log(`   Signed extension dist: ${signedExtension.toFixed(3)}mm`);
+        this.logger.log(`   n·dir: ${denom.toFixed(6)} (parallel thresh ${PARALLEL_THRESHOLD})`);
+        this.logger.log(`   Drawing on viewport: ${viewport.id || 'unknown'}`);
       }
 
       if (isParallelOrNearlyParallel) {
         if (shouldLog) {
-          this._log(`   ⚠️ Parallel/nearly-parallel to plane → dashed projection`);
+          this.logger.log(`   ⚠️ Parallel/nearly-parallel to plane → dashed projection`);
         }
         this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
         return;
@@ -295,7 +239,7 @@ export class ToolProjectionRenderer {
 
       if (!crossesPlane) {
         if (shouldLog) {
-          this._log(`   ℹ️ Same side of plane → dashed projection (distance ${minDistance.toFixed(2)}mm)`);
+          this.logger.log(`   ℹ️ Same side of plane → dashed projection (distance ${minDistance.toFixed(2)}mm)`);
         }
         this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
         return;
@@ -305,7 +249,7 @@ export class ToolProjectionRenderer {
       const denomT = signedOrigin - signedExtension;
       if (!Number.isFinite(denomT) || Math.abs(denomT) < 1e-6) {
         if (shouldLog) {
-          this._log(`   ⚠️ Degenerate intersection denominator; using projection`);
+          this.logger.log(`   ⚠️ Degenerate intersection denominator; using projection`);
         }
         this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
         return;
@@ -314,7 +258,7 @@ export class ToolProjectionRenderer {
       const t = signedOrigin / denomT; // expected within [0,1]
       if (!Number.isFinite(t) || t < 0 || t > 1) {
         if (shouldLog) {
-          this._log(`   ⚠️ Intersection t out of range (${t.toFixed(4)}); using projection`);
+          this.logger.log(`   ⚠️ Intersection t out of range (${t.toFixed(4)}); using projection`);
         }
         this._renderProjectedLine(viewport, originVec, extensionEnd, minDistance);
         return;
@@ -323,15 +267,15 @@ export class ToolProjectionRenderer {
       const intersectionPoint = vec3.lerp(vec3.create(), originVec, extensionEnd, t);
 
       if (shouldLog) {
-        this._log(`   ✅ Intersection on segment (t=${t.toFixed(4)})`);
-        this._log(`   Intersection: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
+        this.logger.log(`   ✅ Intersection on segment (t=${t.toFixed(4)})`);
+        this.logger.log(`   Intersection: [${intersectionPoint[0].toFixed(1)}, ${intersectionPoint[1].toFixed(1)}, ${intersectionPoint[2].toFixed(1)}]`);
       }
 
       // Solid line to intersection (distance 0 => green)
       this._renderIntersectionLine(viewport, originVec, intersectionPoint, 0.0);
 
     } catch (error) {
-      this._error(`❌ Error rendering projection on ${viewport.id}:`, error);
+      this.logger.error(`❌ Error rendering projection on ${viewport.id}:`, error);
       // Clear projection on error to avoid showing incorrect visualization
       this._clearViewportProjection(viewport.id);
     }
@@ -350,18 +294,18 @@ export class ToolProjectionRenderer {
       const shouldLog = currentCount >= 1 && currentCount <= 20;
 
       if (shouldLog) {
-        this._log(`\n🔧 ====== INSTRUMENT BODY RENDER [${viewport.id}] ======`);
-        this._log(`📍 Base (world):   [${base.map(v => v.toFixed(1)).join(', ')}]`);
-        this._log(`📍 Origin (world): [${origin.map(v => v.toFixed(1)).join(', ')}]`);
-        this._log(`📍 Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
-        
+        this.logger.log(`\n🔧 ====== INSTRUMENT BODY RENDER [${viewport.id}] ======`);
+        this.logger.log(`📍 Base (world):   [${base.map(v => v.toFixed(1)).join(', ')}]`);
+        this.logger.log(`📍 Origin (world): [${origin.map(v => v.toFixed(1)).join(', ')}]`);
+        this.logger.log(`📍 Z-Axis: [${zAxis.map(v => v.toFixed(3)).join(', ')}]`);
+
         // Calculate expected direction in 3D
         const dx3D = origin[0] - base[0];
         const dy3D = origin[1] - base[1];
         const dz3D = origin[2] - base[2];
         const len3D = Math.sqrt(dx3D*dx3D + dy3D*dy3D + dz3D*dz3D);
-        this._log(`📐 3D Direction (base→origin): [${(dx3D/len3D).toFixed(3)}, ${(dy3D/len3D).toFixed(3)}, ${(dz3D/len3D).toFixed(3)}]`);
-        this._log(`📏 3D Length: ${len3D.toFixed(2)}mm`);
+        this.logger.log(`📐 3D Direction (base→origin): [${(dx3D/len3D).toFixed(3)}, ${(dy3D/len3D).toFixed(3)}, ${(dz3D/len3D).toFixed(3)}]`);
+        this.logger.log(`📏 3D Length: ${len3D.toFixed(2)}mm`);
       }
 
       // Revert to direct worldToCanvas - viewUp correction was overcorrecting
@@ -369,31 +313,31 @@ export class ToolProjectionRenderer {
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
 
       if (shouldLog) {
-        this._log(`\n🔄 World → Canvas (Instrument Body):`);
-        this._log(`   Base:   [${base.map(v => v.toFixed(1)).join(', ')}] → [${baseCanvas[0].toFixed(1)}, ${baseCanvas[1].toFixed(1)}]`);
-        this._log(`   Origin: [${origin.map(v => v.toFixed(1)).join(', ')}] → [${originCanvas[0].toFixed(1)}, ${originCanvas[1].toFixed(1)}]`);
-        
+        this.logger.log(`\n🔄 World → Canvas (Instrument Body):`);
+        this.logger.log(`   Base:   [${base.map(v => v.toFixed(1)).join(', ')}] → [${baseCanvas[0].toFixed(1)}, ${baseCanvas[1].toFixed(1)}]`);
+        this.logger.log(`   Origin: [${origin.map(v => v.toFixed(1)).join(', ')}] → [${originCanvas[0].toFixed(1)}, ${originCanvas[1].toFixed(1)}]`);
+
         // Calculate canvas direction
         const dxCanvas = originCanvas[0] - baseCanvas[0];
         const dyCanvas = originCanvas[1] - baseCanvas[1];
         const lenCanvas = Math.sqrt(dxCanvas*dxCanvas + dyCanvas*dyCanvas);
         const angleCanvas = Math.atan2(dyCanvas, dxCanvas) * 180 / Math.PI;
-        
-        this._log(`\n📊 Canvas Projection (Instrument Body):`);
-        this._log(`   Canvas ΔX: ${dxCanvas.toFixed(1)} px`);
-        this._log(`   Canvas ΔY: ${dyCanvas.toFixed(1)} px`);
-        this._log(`   Canvas Direction: [${(dxCanvas/lenCanvas).toFixed(3)}, ${(dyCanvas/lenCanvas).toFixed(3)}]`);
-        this._log(`   Canvas Angle: ${angleCanvas.toFixed(1)}° (from +X axis)`);
-        this._log(`   Canvas Length: ${lenCanvas.toFixed(1)} px`);
+
+        this.logger.log(`\n📊 Canvas Projection (Instrument Body):`);
+        this.logger.log(`   Canvas ΔX: ${dxCanvas.toFixed(1)} px`);
+        this.logger.log(`   Canvas ΔY: ${dyCanvas.toFixed(1)} px`);
+        this.logger.log(`   Canvas Direction: [${(dxCanvas/lenCanvas).toFixed(3)}, ${(dyCanvas/lenCanvas).toFixed(3)}]`);
+        this.logger.log(`   Canvas Angle: ${angleCanvas.toFixed(1)}° (from +X axis)`);
+        this.logger.log(`   Canvas Length: ${lenCanvas.toFixed(1)} px`);
       }
 
-      if (!this._isValidCanvasPoint(baseCanvas) || !this._isValidCanvasPoint(originCanvas)) {
+      if (!isValidCanvasPoint(baseCanvas) || !isValidCanvasPoint(originCanvas)) {
         return; // Don't clear, just skip rendering
       }
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this.logger.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
@@ -401,10 +345,10 @@ export class ToolProjectionRenderer {
       this._drawInstrumentBodyLine(svgElement, viewport.id, baseCanvas, originCanvas);
       
       if (shouldLog) {
-        this._log(`✅ Instrument body rendered\n`);
+        this.logger.log(`✅ Instrument body rendered\n`);
       }
     } catch (error) {
-      this._error(`❌ Error rendering instrument body on ${viewport.id}:`, error);
+      this.logger.error(`❌ Error rendering instrument body on ${viewport.id}:`, error);
     }
   }
 
@@ -418,14 +362,14 @@ export class ToolProjectionRenderer {
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
       const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
 
-      if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(tipCanvas)) {
+      if (!isValidCanvasPoint(originCanvas) || !isValidCanvasPoint(tipCanvas)) {
         this._clearViewportProjection(viewport.id);
         return;
       }
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this.logger.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
@@ -440,7 +384,7 @@ export class ToolProjectionRenderer {
       this._drawProjectionLine(svgElement, viewport.id, originCanvas, tipCanvas, true, opacity, distanceToPlane);
       this._drawOriginCircle(svgElement, viewport.id, originCanvas, opacity);
     } catch (error) {
-      this._error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
+      this.logger.error(`❌ Error in _renderProjectedLine for ${viewport.id}:`, error);
     }
   }
 
@@ -454,14 +398,14 @@ export class ToolProjectionRenderer {
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
       const intersectionCanvas = viewport.worldToCanvas([intersection[0], intersection[1], intersection[2]]);
 
-      if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(intersectionCanvas)) {
+      if (!isValidCanvasPoint(originCanvas) || !isValidCanvasPoint(intersectionCanvas)) {
         this._clearViewportProjection(viewport.id);
         return;
       }
 
       const svgElement = this._getOrCreateSVGOverlay(viewport);
       if (!svgElement) {
-        this._warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
+        this.logger.warn(`⚠️ Could not get SVG overlay for ${viewport.id}`);
         return;
       }
 
@@ -471,29 +415,10 @@ export class ToolProjectionRenderer {
       this._drawOriginCircle(svgElement, viewport.id, originCanvas);
       this._drawIntersectionMarker(svgElement, viewport.id, intersectionCanvas);
     } catch (error) {
-      this._error(`❌ Error in _renderIntersectionLine for ${viewport.id}:`, error);
+      this.logger.error(`❌ Error in _renderIntersectionLine for ${viewport.id}:`, error);
     }
   }
 
-  /**
-   * Check if canvas point is valid and within viewport
-   */
-  private _isValidCanvasPoint(point: number[] | null): boolean {
-    if (!point || point.length < 2) {
-      return false;
-    }
-
-    const [x, y] = point;
-
-    // Check for NaN or Infinity
-    if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
-      return false;
-    }
-
-    // Points can be outside viewport bounds but still valid
-    // (we'll clip the line if needed)
-    return true;
-  }
 
   /**
    * Get or create SVG overlay element for viewport
@@ -857,7 +782,7 @@ export class ToolProjectionRenderer {
     ];
     const dirEndCanvas = viewport.worldToCanvas(dirEndWorld);
 
-    if (!this._isValidCanvasPoint(originCanvas) || !this._isValidCanvasPoint(dirEndCanvas)) {
+    if (!isValidCanvasPoint(originCanvas) || !isValidCanvasPoint(dirEndCanvas)) {
       return;
     }
 
@@ -922,10 +847,10 @@ export class ToolProjectionRenderer {
       const originCanvas = viewport.worldToCanvas([origin[0], origin[1], origin[2]]);
       const tipCanvas = viewport.worldToCanvas([tip[0], tip[1], tip[2]]);
 
-      if (!this._isValidCanvasPoint(baseCanvas) || 
-          !this._isValidCanvasPoint(originCanvas) || 
-          !this._isValidCanvasPoint(tipCanvas)) {
-        this._warn(`⚠️ Invalid canvas points in alignment check for ${viewport.id}`);
+      if (!isValidCanvasPoint(baseCanvas) || 
+          !isValidCanvasPoint(originCanvas) || 
+          !isValidCanvasPoint(tipCanvas)) {
+        this.logger.warn(`⚠️ Invalid canvas points in alignment check for ${viewport.id}`);
         return;
       }
 
@@ -952,61 +877,61 @@ export class ToolProjectionRenderer {
       // Calculate dot product (should be ~1.0 if aligned, ~-1.0 if opposite)
       const dotProduct = bodyDir[0] * extDir[0] + bodyDir[1] * extDir[1];
 
-      this._log(`\n${'='.repeat(80)}`);
-      this._log(`🔍 ALIGNMENT VERIFICATION [${viewport.id}]`);
-      this._log(`${'='.repeat(80)}`);
+      this.logger.log(`\n${'='.repeat(80)}`);
+      this.logger.log(`🔍 ALIGNMENT VERIFICATION [${viewport.id}]`);
+      this.logger.log(`${'='.repeat(80)}`);
       
-      this._log(`\n📍 Canvas Coordinates:`);
-      this._log(`   Base:   [${baseCanvas[0].toFixed(1)}, ${baseCanvas[1].toFixed(1)}]`);
-      this._log(`   Origin: [${originCanvas[0].toFixed(1)}, ${originCanvas[1].toFixed(1)}]`);
-      this._log(`   Tip:    [${tipCanvas[0].toFixed(1)}, ${tipCanvas[1].toFixed(1)}]`);
+      this.logger.log(`\n📍 Canvas Coordinates:`);
+      this.logger.log(`   Base:   [${baseCanvas[0].toFixed(1)}, ${baseCanvas[1].toFixed(1)}]`);
+      this.logger.log(`   Origin: [${originCanvas[0].toFixed(1)}, ${originCanvas[1].toFixed(1)}]`);
+      this.logger.log(`   Tip:    [${tipCanvas[0].toFixed(1)}, ${tipCanvas[1].toFixed(1)}]`);
 
-      this._log(`\n📐 Instrument Body (Base → Origin):`);
-      this._log(`   Direction: [${bodyDir[0].toFixed(3)}, ${bodyDir[1].toFixed(3)}]`);
-      this._log(`   Angle: ${bodyAngle.toFixed(2)}°`);
-      this._log(`   Length: ${bodyLength.toFixed(1)} px`);
+      this.logger.log(`\n📐 Instrument Body (Base → Origin):`);
+      this.logger.log(`   Direction: [${bodyDir[0].toFixed(3)}, ${bodyDir[1].toFixed(3)}]`);
+      this.logger.log(`   Angle: ${bodyAngle.toFixed(2)}°`);
+      this.logger.log(`   Length: ${bodyLength.toFixed(1)} px`);
 
-      this._log(`\n📐 Extension Line (Origin → Tip):`);
-      this._log(`   Direction: [${extDir[0].toFixed(3)}, ${extDir[1].toFixed(3)}]`);
-      this._log(`   Angle: ${extAngle.toFixed(2)}°`);
-      this._log(`   Length: ${extLength.toFixed(1)} px`);
+      this.logger.log(`\n📐 Extension Line (Origin → Tip):`);
+      this.logger.log(`   Direction: [${extDir[0].toFixed(3)}, ${extDir[1].toFixed(3)}]`);
+      this.logger.log(`   Angle: ${extAngle.toFixed(2)}°`);
+      this.logger.log(`   Length: ${extLength.toFixed(1)} px`);
 
-      this._log(`\n⚖️ ALIGNMENT METRICS:`);
-      this._log(`   Angle Difference: ${angleDiff.toFixed(2)}°`);
-      this._log(`   Dot Product: ${dotProduct.toFixed(4)} (1.0 = perfect alignment, -1.0 = opposite)`);
+      this.logger.log(`\n⚖️ ALIGNMENT METRICS:`);
+      this.logger.log(`   Angle Difference: ${angleDiff.toFixed(2)}°`);
+      this.logger.log(`   Dot Product: ${dotProduct.toFixed(4)} (1.0 = perfect alignment, -1.0 = opposite)`);
 
       // Check alignment
       const ANGLE_THRESHOLD = 5.0; // 5 degrees tolerance
       const DOT_THRESHOLD = 0.996; // cos(5°) ≈ 0.996
 
       if (Math.abs(angleDiff) > ANGLE_THRESHOLD || dotProduct < DOT_THRESHOLD) {
-        this._log(`\n❌ MISALIGNMENT DETECTED!`);
-        this._log(`   Expected: Both lines should point in the same direction (angle diff ≈ 0°)`);
-        this._log(`   Actual: ${Math.abs(angleDiff).toFixed(2)}° difference`);
-        this._log(`\n🔍 Possible causes:`);
-        this._log(`   1. worldToCanvas() applying different transformations to body vs extension`);
-        this._log(`   2. Viewport-specific coordinate system flip or rotation`);
-        this._log(`   3. Camera viewUp vector causing inconsistent projection`);
-        this._log(`   4. Plane intersection math modifying the extension points incorrectly`);
+        this.logger.log(`\n❌ MISALIGNMENT DETECTED!`);
+        this.logger.log(`   Expected: Both lines should point in the same direction (angle diff ≈ 0°)`);
+        this.logger.log(`   Actual: ${Math.abs(angleDiff).toFixed(2)}° difference`);
+        this.logger.log(`\n🔍 Possible causes:`);
+        this.logger.log(`   1. worldToCanvas() applying different transformations to body vs extension`);
+        this.logger.log(`   2. Viewport-specific coordinate system flip or rotation`);
+        this.logger.log(`   3. Camera viewUp vector causing inconsistent projection`);
+        this.logger.log(`   4. Plane intersection math modifying the extension points incorrectly`);
         
         // Log camera info for debugging
         const camera = viewport.getCamera();
-        this._log(`\n📷 Camera Info for ${viewport.id}:`);
-        this._log(`   viewPlaneNormal: [${camera.viewPlaneNormal.map((v: number) => v.toFixed(3)).join(', ')}]`);
-        this._log(`   viewUp: [${camera.viewUp.map((v: number) => v.toFixed(3)).join(', ')}]`);
+        this.logger.log(`\n📷 Camera Info for ${viewport.id}:`);
+        this.logger.log(`   viewPlaneNormal: [${camera.viewPlaneNormal.map((v: number) => v.toFixed(3)).join(', ')}]`);
+        this.logger.log(`   viewUp: [${camera.viewUp.map((v: number) => v.toFixed(3)).join(', ')}]`);
         if (viewport.getViewPresentation) {
           const pres = viewport.getViewPresentation();
-          this._log(`   rotation: ${pres.rotation || 0}°`);
-          this._log(`   flipHorizontal: ${pres.flipHorizontal || false}`);
-          this._log(`   flipVertical: ${pres.flipVertical || false}`);
+          this.logger.log(`   rotation: ${pres.rotation || 0}°`);
+          this.logger.log(`   flipHorizontal: ${pres.flipHorizontal || false}`);
+          this.logger.log(`   flipVertical: ${pres.flipVertical || false}`);
         }
       } else {
-        this._log(`\n✅ ALIGNMENT OK: Lines are properly aligned (${Math.abs(angleDiff).toFixed(2)}° difference)`);
+        this.logger.log(`\n✅ ALIGNMENT OK: Lines are properly aligned (${Math.abs(angleDiff).toFixed(2)}° difference)`);
       }
 
-      this._log(`${'='.repeat(80)}\n`);
+      this.logger.log(`${'='.repeat(80)}\n`);
     } catch (error) {
-      this._error(`❌ Error in alignment verification for ${viewport.id}:`, error);
+      this.logger.error(`❌ Error in alignment verification for ${viewport.id}:`, error);
     }
   }
 
@@ -1043,7 +968,7 @@ export class ToolProjectionRenderer {
     // Project origin
     const originCanvas = viewport.worldToCanvas([originWorld[0], originWorld[1], originWorld[2]]);
     
-    if (!this._isValidCanvasPoint(originCanvas)) {
+    if (!isValidCanvasPoint(originCanvas)) {
       return;
     }
 
@@ -1057,7 +982,7 @@ export class ToolProjectionRenderer {
 
       const endCanvas = viewport.worldToCanvas(endWorld);
       
-      if (!this._isValidCanvasPoint(endCanvas)) {
+      if (!isValidCanvasPoint(endCanvas)) {
         return;
       }
 

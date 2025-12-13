@@ -94,6 +94,14 @@ export default abstract class NavigationMode {
   /**
    * Clamp position to volume bounds to prevent "No imageId found" errors
    * Helper method available to all navigation modes
+   * 
+   * APPLICABLE to all navigation modes where position is in DICOM space:
+   * - Tool Following mode: Crosshair focal point moves in DICOM space
+   * - Camera Following mode: Camera focal point follows tooltip in DICOM space
+   * - Instrument Projection mode: Tool position is in DICOM space
+   * 
+   * This ensures the tracking position stays within the visible volume bounds,
+   * preventing rendering errors when the tooltip moves outside the DICOM volume.
    */
   protected clampToVolumeBounds(position: number[]): number[] | null {
     try {
@@ -112,21 +120,25 @@ export default abstract class NavigationMode {
         if (viewport.type === 'orthographic' || viewport.type === 'volume3d') {
           const defaultActor = viewport.getDefaultActor?.();
           if (defaultActor && defaultActor.actor) {
-            const bounds = defaultActor.actor.getBounds();
-            if (bounds && bounds.length === 6) {
-              // bounds = [xMin, xMax, yMin, yMax, zMin, zMax]
-              const [xMin, xMax, yMin, yMax, zMin, zMax] = bounds;
+            // Type guard: CanvasActor doesn't have getBounds, but vtkVolume does
+            const actor = defaultActor.actor as any;
+            if (typeof actor.getBounds === 'function') {
+              const bounds = actor.getBounds();
+              if (bounds && bounds.length === 6) {
+                // bounds = [xMin, xMax, yMin, yMax, zMin, zMax]
+                const [xMin, xMax, yMin, yMax, zMin, zMax] = bounds;
 
               // Add a small margin to avoid edge cases
               const margin = 1.0; // mm
 
-              const clampedPosition = [
-                Math.max(xMin + margin, Math.min(xMax - margin, position[0])),
-                Math.max(yMin + margin, Math.min(yMax - margin, position[1])),
-                Math.max(zMin + margin, Math.min(zMax - margin, position[2])),
-              ];
+                const clampedPosition = [
+                  Math.max(xMin + margin, Math.min(xMax - margin, position[0])),
+                  Math.max(yMin + margin, Math.min(yMax - margin, position[1])),
+                  Math.max(zMin + margin, Math.min(zMax - margin, position[2])),
+                ];
 
-              return clampedPosition;
+                return clampedPosition;
+              }
             }
           }
         }
