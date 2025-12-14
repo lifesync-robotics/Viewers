@@ -7,10 +7,6 @@
 
 import React from 'react';
 
-// Re-export CrosshairBookmarks component and types
-export { CrosshairBookmarks } from './CrosshairBookmarks';
-export type { CrosshairBookmark, ScrewPlacementRequest } from './CrosshairBookmarks';
-
 // ═══════════════════════════════════════════════════════
 // Header Components
 // ═══════════════════════════════════════════════════════
@@ -288,96 +284,6 @@ export const EmptyScrewList: React.FC = () => (
 );
 
 // ═══════════════════════════════════════════════════════
-// Screw Dimension Selector Component
-// ═══════════════════════════════════════════════════════
-
-interface ScrewDimensionSelectorProps {
-  value: string | number;
-  options: number[];
-  onChange: (newValue: number) => void;
-  label: 'diameter' | 'length';
-  isUpdating?: boolean;
-}
-
-export const ScrewDimensionSelector: React.FC<ScrewDimensionSelectorProps> = ({
-  value,
-  options,
-  onChange,
-  label,
-  isUpdating = false,
-}) => {
-  const [isOpen, setIsOpen] = React.useState(false);
-  const selectorRef = React.useRef<HTMLDivElement>(null);
-
-  // Close dropdown when clicking outside
-  React.useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (selectorRef.current && !selectorRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-      };
-    }
-  }, [isOpen]);
-
-  const displayValue = typeof value === 'number' ? value.toFixed(1) : value;
-  const icon = label === 'diameter' ? '⌀' : '↕';
-  const bgColor = label === 'diameter' ? 'bg-blue-900' : 'bg-green-900';
-  const borderColor = label === 'diameter' ? 'border-blue-700' : 'border-green-700';
-  const textColor = label === 'diameter' ? 'text-blue-200' : 'text-green-200';
-  const hoverBgColor = label === 'diameter' ? 'hover:bg-blue-800' : 'hover:bg-green-800';
-
-  return (
-    <div className="relative" ref={selectorRef}>
-      <button
-        onClick={() => !isUpdating && setIsOpen(!isOpen)}
-        disabled={isUpdating}
-        className={`inline-flex items-center gap-1 px-2 py-1 ${bgColor} bg-opacity-50 ${borderColor} border rounded text-sm ${textColor} font-semibold ${hoverBgColor} transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed`}
-        title={isUpdating ? 'Updating...' : `Click to change ${label === 'diameter' ? 'diameter' : 'length'}`}
-      >
-        <span>{isUpdating ? '⏳' : icon}</span>
-        <span>{displayValue}</span>
-        {!isUpdating && (
-          <span className={`text-xs transition-transform ${isOpen ? 'rotate-180' : ''}`}>
-            ▼
-          </span>
-        )}
-      </button>
-
-      {isOpen && !isUpdating && options.length > 0 && (
-        <div className="absolute z-50 mt-1 bg-gray-800 border border-gray-700 rounded shadow-lg max-h-60 overflow-y-auto min-w-[80px]">
-          {options.map((option) => {
-            const optionValue = typeof option === 'number' ? option.toFixed(1) : option;
-            const isSelected = Math.abs(parseFloat(displayValue) - parseFloat(optionValue)) < 0.01;
-            return (
-              <button
-                key={option}
-                onClick={() => {
-                  onChange(parseFloat(optionValue));
-                  setIsOpen(false);
-                }}
-                className={`w-full px-3 py-2 text-left text-sm transition ${
-                  isSelected
-                    ? 'bg-blue-600 text-white font-semibold'
-                    : 'text-white hover:bg-gray-700'
-                }`}
-              >
-                {optionValue}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ═══════════════════════════════════════════════════════
 // Screw Table Component - CRUD Style Layout
 // ═══════════════════════════════════════════════════════
 
@@ -401,11 +307,6 @@ interface ScrewTableProps {
   onEdit: (screw: any) => void;
   onDelete: (screw: any) => void;
   showEditButton: boolean; // default is true
-  onUpdateDiameter?: (screw: any, newDiameter: number) => void;
-  onUpdateLength?: (screw: any, newLength: number) => void;
-  availableDiameters?: number[];
-  availableLengths?: number[];
-  updatingScrewId?: string | null;
 }
 
 export const ScrewTable: React.FC<ScrewTableProps> = ({
@@ -416,11 +317,6 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
   onEdit,
   onDelete,
   showEditButton = false,
-  onUpdateDiameter,
-  onUpdateLength,
-  availableDiameters = [],
-  availableLengths = [],
-  updatingScrewId = null,
 }) => {
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-700">
@@ -462,13 +358,11 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
             }
 
             const isApiData = !!screw.screw_id;
-            const diameter = displayInfo.radius * 2;
-            const screwId = screw.screw_id || screw.id || index;
-            const isUpdating = updatingScrewId === screwId;
+            const diameter = (displayInfo.radius * 2).toFixed(1);
 
             return (
               <tr
-                key={screwId}
+                key={screw.screw_id || index}
                 className="border-b border-gray-700 bg-gray-800 bg-opacity-30 hover:bg-gray-700 hover:bg-opacity-40 transition"
               >
                 {/* Name Column */}
@@ -507,36 +401,16 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
 
                 {/* Radius Column (showing as diameter) */}
                 <td className="px-4 py-3 text-center">
-                  {onUpdateDiameter && availableDiameters.length > 0 ? (
-                    <ScrewDimensionSelector
-                      value={diameter}
-                      options={availableDiameters}
-                      onChange={(newDiameter) => onUpdateDiameter(screw, newDiameter)}
-                      label="diameter"
-                      isUpdating={isUpdating}
-                    />
-                  ) : (
                     <span className="inline-block px-2 py-1 bg-blue-900 bg-opacity-50 border border-blue-700 rounded text-sm text-blue-200 font-semibold">
-                      ⌀ {diameter.toFixed(1)}
+                    ⌀ {diameter}
                     </span>
-                  )}
                 </td>
 
                 {/* Length Column */}
                 <td className="px-4 py-3 text-center">
-                  {onUpdateLength && availableLengths.length > 0 ? (
-                    <ScrewDimensionSelector
-                      value={displayInfo.length}
-                      options={availableLengths}
-                      onChange={(newLength) => onUpdateLength(screw, newLength)}
-                      label="length"
-                      isUpdating={isUpdating}
-                    />
-                  ) : (
                     <span className="inline-block px-2 py-1 bg-green-900 bg-opacity-50 border border-green-700 rounded text-sm text-green-200 font-semibold">
                       ↕ {displayInfo.length.toFixed(1)}
                     </span>
-                  )}
                 </td>
 
                 {/* Actions Column */}
@@ -1082,3 +956,10 @@ export const SessionStateDialog: React.FC<SessionStateDialogProps> = ({
     </div>
   );
 };
+
+// ═══════════════════════════════════════════════════════
+// Re-export CrosshairBookmarks component
+// ═══════════════════════════════════════════════════════
+
+export { CrosshairBookmarks } from './CrosshairBookmarks';
+export type { CrosshairBookmark, ScrewPlacementRequest } from './CrosshairBookmarks';

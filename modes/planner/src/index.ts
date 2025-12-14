@@ -15,6 +15,7 @@ import { HangingProtocol } from 'platform/core/src/types';
 
 export const tracked = {
   screwManagement: '@ohif/extension-lifesync.panelModule.screw-management',
+  roiPanel: '@ohif/extension-lifesync.panelModule.roi-panel',
   viewport: '@ohif/extension-measurement-tracking.viewportModule.cornerstone-tracked',
   thumbnailList: '@ohif/extension-measurement-tracking.panelModule.seriesList',
   measurements: '@ohif/extension-measurement-tracking.panelModule.trackedMeasurements',
@@ -35,7 +36,7 @@ export const plannerInstance = {
     ...basicLayout.props,
     leftPanels: [tracked.thumbnailList],
     leftPanelClosed: false,
-    rightPanels: [tracked.screwManagement],
+    rightPanels: [tracked.screwManagement, tracked.roiPanel],
     rightPanelClosed: false,
     viewports: [
       {
@@ -86,14 +87,14 @@ function plannerOnModeEnter(args) {
       const utilityModule = extensionManager.getModuleEntry(
         '@ohif/extension-cornerstone.utilityModule.tools'
       );
-      
+
       if (!utilityModule?.exports?.toolNames) {
         console.warn('⚠️ [Planner Mode] Tool names not available');
         return;
       }
-      
+
       const { toolNames } = utilityModule.exports;
-      
+
       if (!toolNames.OrientationMarker) {
         console.warn('⚠️ [Planner Mode] OrientationMarker tool not found');
         return;
@@ -116,7 +117,7 @@ function plannerOnModeEnter(args) {
           },
         }],
       };
-      
+
       console.log('🔧 [Planner Mode] Adding OrientationMarker tool (AXIS style, disabled by default, Stack & Volume viewports)...');
 
       toolGroupIds.forEach(toolGroupId => {
@@ -141,7 +142,7 @@ function plannerOnModeEnter(args) {
   //     // Register the buttons first
   //     toolbarService.register(plannerToolbarButtons);
   //     console.log('✅ [Planner Mode] PlannerOrientationMarker toolbar button registered');
-  //     
+  //
   //     // Update MoreTools section to include our button
   //     toolbarService.updateSection('MoreTools', [
   //       'Reset',
@@ -178,20 +179,20 @@ function plannerOnModeEnter(args) {
         viewportGridService.EVENTS.VIEWPORTS_READY,
         () => {
           console.log('📋 [Planner Mode] VIEWPORTS_READY event received');
-          
+
           setTimeout(() => {
             // First, add OrientationMarker tool (now that viewports/rendering engine exist)
             addOrientationMarkerWhenReady();
-            
+
             // Then, activate Crosshairs tool
             try {
               const utilityModule = extensionManager.getModuleEntry(
                 '@ohif/extension-cornerstone.utilityModule.tools'
               );
-              
+
               if (utilityModule?.exports?.toolNames) {
                 const { toolNames } = utilityModule.exports;
-                
+
                 if (toolNames.Crosshairs && commandsManager?.runCommand) {
                   commandsManager.runCommand('setToolActive', {
                     toolName: 'Crosshairs',
@@ -204,7 +205,7 @@ function plannerOnModeEnter(args) {
               console.warn('⚠️ [Planner Mode] Error activating Crosshairs:', error);
             }
           }, 100);
-          
+
           try {
             unsubscribe();
           } catch (error) {

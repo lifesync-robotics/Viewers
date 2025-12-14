@@ -4,6 +4,7 @@ import getCommandsModule from './commandsModule';
 import getBaseCustomizationModule from './getCustomizationModule';
 import TrackingService from './services/TrackingService';
 import RegistrationService from './services/RegistrationService';
+import { ROISelectionService } from './services';
 import LifeSyncWorklist from './components/Worklist/LifeSyncWorklist';
 import { id } from './id.js';
 
@@ -73,7 +74,8 @@ const lifesyncExtension = {
     // Register services using the REGISTRATION pattern
     servicesManager.registerService(TrackingService.REGISTRATION);
     servicesManager.registerService(RegistrationService.REGISTRATION);
-    console.log('✅ LifeSync extension pre-registration completed - Services registered');
+    servicesManager.registerService(ROISelectionService.REGISTRATION);
+    console.log('✅ LifeSync extension pre-registration completed - Services registered (including ROISelectionService)');
   },
 
   onModeEnter({ servicesManager }) {

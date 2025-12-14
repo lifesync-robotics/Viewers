@@ -8,6 +8,7 @@ import RegistrationPanelContainer from '../components/Registration/RegistrationP
 import LifeSyncWorklist from '../components/Worklist/LifeSyncWorklist';
 import TrackingPanel from '../components/Tracking/TrackingPanel';
 import SimpleTrackingPanel from '../components/Tracking/SimpleTrackingPanel';
+import { ROIPanel } from '../components/ROISelection';
 
 const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: withAppTypes) => {
   return [
@@ -25,7 +26,6 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         />
       ),
     },
-    // LifeSync panels (Updated: Added SimpleTrackingPanel)
     {
       name: 'screw-management',
       label: 'Screw Management',
@@ -108,16 +108,13 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         />
       ),
     },
-    // Additional LifeSync panels will be added here as components are moved
-    // Example structure for future panels:
-    /*
     {
-      name: 'lifesync-worklist',
-      iconName: 'tab-patient-list',
-      iconLabel: 'LifeSync Worklist',
-      label: 'LifeSync Worklist',
+      name: 'roi-panel',
+      iconName: 'tool-rectangle',
+      iconLabel: 'ROI',
+      label: 'ROI Selection',
       component: (props) => (
-        <LifeSyncWorklist
+        <ROIPanel
           servicesManager={servicesManager}
           commandsManager={commandsManager}
           extensionManager={extensionManager}
@@ -125,33 +122,6 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         />
       ),
     },
-    {
-      name: 'navigation-panel',
-      label: 'Navigation',
-      iconName: 'tab-linear',
-      component: (props) => (
-        <NavigationPanel
-          servicesManager={servicesManager}
-          commandsManager={commandsManager}
-          extensionManager={extensionManager}
-          {...props}
-        />
-      ),
-    },
-    {
-      name: 'registration-panel',
-      label: 'Registration',
-      iconName: 'tab-linear',
-      component: (props) => (
-        <RegistrationPanel
-          servicesManager={servicesManager}
-          commandsManager={commandsManager}
-          extensionManager={extensionManager}
-          {...props}
-        />
-      ),
-    },
-    */
   ];
 };
 
