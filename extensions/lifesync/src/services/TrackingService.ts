@@ -546,7 +546,15 @@ class TrackingService extends PubSubService {
 
   /**
    * Handle incoming messages from tracking server
-   * Updated for Protocol Buffer format from integrated API
+   *
+   * This method acts as a simple router for different message types:
+   * - 'connection': Server connection confirmations
+   * - 'tracking_data'/'tracking_update': Raw tracking data (passed to _handleTrackingUpdate)
+   * - 'configuration'/'subscription'/'frequency': Server configuration responses
+   * - 'alert': System alerts and warnings
+   *
+   * For tracking data, it simply passes the raw message to _handleTrackingUpdate
+   * for complete processing and broadcasting.
    */
   private _handleMessage(message: any): void {
     const { type } = message;
@@ -558,252 +566,8 @@ class TrackingService extends PubSubService {
 
       case 'tracking_data': // Server sends 'tracking_data', not 'tracking_update'
       case 'tracking_update': // Keep for backward compatibility
-        // DEBUG: Log data structure for first few messages
-        if (this.statsData.framesReceived < 3) {
-          console.log('🔍 [TrackingService] Processing tracking data:', {
-            hasData: !!message.data,
-            hasTools: !!message.data?.tools,
-            toolKeys: message.data?.tools ? Object.keys(message.data.tools) : [],
-          });
-        }
-
-        // Phase 3: Dynamic tool discovery - find the primary tracked tool (not patient reference)
-        const tools = message.data?.tools || message.tools;
-
-        if (!tools) {
-          if (this.statsData.framesReceived < 3) {
-            console.warn('⚠️ No tools in tracking data');
-          }
-          break;
-        }
-        
-        // 📍 [PR-DEBUG] Log PR data every 5 seconds (commented out - PR working)
-        // const now = Date.now();
-        // if (now - this.lastPrDebugLog >= this.prDebugInterval) {
-        //   const messageData = message.data || message;
-        //   const pr = messageData.patient_reference;
-        //   const prIcon = pr?.visible ? '✅' : '❌';
-        //   console.log(`\n📍 [PR-DEBUG-SERVICE] Frame ${messageData.frame_number} @ ${(now/1000).toFixed(2)}s`);
-        //   console.log(`   ${prIcon} PR ID: ${pr?.id}`);
-        //   console.log(`   ${prIcon} PR Name: ${pr?.name}`);
-        //   console.log(`   ${prIcon} PR Visible: ${pr?.visible}`);
-        //   console.log(`   ${prIcon} PR Quality: ${pr?.quality?.toFixed(2)}`);
-        //   console.log(`   📦 Tools in message: ${Object.keys(tools).length}`);
-        //   this.lastPrDebugLog = now;
-        // }
-
-        // Find the primary tracked tool (not patient reference)
-        let primaryTool: any = null;
-        let primaryToolId: string | null = null;
-
-        // Strategy: Use selected tool if available, otherwise find first non-PR tool
-        if (this.selectedToolId && tools[this.selectedToolId]) {
-          const selectedTool = tools[this.selectedToolId] as any;
-          if (!selectedTool.is_patient_reference) {
-            primaryTool = selectedTool;
-            primaryToolId = this.selectedToolId;
-          }
-        }
-
-        // Fallback: Find first non-PR tool if no selection or selected tool not available
-        if (!primaryTool) {
-          for (const [toolId, toolData] of Object.entries(tools)) {
-            const tool = toolData as any;
-
-            // Skip if this is the patient reference
-            if (tool.is_patient_reference) {
-              continue;
-            }
-
-            primaryTool = tool;
-            primaryToolId = toolId;
-
-            // Auto-select first tool if no selection
-            if (!this.selectedToolId) {
-              this.selectedToolId = toolId;
-              // console.log(`🎯 Auto-selected tool for visualization: ${toolId}`);
-            }
-            break;
-          }
-        }
-
-        // DEBUG: Log matrix data for first few frames to check if real NDI data
-        if (this.statsData.framesReceived < 5) {
-          console.log('🎯 RAW NDI DATA - Frame', this.statsData.framesReceived + 1);
-          console.log('   Available tool IDs:', Object.keys(tools));
-          Object.entries(tools).forEach(([toolId, toolData]: [string, any]) => {
-            const isPR = (toolData as any).is_patient_reference;
-            const coords = toolData.coordinates?.register;
-            if (coords) {
-              console.log(`  [${toolId}] ${isPR ? '(Patient Reference)' : '(Tracked Tool)'}`);
-              console.log(`    tool_name: ${toolData.tool_name}`);
-              console.log(`    position: [${coords.position_mm?.join(', ')}]`);
-              console.log(`    visible: ${toolData.visible}`);
-              console.log(`    available coordinate keys:`, Object.keys(coords));
-              
-              // Try to find matrix with different possible keys
-              const matrixKeys = Object.keys(coords).filter(k => k.startsWith('rM') || k === 'matrix');
-              if (matrixKeys.length > 0) {
-                console.log(`    ✅ Found matrix keys: ${matrixKeys.join(', ')}`);
-                matrixKeys.forEach(key => {
-                  const mat = coords[key];
-                  if (mat && Array.isArray(mat)) {
-                    if (mat.length >= 16) {
-                      console.log(`      ${key}: [${mat[12]?.toFixed(1)}, ${mat[13]?.toFixed(1)}, ${mat[14]?.toFixed(1)}] (flat array)`);
-                    } else if (mat.length === 4 && Array.isArray(mat[0])) {
-                      console.log(`      ${key}: [${mat[0][3]?.toFixed(1)}, ${mat[1][3]?.toFixed(1)}, ${mat[2][3]?.toFixed(1)}] (2D array)`);
-                    }
-                  }
-                });
-              } else {
-                console.log(`    ❌ No matrix keys found (expected: rM${toolId})`);
-              }
-            }
-          });
-        }
-
-        // REMOVED PROBLEMATIC FALLBACK: Don't fall back to 'EE' or 'crosshair'
-        // If no primary tool found, log error instead of using non-existent fallback
-        if (!primaryTool) {
-          if (this.statsData.framesReceived < 5) {
-            console.error('❌ No primary tool found after scanning all tools');
-            console.error('   This should not happen if data is correctly formatted');
-            console.error('   Available tools:', Object.keys(tools));
-            console.error('   Selected tool ID:', this.selectedToolId);
-          }
-        }
-
-        if (primaryTool) {
-          // Extract position, orientation, and matrix from selected coordinate system
-          // coordinateSystem can be 'tracker' or 'patient_reference' (register)
-          // For backward compatibility, 'register' maps to 'patient_reference'
-          const coordSysKey = this.coordinateSystem === 'tracker' ? 'tracker' : 'register';
-          const coords = primaryTool.coordinates?.[coordSysKey];
-          
-          const position = coords?.position_mm;
-          const rotation = coords?.rotation_deg || [0, 0, 0];
-
-          // Construct matrix key dynamically (rM + toolId for register, matrix for tracker)
-          let matrix;
-          let matrixKey = '';
-          
-          if (this.coordinateSystem === 'tracker') {
-            matrixKey = 'matrix';
-            matrix = coords?.matrix;
-          } else {
-            matrixKey = `rM${primaryToolId}`;
-            matrix = coords?.[matrixKey];
-            
-            // If matrix not found, try to find ANY matrix key in coords
-            if (!matrix && coords) {
-              const availableMatrixKeys = Object.keys(coords).filter(k => k.startsWith('rM'));
-              if (availableMatrixKeys.length > 0) {
-                matrixKey = availableMatrixKeys[0];
-                matrix = coords[matrixKey];
-                if (this.statsData.framesReceived < 3) {
-                  console.warn(`⚠️ Expected matrix key '${`rM${primaryToolId}`}' not found, using '${matrixKey}' instead`);
-                }
-              }
-            }
-          }
-
-          // Use data wrapper if present (new format) or direct message (old format)
-          const messageData = message.data || message;
-
-          if (this.statsData.framesReceived < 3) {
-            console.log('🎯 [TrackingService] Using primary tool:', {
-              toolId: primaryToolId,
-              toolName: primaryTool.tool_name,
-              coordinateSystem: this.coordinateSystem,
-              coordSysKey: coordSysKey,
-              matrixKey: matrixKey,
-              hasPosition: !!position,
-              position: position,
-              hasMatrix: !!matrix,
-              matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null',
-              matrixSample: matrix ? (Array.isArray(matrix) && matrix.length > 0 ? `First element: ${Array.isArray(matrix[0]) ? `Array[${matrix[0].length}]` : matrix[0]}` : 'Not array') : 'null'
-            });
-
-            if (!matrix && coords) {
-              console.error(`❌ Matrix not found for key '${matrixKey}'`);
-              console.error(`   Available keys in coords:`, Object.keys(coords));
-              console.error(`   This means matrix extraction failed - camera following mode will not work!`);
-            }
-
-            if (matrix) {
-              console.log('🔍 [TrackingService] Matrix details:', {
-                isArray: Array.isArray(matrix),
-                length: Array.isArray(matrix) ? matrix.length : 'N/A',
-                is2D: Array.isArray(matrix) && matrix.length > 0 && Array.isArray(matrix[0]),
-                firstRow: Array.isArray(matrix) && matrix.length > 0 ? matrix[0] : 'N/A'
-              });
-            }
-          }
-
-          // Apply PR to DICOM transformation with instrument calibration if enabled
-          // IMPORTANT: This transform should ONLY be applied to PR-relative matrices!
-          // If coordinateSystem === 'tracker', the matrix is in tracker space (NOT PR-relative)
-          // If coordinateSystem === 'patient_reference', the matrix is in PR-relative space (marker array)
-          let finalMatrix = matrix;
-          let finalPosition = position;
-
-          // Only apply pr2dicom when using PR-relative coordinate system
-          const isUsingPrRelativeCoords = this.coordinateSystem === 'patient_reference';
-          
-          if (this.applyPr2DicomTransform && matrix && isUsingPrRelativeCoords) {
-            // Transform matrix from marker array to DICOM space
-            // Pipeline: marker position → instrument tooltip → DICOM space
-            // tooltip_DICOM = prToDicomMatrix × markerToPrMatrix × markerToTooltipMatrix
-            finalMatrix = this._applyPr2DicomTransform(matrix);
-            
-            // Extract position from transformed matrix
-            finalPosition = this._extractPositionFromMatrix(finalMatrix);
-
-            // Debug log for first few frames
-            if (this.statsData.framesReceived < 3) {
-              console.log('🔄 [TrackingService] Applied calibration + PR to DICOM transform:', {
-                inputCoordinateSystem: 'patient_reference (PR-relative marker)',
-                originalPosition_marker: position,
-                transformedPosition_tooltip: finalPosition,
-                pr2dicomEnabled: this.applyPr2DicomTransform
-              });
-            }
-          } else if (this.applyPr2DicomTransform && matrix && !isUsingPrRelativeCoords) {
-            // User has pr2dicom enabled but is using tracker coordinates
-            // Log warning for first few frames only
-            if (this.statsData.framesReceived < 3) {
-              console.warn('⚠️ [TrackingService] pr2dicom transform is enabled but coordinate system is "tracker"');
-              console.warn('   pr2dicom is ONLY valid for PR-relative matrices. Skipping transform.');
-              console.warn('   To apply pr2dicom, switch to "patient_reference" coordinate system.');
-            }
-          }
-
-          // Pass to tracking update handler
-          this._handleTrackingUpdate({
-            position: finalPosition,
-            orientation: rotation,
-            matrix: finalMatrix,
-            timestamp: messageData.timestamp,
-            frame_id: messageData.frame_number,
-            quality: primaryTool.quality,
-            quality_score: primaryTool.quality_score,
-            visible: primaryTool.visible,
-            tool_id: primaryToolId,
-            tool_name: primaryTool.tool_name,
-            // Include full message data for TrackingPanel
-            patient_reference_id: messageData.patient_reference?.id,
-            patient_reference_name: messageData.patient_reference?.name,  // Phase 4: Add PR name
-            patient_reference_visible: messageData.patient_reference?.visible,
-            patient_reference_quality: messageData.patient_reference?.quality,
-            patient_reference_moved: messageData.patient_reference?.moved,
-            patient_reference_movement: messageData.patient_reference?.movement_mm,
-            tools: tools,
-          });
-        } else {
-          if (this.statsData.framesReceived < 3) {
-            console.warn('⚠️ No primary tool found in tracking data');
-          }
-        }
+        // Pass raw message data to tracking update handler for processing
+        this._handleTrackingUpdate(message);
         break;
 
       case 'configuration':
@@ -841,12 +605,17 @@ class TrackingService extends PubSubService {
   }
 
   /**
-   * Handle tracking update (called at 100Hz with new API)
+   * Process tracking data and broadcast updates (called at 100Hz)
+   *
+   * This method handles the complete tracking data processing pipeline:
+   * 1. Tool Selection: Find the primary tracked tool for navigation
+   * 2. Data Extraction: Extract position/orientation/matrix from coordinate system
+   * 3. Coordinate Transformation: Apply PR→DICOM transforms if enabled
+   * 4. Matrix Calculations: Compute tooltip and DICOM matrices for all tools
+   * 5. Event Broadcasting: Send processed data to navigation and UI components
    */
-  private _handleTrackingUpdate(data: any): void {
-    const { position, orientation, timestamp, frame_id } = data;
-
-    // Update stats
+  private _handleTrackingUpdate(message: any): void {
+    // Update frame statistics
     this.statsData.framesReceived++;
     const now = performance.now();
     if (this.statsData.lastUpdate > 0) {
@@ -861,76 +630,212 @@ class TrackingService extends PubSubService {
     }
     this.statsData.lastUpdate = now;
 
-    // Calculate tooltip matrices and DICOM matrices for each tool
-    const toolsWithTooltipMatrices = { ...data.tools };
-    if (data.tools) {
-      Object.entries(data.tools).forEach(([toolId, toolData]: [string, any]) => {
-        if (toolData.is_patient_reference) return; // Skip patient reference
+    // Extract data from message (support both wrapped and direct formats)
+    const messageData = message.data || message;
+    const tools = messageData.tools;
 
-        // Get the marker position matrix in PR space
-        const matrixKey = `rM${toolId}`;
-        const markerToPrMatrix = toolData.coordinates?.register?.[matrixKey] ||
-                                 toolData.coordinates?.patient_reference?.[matrixKey];
+    if (!tools) {
+      if (this.statsData.framesReceived < 3) {
+        console.warn('⚠️ No tools in tracking data');
+      }
+      return;
+    }
 
-        if (markerToPrMatrix) {
-          // DIAGNOSTIC: Check input matrix from tracking data
-          this._checkMatrixIdentity(markerToPrMatrix, `Tool ${toolId} Input Matrix (markerToPrMatrix)`);
-
-          // Step 1: Calculate tooltip matrix in PR space
-          // tooltipMatrix = markerToPrMatrix × markerToTooltipMatrix
-          // This applies the calibration transform to the marker position
-          const tooltipMatrix = this._multiplyMatrix4x4(markerToPrMatrix, this.markerToTooltipMatrix);
-
-          // DIAGNOSTIC: Check tooltip matrix result
-          this._checkMatrixIdentity(tooltipMatrix, `Tool ${toolId} Tooltip Matrix (tooltipMatrix)`);
-
-          // Step 2: Calculate DICOM matrix (for 3D model rendering)
-          // dicomMatrix = prToDicomMatrix × tooltipMatrix
-          const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
-
-          // DIAGNOSTIC: Check final DICOM matrix result
-          this._checkMatrixIdentity(dicomMatrix, `Tool ${toolId} DICOM Matrix (dicomMatrix)`);
-
-          // Add matrices to tool data
-          if (!toolsWithTooltipMatrices[toolId].coordinates) {
-            toolsWithTooltipMatrices[toolId].coordinates = {};
-          }
-          if (!toolsWithTooltipMatrices[toolId].coordinates.patient_reference) {
-            toolsWithTooltipMatrices[toolId].coordinates.patient_reference = {};
-          }
-          if (!toolsWithTooltipMatrices[toolId].coordinates.dicom) {
-            toolsWithTooltipMatrices[toolId].coordinates.dicom = {};
-          }
-
-          // Store tooltip matrix (PR-relative space) as tM{toolId}
-          toolsWithTooltipMatrices[toolId].coordinates.patient_reference[`tM${toolId}`] = tooltipMatrix;
-
-          // Store DICOM matrix (DICOM image space) as dM{toolId}
-          // This is what should be used for 3D model transformations
-          toolsWithTooltipMatrices[toolId].coordinates.dicom[`dM${toolId}`] = dicomMatrix;
-        }
+    // DEBUG: Log data structure for first few messages
+    if (this.statsData.framesReceived < 3) {
+      console.log('🔍 [TrackingService] Processing tracking data:', {
+        hasData: !!message.data,
+        hasTools: !!tools,
+        toolKeys: Object.keys(tools),
       });
     }
 
-    // Broadcast to listeners (NavigationController will handle this)
+    // Phase 1: Find primary tracked tool for navigation (skip patient reference)
+    // The primary tool is used for camera following and crosshair positioning.
+    // We prefer the user-selected tool, but fall back to the first available tracked tool.
+    let primaryTool: any = null;
+    let primaryToolId: string | null = null;
+
+    // Strategy: Use selected tool if available, otherwise find first non-PR tool
+    if (this.selectedToolId && tools[this.selectedToolId]) {
+      const selectedTool = tools[this.selectedToolId] as any;
+      if (!selectedTool.is_patient_reference) {
+        primaryTool = selectedTool;
+        primaryToolId = this.selectedToolId;
+      }
+    }
+
+    // Fallback: Find first non-PR tool if no selection or selected tool not available
+    if (!primaryTool) {
+      for (const [toolId, toolData] of Object.entries(tools)) {
+        const tool = toolData as any;
+        if (tool.is_patient_reference) continue;
+
+        primaryTool = tool;
+        primaryToolId = toolId;
+
+        // Auto-select first tool if no selection
+        if (!this.selectedToolId) {
+          this.selectedToolId = toolId;
+        }
+        break;
+      }
+    }
+
+    if (!primaryTool) {
+      if (this.statsData.framesReceived < 5) {
+        console.error('❌ No primary tool found after scanning all tools');
+        console.error('   Available tools:', Object.keys(tools));
+        console.error('   Selected tool ID:', this.selectedToolId);
+      }
+      return;
+    }
+
+    // Phase 2: Extract position, orientation, and matrix from selected coordinate system
+    // coordinateSystem can be 'tracker' (raw tracker space) or 'patient_reference' (PR-relative).
+    // For 'tracker': use direct matrix from coords.matrix
+    // For 'patient_reference': use rM{toolId} matrix (marker array in PR space)
+    const coordSysKey = this.coordinateSystem === 'tracker' ? 'tracker' : 'register';
+    const coords = primaryTool.coordinates?.[coordSysKey];
+
+    const position = coords?.position_mm;
+    const rotation = coords?.rotation_deg || [0, 0, 0];
+
+    // Construct matrix key dynamically (rM + toolId for register, matrix for tracker)
+    let matrix;
+    let matrixKey = '';
+
+    if (this.coordinateSystem === 'tracker') {
+      matrixKey = 'matrix';
+      matrix = coords?.matrix;
+    } else {
+      matrixKey = `rM${primaryToolId}`;
+      matrix = coords?.[matrixKey];
+
+      // If matrix not found, try to find ANY matrix key in coords
+      if (!matrix && coords) {
+        const availableMatrixKeys = Object.keys(coords).filter(k => k.startsWith('rM'));
+        if (availableMatrixKeys.length > 0) {
+          matrixKey = availableMatrixKeys[0];
+          matrix = coords[matrixKey];
+          if (this.statsData.framesReceived < 3) {
+            console.warn(`⚠️ Expected matrix key '${`rM${primaryToolId}`}' not found, using '${matrixKey}' instead`);
+          }
+        }
+      }
+    }
+
+    // Debug logging for first few frames
+    if (this.statsData.framesReceived < 3) {
+      console.log('🎯 [TrackingService] Using primary tool:', {
+        toolId: primaryToolId,
+        toolName: primaryTool.tool_name,
+        coordinateSystem: this.coordinateSystem,
+        coordSysKey: coordSysKey,
+        matrixKey: matrixKey,
+        hasPosition: !!position,
+        position: position,
+        hasMatrix: !!matrix,
+        matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null'
+      });
+    }
+
+    // Phase 3: Apply PR to DICOM transformation with instrument calibration if enabled
+    // This transforms coordinates from Patient Reference space to DICOM image space.
+    // Only applied when using 'patient_reference' coordinate system.
+    // Pipeline: marker position → instrument tooltip → DICOM space
+    // Formula: tooltip_DICOM = prToDicomMatrix × markerToPrMatrix × markerToTooltipMatrix
+    let finalMatrix = matrix;
+    let finalPosition = position;
+
+    const isUsingPrRelativeCoords = this.coordinateSystem === 'patient_reference';
+
+    if (this.applyPr2DicomTransform && matrix && isUsingPrRelativeCoords) {
+      // Transform matrix from marker array to DICOM space
+      // Pipeline: marker position → instrument tooltip → DICOM space
+      finalMatrix = this._applyPr2DicomTransform(matrix);
+      finalPosition = this._extractPositionFromMatrix(finalMatrix);
+
+      if (this.statsData.framesReceived < 3) {
+        console.log('🔄 [TrackingService] Applied PR to DICOM transform:', {
+          originalPosition: position,
+          transformedPosition: finalPosition,
+        });
+      }
+    } else if (this.applyPr2DicomTransform && matrix && !isUsingPrRelativeCoords) {
+      if (this.statsData.framesReceived < 3) {
+        console.warn('⚠️ [TrackingService] pr2dicom enabled but using tracker coordinates - skipping transform');
+      }
+    }
+
+    // Phase 4: Calculate tooltip matrices and DICOM matrices for each tool
+    // For 3D model rendering, we need matrices in different coordinate spaces:
+    // - Tooltip matrix (tM{toolId}): Instrument tip position in PR space
+    // - DICOM matrix (dM{toolId}): Instrument tip position in DICOM image space
+    // These are used by the 3D rendering engine for accurate tool visualization.
+    const toolsWithTooltipMatrices = { ...tools };
+
+    Object.entries(tools).forEach(([toolId, toolData]: [string, any]) => {
+      if (toolData.is_patient_reference) return; // Skip patient reference
+
+      // Get marker position matrix in PR space
+      const toolMatrixKey = `rM${toolId}`;
+      const markerToPrMatrix = toolData.coordinates?.register?.[toolMatrixKey] ||
+                               toolData.coordinates?.patient_reference?.[toolMatrixKey];
+
+      if (markerToPrMatrix) {
+        // Step 1: Calculate tooltip matrix in PR space
+        // tooltipMatrix = markerToPrMatrix × markerToTooltipMatrix
+        const tooltipMatrix = this._multiplyMatrix4x4(markerToPrMatrix, this.markerToTooltipMatrix);
+
+        // Step 2: Calculate DICOM matrix for 3D model rendering
+        // dicomMatrix = prToDicomMatrix × tooltipMatrix
+        const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
+
+        // Store matrices in tool data
+        if (!toolsWithTooltipMatrices[toolId].coordinates) {
+          toolsWithTooltipMatrices[toolId].coordinates = {};
+        }
+        if (!toolsWithTooltipMatrices[toolId].coordinates.patient_reference) {
+          toolsWithTooltipMatrices[toolId].coordinates.patient_reference = {};
+        }
+        if (!toolsWithTooltipMatrices[toolId].coordinates.dicom) {
+          toolsWithTooltipMatrices[toolId].coordinates.dicom = {};
+        }
+
+        // Store tooltip matrix (PR-relative space) as tM{toolId}
+        toolsWithTooltipMatrices[toolId].coordinates.patient_reference[`tM${toolId}`] = tooltipMatrix;
+
+        // Store DICOM matrix (DICOM image space) as dM{toolId}
+        toolsWithTooltipMatrices[toolId].coordinates.dicom[`dM${toolId}`] = dicomMatrix;
+      }
+    });
+
+    // Phase 5: Broadcast processed tracking data to listeners
+    // Sends the complete processed tracking update to:
+    // - NavigationController: For camera following and crosshair positioning
+    // - TrackingPanel: For UI updates and statistics display
+    // - Other components that need real-time tracking data
     this._broadcastEvent(EVENTS.TRACKING_UPDATE, {
-      position,
-      orientation,
-      timestamp,
-      frame_id,
-      frame_number: data.frame_id,  // Alias for TrackingPanel compatibility
-      matrix: data.matrix,
-      quality: data.quality,
-      quality_score: data.quality_score,
-      visible: data.visible,
-      tools: toolsWithTooltipMatrices, // Use tools with tooltip matrices
+      position: finalPosition,
+      orientation: rotation,
+      timestamp: messageData.timestamp,
+      frame_id: messageData.frame_number,
+      frame_number: messageData.frame_number, // Alias for TrackingPanel compatibility
+      matrix: finalMatrix,
+      quality: primaryTool.quality,
+      quality_score: primaryTool.quality_score,
+      visible: primaryTool.visible,
+      tool_id: primaryToolId,
+      tool_name: primaryTool.tool_name,
+      tools: toolsWithTooltipMatrices,
       // Patient reference data (needed by TrackingPanel)
-      patient_reference_id: data.patient_reference_id,
-      patient_reference_name: data.patient_reference_name,
-      patient_reference_visible: data.patient_reference_visible,
-      patient_reference_quality: data.patient_reference_quality,
-      patient_reference_moved: data.patient_reference_moved,
-      patient_reference_movement: data.patient_reference_movement,
+      patient_reference_id: messageData.patient_reference?.id,
+      patient_reference_name: messageData.patient_reference?.name,
+      patient_reference_visible: messageData.patient_reference?.visible,
+      patient_reference_quality: messageData.patient_reference?.quality,
+      patient_reference_moved: messageData.patient_reference?.moved,
+      patient_reference_movement: messageData.patient_reference?.movement_mm,
     });
   }
 

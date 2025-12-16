@@ -71,12 +71,6 @@ interface TrackingPanelLayoutProps {
   selectedConfigId: string | null;
   currentTrackingConfig: any;
   configDialogOpen: boolean;
-  prToDicomMatrix: number[][];
-  markerToTooltipMatrix: number[][];
-  prToDicomMatrixInput: string[][];
-  markerToTooltipMatrixInput: string[][];
-  matricesExpanded: boolean;
-  matricesApplied: boolean;
   coordinateSystem: 'tracker' | 'patient_reference';
   isRealTimeDistanceEnabled: boolean;
   alerts: Array<{id: string; message: string; severity: string; timestamp: string}>;
@@ -91,12 +85,6 @@ interface TrackingPanelLayoutProps {
   handleConfigSaved: (config: any) => void;
   handleConfigApplied: (config: any) => void;
   loadSpecificConfig: (configId: string) => void;
-  setMatricesExpanded: (expanded: boolean) => void;
-  setPrToDicomMatrix: (matrix: number[][]) => void;
-  setPrToDicomMatrixInput: (matrix: string[][]) => void;
-  setMarkerToTooltipMatrix: (matrix: number[][]) => void;
-  setMarkerToTooltipMatrixInput: (matrix: string[][]) => void;
-  setMatricesApplied: (applied: boolean) => void;
   setSelectedToolId: (toolId: string | null) => void;
   setSelectedConfigId: (configId: string | null) => void;
   setAlerts: React.Dispatch<React.SetStateAction<Array<{id: string; message: string; severity: string; timestamp: string}>>>;
@@ -117,12 +105,6 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
   selectedConfigId,
   currentTrackingConfig,
   configDialogOpen,
-  prToDicomMatrix,
-  markerToTooltipMatrix,
-  prToDicomMatrixInput,
-  markerToTooltipMatrixInput,
-  matricesExpanded,
-  matricesApplied,
   coordinateSystem,
   isRealTimeDistanceEnabled,
   alerts,
@@ -135,12 +117,6 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
   handleConfigSaved,
   handleConfigApplied,
   loadSpecificConfig,
-  setMatricesExpanded,
-  setPrToDicomMatrix,
-  setPrToDicomMatrixInput,
-  setMarkerToTooltipMatrix,
-  setMarkerToTooltipMatrixInput,
-  setMatricesApplied,
   setSelectedToolId,
   setSelectedConfigId,
   setAlerts,
@@ -154,6 +130,38 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
     [0, 0, 1, 0],
     [0, 0, 0, 1]
   ];
+
+  // Matrix UI state - now managed locally in the layout component
+  const [matricesExpanded, setMatricesExpanded] = React.useState(false);
+  const [matricesApplied, setMatricesApplied] = React.useState(true); // Mark as applied since it's managed by service
+
+  // Derive matrices from TrackingService for display
+  const prToDicomMatrix = trackingService ? trackingService.getPrToDicomMatrix() : identityMatrix;
+  const markerToTooltipMatrix = trackingService ? trackingService.getMarkerToTooltipMatrix() : identityMatrix;
+
+  // Local editable state for matrix inputs (separate from service state)
+  const [editablePrToDicomMatrix, setEditablePrToDicomMatrix] = React.useState<number[][]>(
+    prToDicomMatrix.map(row => [...row])
+  );
+  const [editableMarkerToTooltipMatrix, setEditableMarkerToTooltipMatrix] = React.useState<number[][]>(
+    markerToTooltipMatrix.map(row => [...row])
+  );
+
+  // String representations for input fields from editable matrices
+  const prToDicomMatrixInput = React.useMemo(() =>
+    editablePrToDicomMatrix.map(row => row.map(val => val.toString())),
+    [editablePrToDicomMatrix]
+  );
+  const markerToTooltipMatrixInput = React.useMemo(() =>
+    editableMarkerToTooltipMatrix.map(row => row.map(val => val.toString())),
+    [editableMarkerToTooltipMatrix]
+  );
+
+  // Sync editable matrices when service matrices change
+  React.useEffect(() => {
+    setEditablePrToDicomMatrix(prToDicomMatrix.map(row => [...row]));
+    setEditableMarkerToTooltipMatrix(markerToTooltipMatrix.map(row => [...row]));
+  }, [prToDicomMatrix, markerToTooltipMatrix]);
 
   const primaryButtonLabel = !selectedConfigId
     ? 'Select Configuration'
@@ -322,8 +330,7 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                   <button
                     onClick={() => {
                       const identity = identityMatrix.map(row => [...row]);
-                      setPrToDicomMatrix(identity);
-                      setPrToDicomMatrixInput(identity.map(row => row.map(val => val.toString())));
+                      setEditablePrToDicomMatrix(identity);
                       setMatricesApplied(false);
                     }}
                     className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
@@ -340,17 +347,12 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                         value={val}
                         onChange={(e) => {
                           const inputValue = e.target.value;
-                          // Update input state immediately to allow intermediate states
-                          const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = inputValue;
-                          setPrToDicomMatrixInput(newInputMatrix);
-
-                          // Try to parse as number for the actual matrix
+                          // Update editable matrix directly
                           const parsed = parseFloat(inputValue);
                           if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
-                            const newMatrix = prToDicomMatrix.map(r => [...r]);
+                            const newMatrix = editablePrToDicomMatrix.map(r => [...r]);
                             newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
-                            setPrToDicomMatrix(newMatrix);
+                            setEditablePrToDicomMatrix(newMatrix);
                           }
                           setMatricesApplied(false);
                         }}
@@ -358,13 +360,9 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                           // On blur, clean up the input to show valid number
                           const parsed = parseFloat(e.target.value);
                           const finalValue = isNaN(parsed) ? 0 : parsed;
-                          const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = finalValue.toString();
-                          setPrToDicomMatrixInput(newInputMatrix);
-
-                          const newMatrix = prToDicomMatrix.map(r => [...r]);
+                          const newMatrix = editablePrToDicomMatrix.map(r => [...r]);
                           newMatrix[i][j] = finalValue;
-                          setPrToDicomMatrix(newMatrix);
+                          setEditablePrToDicomMatrix(newMatrix);
                         }}
                         className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
                       />
@@ -380,8 +378,7 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                   <button
                     onClick={() => {
                       const identity = identityMatrix.map(row => [...row]);
-                      setMarkerToTooltipMatrix(identity);
-                      setMarkerToTooltipMatrixInput(identity.map(row => row.map(val => val.toString())));
+                      setEditableMarkerToTooltipMatrix(identity);
                       setMatricesApplied(false);
                     }}
                     className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
@@ -398,17 +395,12 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                         value={val}
                         onChange={(e) => {
                           const inputValue = e.target.value;
-                          // Update input state immediately to allow intermediate states
-                          const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = inputValue;
-                          setMarkerToTooltipMatrixInput(newInputMatrix);
-
-                          // Try to parse as number for the actual matrix
+                          // Update editable matrix directly
                           const parsed = parseFloat(inputValue);
                           if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
-                            const newMatrix = markerToTooltipMatrix.map(r => [...r]);
+                            const newMatrix = editableMarkerToTooltipMatrix.map(r => [...r]);
                             newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
-                            setMarkerToTooltipMatrix(newMatrix);
+                            setEditableMarkerToTooltipMatrix(newMatrix);
                           }
                           setMatricesApplied(false);
                         }}
@@ -416,13 +408,9 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                           // On blur, clean up the input to show valid number
                           const parsed = parseFloat(e.target.value);
                           const finalValue = isNaN(parsed) ? 0 : parsed;
-                          const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
-                          newInputMatrix[i][j] = finalValue.toString();
-                          setMarkerToTooltipMatrixInput(newInputMatrix);
-
-                          const newMatrix = markerToTooltipMatrix.map(r => [...r]);
+                          const newMatrix = editableMarkerToTooltipMatrix.map(r => [...r]);
                           newMatrix[i][j] = finalValue;
-                          setMarkerToTooltipMatrix(newMatrix);
+                          setEditableMarkerToTooltipMatrix(newMatrix);
                         }}
                         className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
                       />
@@ -435,12 +423,12 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
               <button
                 onClick={() => {
                   if (trackingService) {
-                    trackingService.setPrToDicomMatrix(prToDicomMatrix);
-                    trackingService.setMarkerToTooltipMatrix(markerToTooltipMatrix);
+                    trackingService.setPrToDicomMatrix(editablePrToDicomMatrix);
+                    trackingService.setMarkerToTooltipMatrix(editableMarkerToTooltipMatrix);
                     setMatricesApplied(true);
                     console.log('✅ Transformation matrices applied to TrackingService:', {
-                      prToDicom: prToDicomMatrix,
-                      markerToTooltip: markerToTooltipMatrix
+                      prToDicom: editablePrToDicomMatrix,
+                      markerToTooltip: editableMarkerToTooltipMatrix
                     });
                   }
                 }}

@@ -197,43 +197,6 @@ function PanelTracking() {
     [0, 0, 0, 1]
   ];
 
-  // we have already registered it for development , let fix it for current development mode
-  // const [prToDicomMatrix, setPrToDicomMatrix] = React.useState<number[][]>([
-  //   [-0.9967, -0.0487, 0.0647, -17.2],
-  //   [0.00471, 0.7623, 0.6403, 187.5],
-  //   [-0.0811, 0.6454, -0.7593, 62.0],
-  //   [0.0000, 0.0000, 0.0000, 1.0000]
-
-
-
-  // ]);
-  const [prToDicomMatrix, setPrToDicomMatrix] = React.useState<number[][]>([
-    [-0.9814, -0.0938, 0.1673, -20.46],
-    [0.0522, 0.7083, 0.7039, 159.9],
-    [-0.1846, 0.6996, -0.69, 219.2],
-    [0.0000, 0.0000, 0.0000, 1.0000]
-
-
-
-  ]);
-  const [markerToTooltipMatrix, setMarkerToTooltipMatrix] = React.useState<number[][]>([
-    [-1, 0, 0, -17.08],
-    [0, 1, 0, 0.10],
-    [0, 0, -1, -157.82],
-    [0, 0, 0, 1]
-  ]); // DR-VR06-A32 calibration matrix
-  // String representation for input fields to allow intermediate typing states
-  const [prToDicomMatrixInput, setPrToDicomMatrixInput] = React.useState<string[][]>(
-    prToDicomMatrix.map(row => row.map(val => val.toString()))
-  );
-  const [markerToTooltipMatrixInput, setMarkerToTooltipMatrixInput] = React.useState<string[][]>([
-    ["-1", "0", "0", "-17.08"],
-    ["0", "1", "0", "0.10"],
-    ["0", "0", "-1", "-157.82"],
-    ["0", "0", "0", "1"]
-  ]); // DR-VR06-A32 calibration matrix
-  const [matricesExpanded, setMatricesExpanded] = React.useState(false);
-  const [matricesApplied, setMatricesApplied] = React.useState(true); // Mark as applied since it's hardcoded in service
   
   // Initialize NavigationController early so mode switching works even when navigation is not started
   React.useEffect(() => {
@@ -267,26 +230,6 @@ function PanelTracking() {
 
   // Get TrackingService
   const trackingService = (servicesManager?.services as any)?.trackingService;
-
-  // Initialize matrices from TrackingService on mount
-  React.useEffect(() => {
-    if (trackingService) {
-      const prToDicom = trackingService.getPrToDicomMatrix();
-      const markerToTooltip = trackingService.getMarkerToTooltipMatrix();
-      
-      if (prToDicom) {
-        setPrToDicomMatrix(prToDicom);
-        setPrToDicomMatrixInput(prToDicom.map(row => row.map(val => val.toString())));
-        console.log('✅ [TrackingPanel] Initialized prToDicomMatrix from service:', prToDicom);
-      }
-      
-      if (markerToTooltip) {
-        setMarkerToTooltipMatrix(markerToTooltip);
-        setMarkerToTooltipMatrixInput(markerToTooltip.map(row => row.map(val => val.toString())));
-        console.log('✅ [TrackingPanel] Initialized markerToTooltipMatrix from service:', markerToTooltip);
-      }
-    }
-  }, [trackingService]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Matrix Utility Functions (for 3D model transformations)
@@ -1130,12 +1073,6 @@ function PanelTracking() {
       selectedConfigId={selectedConfigId}
       currentTrackingConfig={currentTrackingConfig}
       configDialogOpen={configDialogOpen}
-      prToDicomMatrix={prToDicomMatrix}
-      markerToTooltipMatrix={markerToTooltipMatrix}
-      prToDicomMatrixInput={prToDicomMatrixInput}
-      markerToTooltipMatrixInput={markerToTooltipMatrixInput}
-      matricesExpanded={matricesExpanded}
-      matricesApplied={matricesApplied}
       coordinateSystem={coordinateSystem}
       isRealTimeDistanceEnabled={isRealTimeDistanceEnabled}
       alerts={alerts}
@@ -1150,12 +1087,6 @@ function PanelTracking() {
       handleConfigSaved={handleConfigSaved}
       handleConfigApplied={handleConfigApplied}
       loadSpecificConfig={loadSpecificConfig}
-      setMatricesExpanded={setMatricesExpanded}
-      setPrToDicomMatrix={setPrToDicomMatrix}
-      setPrToDicomMatrixInput={setPrToDicomMatrixInput}
-      setMarkerToTooltipMatrix={setMarkerToTooltipMatrix}
-      setMarkerToTooltipMatrixInput={setMarkerToTooltipMatrixInput}
-      setMatricesApplied={setMatricesApplied}
       setSelectedToolId={setSelectedToolId}
       setSelectedConfigId={setSelectedConfigId}
       setAlerts={setAlerts}
