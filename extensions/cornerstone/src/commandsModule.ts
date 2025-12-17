@@ -163,6 +163,49 @@ function commandsModule({
     };
   }
 
+  /**
+   * Helper function to capture current segmentation state for navigation
+   */
+  function captureSegmentationState(segmentationService) {
+    try {
+      if (!segmentationService) {
+        console.warn('   ⚠️ Segmentation service not available');
+        return null;
+      }
+
+      const segmentations = segmentationService.getSegmentations();
+      if (!segmentations || segmentations.length === 0) {
+        console.log('   ℹ️ No segmentations found to capture');
+        return null;
+      }
+
+      const state = {
+        segmentations: segmentations.map(seg => {
+          const segInfo = {
+            id: seg.id,
+            label: seg.label,
+            segments: seg.segments?.map(segment => ({
+              segmentIndex: segment.segmentIndex,
+              label: segment.label,
+              visible: segment.visible,
+              color: segment.color,
+              opacity: segment.opacity,
+            })) || [],
+          };
+          console.log(`   📊 Captured segmentation: ${seg.id} (${seg.label}) with ${segInfo.segments.length} segments`);
+          return segInfo;
+        }),
+        timestamp: Date.now(),
+      };
+
+      console.log(`   📊 Total captured state for ${segmentations.length} segmentation(s)`);
+      return state;
+    } catch (error) {
+      console.error('   ❌ Error capturing segmentation state:', error);
+      return null;
+    }
+  }
+
   function _handleBrushSizeAction(action: 'increase' | 'decrease') {
     const toolGroupIds = toolGroupService.getToolGroupIds();
     if (!toolGroupIds?.length) {
@@ -1725,6 +1768,323 @@ function commandsModule({
 
       viewport.render();
     },
+
+    /**
+     * Toggle volume rendering visibility on/off for a viewport
+     * @param {string} viewportId - The ID of the viewport
+     * @param {boolean} visible - Optional explicit visibility state. If not provided, toggles current state.
+     * @returns {boolean} The new visibility state
+     */
+    toggleVolumeVisibility: ({ viewportId, visible }: { viewportId?: string; visible?: boolean }) => {
+      const targetViewportId = viewportId || viewportGridService.getActiveViewportId();
+      const viewport = cornerstoneViewportService.getCornerstoneViewport(targetViewportId);
+
+      if (!viewport) {
+        console.warn('[toggleVolumeVisibility] Viewport not found:', targetViewportId);
+        return null;
+      }
+
+      const actors = viewport.getActors();
+
+      if (actors.length === 0) {
+        console.warn('[toggleVolumeVisibility] No actors found in viewport:', targetViewportId);
+        return null;
+      }
+
+      // Get the volume actor (first actor with a volumeId/uid)
+      const volumeActorEntry = actors.find(actorEntry => actorEntry.uid && actorEntry.actor);
+
+      if (!volumeActorEntry) {
+        console.warn('[toggleVolumeVisibility] No volume actor found in viewport:', targetViewportId);
+        return null;
+      }
+
+      const { actor } = volumeActorEntry;
+      const currentVisibility = actor.getVisibility();
+
+      // If explicit visibility is provided, use it; otherwise toggle
+      const newVisibility = visible !== undefined ? visible : !currentVisibility;
+
+      actor.setVisibility(newVisibility);
+      viewport.render();
+
+      console.log(`[toggleVolumeVisibility] Volume visibility set to ${newVisibility} for viewport: ${targetViewportId}`);
+
+      return newVisibility;
+    },
+
+    /**
+     * Show volume rendering for a viewport
+     * @param {string} viewportId - The ID of the viewport
+     */
+    showVolumeRendering: ({ viewportId }: { viewportId?: string }) => {
+      return actions.toggleVolumeVisibility({ viewportId, visible: true });
+    },
+
+    /**
+     * Hide volume rendering for a viewport
+     * @param {string} viewportId - The ID of the viewport
+     */
+    hideVolumeRendering: ({ viewportId }: { viewportId?: string }) => {
+      return actions.toggleVolumeVisibility({ viewportId, visible: false });
+    },
+
+    /**
+     * Swap the active viewport's orientation with the primary (first) viewport.
+     * Used for Axial Primary with 3D layout where clicking small viewports
+     * should swap their orientation with the large primary viewport.
+     *
+     * The primary viewport is the first one in the viewport list (index 0),
+     * which corresponds to the large left panel in the primaryAxialWith3D layout.
+     *
+     * @returns {boolean} True if swap was performed, false otherwise
+     */
+    swapViewportWithPrimary: () => {
+      const state = viewportGridService.getState();
+      const { activeViewportId, viewports, layout } = state;
+
+      // Don't swap if already in 1x1 layout
+      if (layout.numCols === 1 && layout.numRows === 1) {
+        console.log('🔄 [swapViewportWithPrimary] Already in 1x1 layout, skipping swap');
+        return false;
+      }
+
+      // Get all viewport entries as array - order is preserved from hanging protocol
+      const viewportEntries = Array.from(viewports.entries());
+      if (viewportEntries.length < 2) {
+        console.log('🔄 [swapViewportWithPrimary] Not enough viewports to swap');
+        return false;
+      }
+
+      // Log all viewports for debugging
+      console.log('🔄 [swapViewportWithPrimary] All viewports:');
+      viewportEntries.forEach(([id, vp], index) => {
+        console.log(`  [${index}] ${id}: orientation=${vp.viewportOptions?.orientation}, positionId=${vp.positionId}`);
+      });
+
+      // The primary viewport is identified by positionId "viewport-0-0" (first position)
+      // or if not found, use the first entry in the array
+      let primaryEntry = viewportEntries.find(([_, vp]) => vp.positionId === 'viewport-0-0');
+      if (!primaryEntry) {
+        // Fallback: use the first viewport entry
+        primaryEntry = viewportEntries[0];
+      }
+      const [primaryId, primaryViewport] = primaryEntry;
+
+      // Find active viewport
+      const activeEntry = viewportEntries.find(([id]) => id === activeViewportId);
+
+      if (!activeEntry) {
+        console.log('🔄 [swapViewportWithPrimary] Could not find active viewport');
+        return false;
+      }
+
+      const [activeId, activeViewport] = activeEntry;
+
+      console.log('🔄 [swapViewportWithPrimary] Primary (index 0):', {
+        id: primaryId,
+        orientation: primaryViewport.viewportOptions?.orientation,
+      });
+      console.log('🔄 [swapViewportWithPrimary] Active (clicked):', {
+        id: activeId,
+        orientation: activeViewport.viewportOptions?.orientation,
+      });
+
+      // Don't swap if clicking the primary viewport itself
+      if (primaryId === activeId) {
+        console.log('🔄 [swapViewportWithPrimary] Clicked on primary viewport, no swap needed');
+        return false;
+      }
+
+      // Swap only the orientations between the two viewports
+      try {
+        const primaryOrientation = primaryViewport.viewportOptions?.orientation;
+        const activeOrientation = activeViewport.viewportOptions?.orientation;
+
+        // Skip if either is a 3D viewport (volume3d)
+        const primaryType = primaryViewport.viewportOptions?.viewportType;
+        const activeType = activeViewport.viewportOptions?.viewportType;
+
+        if (primaryType === 'volume3d' || activeType === 'volume3d') {
+          console.log('🔄 [swapViewportWithPrimary] Cannot swap with 3D viewport');
+          return false;
+        }
+
+        console.log('🔄 [swapViewportWithPrimary] Swapping orientations:', {
+          primaryBefore: primaryOrientation,
+          activeBefore: activeOrientation,
+        });
+
+        // Create new viewport options with swapped orientations
+        const newPrimaryOptions = {
+          ...primaryViewport.viewportOptions,
+          orientation: activeOrientation,
+        };
+        const newActiveOptions = {
+          ...activeViewport.viewportOptions,
+          orientation: primaryOrientation,
+        };
+
+        // Update the viewports with swapped orientations
+        viewportGridService.setDisplaySetsForViewports([
+          {
+            viewportId: primaryId,
+            displaySetInstanceUIDs: primaryViewport.displaySetInstanceUIDs,
+            viewportOptions: newPrimaryOptions,
+            displaySetOptions: primaryViewport.displaySetOptions,
+          },
+          {
+            viewportId: activeId,
+            displaySetInstanceUIDs: activeViewport.displaySetInstanceUIDs,
+            viewportOptions: newActiveOptions,
+            displaySetOptions: activeViewport.displaySetOptions,
+          },
+        ]);
+
+        // Set the primary viewport as active (so user sees the "big" view they wanted)
+        viewportGridService.setActiveViewportId(primaryId);
+
+        console.log('✅ [swapViewportWithPrimary] Orientations swapped successfully:', {
+          primaryAfter: activeOrientation,
+          activeAfter: primaryOrientation,
+        });
+
+        // Reset crosshairs after swap to sync the views
+        setTimeout(() => {
+          try {
+            commandsManager.runCommand('resetCrosshairs');
+          } catch (e) {
+            console.warn('Could not reset crosshairs after swap');
+          }
+        }, 100);
+
+        return true;
+      } catch (error) {
+        console.error('❌ [swapViewportWithPrimary] Error swapping viewports:', error);
+        return false;
+      }
+    },
+
+    /**
+     * Handle double-click behavior for primaryAxialWith3D layout
+     * - If already in single viewport mode: restore original layout (toggleOneUp)
+     * - If double-clicked on primary viewport (index 0): toggle to 1 viewport mode
+     * - If double-clicked on small viewport: swap with primary viewport
+     */
+    handlePrimaryAxialWith3DDoubleClick: (options?: { event?: CustomEvent }) => {
+      try {
+        const state = viewportGridService.getState();
+        const { layout } = state;
+
+        // If already in single viewport mode (1x1 layout), restore original layout
+        if (layout.numCols === 1 && layout.numRows === 1) {
+          console.log('🔄 [handlePrimaryAxialWith3DDoubleClick] Already in single viewport mode, restoring original layout');
+          commandsManager.runCommand('toggleOneUp');
+          return;
+        }
+
+        // Get viewportId from the double-click event if available
+        // This ensures we use the correct viewport (the one that was double-clicked)
+        // instead of the currently active viewport, which might be different
+        let clickedViewportId: string | null = null;
+        if (options?.event?.detail?.element) {
+          try {
+            const enabledElement = getEnabledElement(options.event.detail.element);
+            if (enabledElement) {
+              clickedViewportId = enabledElement.viewportId;
+              // Ensure the clicked viewport is set as active before toggling
+              // This is crucial so toggleOneUp saves the correct viewport configuration
+              if (clickedViewportId && clickedViewportId !== viewportGridService.getActiveViewportId()) {
+                console.log(`🔄 [handlePrimaryAxialWith3DDoubleClick] Activating clicked viewport: ${clickedViewportId}`);
+                viewportGridService.setActiveViewportId(clickedViewportId);
+                // Use a small delay to ensure viewport activation completes
+                setTimeout(() => {
+                  commandsManager.runCommand('toggleOneUp');
+                }, 10);
+                return;
+              }
+            }
+          } catch (e) {
+            console.warn('⚠️ [handlePrimaryAxialWith3DDoubleClick] Could not get viewportId from event:', e);
+          }
+        }
+
+        const hpInfo = hangingProtocolService.getActiveProtocol();
+        const currentProtocolId = hpInfo?.protocol?.id;
+
+        // Only apply special behavior for primaryAxialWith3D layout
+        if (currentProtocolId !== 'primaryAxialWith3D') {
+          // Fallback to default behavior for other layouts
+          commandsManager.runCommand('toggleOneUp');
+          return;
+        }
+
+        const { activeViewportId, viewports } = state;
+
+        // Get all viewport entries as array - order is preserved from hanging protocol
+        const viewportEntries = Array.from(viewports.entries());
+
+        if (viewportEntries.length === 0) {
+          console.warn('🔄 [handlePrimaryAxialWith3DDoubleClick] No viewports found');
+          return;
+        }
+
+        // Find primary viewport (first in array, which corresponds to index 0 in hanging protocol)
+        // Try to find by positionId first, fallback to first entry
+        let primaryEntry: [string, any] | undefined;
+        try {
+          primaryEntry = viewportEntries.find(([_, vp]) => (vp as any).positionId === 'viewport-0-0');
+        } catch (e) {
+          // positionId might not exist in types but may exist at runtime
+        }
+        if (!primaryEntry) {
+          primaryEntry = viewportEntries[0];
+        }
+        const [primaryId] = primaryEntry;
+
+        // Use clicked viewport ID if available, otherwise use active viewport ID
+        const targetViewportId = clickedViewportId || activeViewportId;
+
+        // Check if the clicked/active viewport is the primary viewport
+        if (primaryId === targetViewportId) {
+          // Primary viewport double-click: toggle to 1 viewport mode
+          console.log('🔄 [handlePrimaryAxialWith3DDoubleClick] Primary viewport double-clicked, toggling to 1 viewport mode');
+          commandsManager.runCommand('toggleOneUp');
+        } else {
+          // Small viewport double-click: swap with primary
+          console.log('🔄 [handlePrimaryAxialWith3DDoubleClick] Small viewport double-clicked, swapping with primary');
+          commandsManager.runCommand('swapViewportWithPrimary');
+        }
+      } catch (error) {
+        console.error('❌ [handlePrimaryAxialWith3DDoubleClick] Error handling double-click:', error);
+        // Fallback to default behavior
+        commandsManager.runCommand('toggleOneUp');
+      }
+    },
+
+    /**
+     * Get the current volume rendering visibility state for a viewport
+     * @param {string} viewportId - The ID of the viewport
+     * @returns {boolean|null} The current visibility state, or null if not found
+     */
+    getVolumeVisibility: ({ viewportId }: { viewportId?: string }) => {
+      const targetViewportId = viewportId || viewportGridService.getActiveViewportId();
+      const viewport = cornerstoneViewportService.getCornerstoneViewport(targetViewportId);
+
+      if (!viewport) {
+        return null;
+      }
+
+      const actors = viewport.getActors();
+      const volumeActorEntry = actors.find(actorEntry => actorEntry.uid && actorEntry.actor);
+
+      if (!volumeActorEntry) {
+        return null;
+      }
+
+      return volumeActorEntry.actor.getVisibility();
+    },
+
     resetCrosshairs: ({ viewportId }) => {
       const crosshairInstances = [];
 
@@ -2775,7 +3135,7 @@ function commandsModule({
 
       // Wait for viewports to be ready before initializing plane cutters
       // This prevents race conditions where plane cutters are created before viewports exist
-      const initializeWithRetry = async (maxRetries = 5, delayMs = 200) => {
+      const initializeWithRetry = async (maxRetries = 10, delayMs = 300) => {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           console.log(`🔄 [initializePlaneCutters] Initialization attempt ${attempt}/${maxRetries}`);
 
@@ -2796,6 +3156,8 @@ function commandsModule({
         }
 
         console.warn('⚠️ [initializePlaneCutters] Could not initialize plane cutters after multiple attempts');
+        console.warn('   This may be normal if the layout does not have the required viewports');
+        console.warn('   Plane cutters will be initialized when viewports become available');
       };
 
       // Run initialization with retry logic
@@ -2815,45 +3177,45 @@ function commandsModule({
     },
     setOrientationMarkerType: ({ markerType }) => {
       console.log('🔄 [setOrientationMarkerType] Setting orientation marker type to:', markerType);
-      
+
       const toolGroupIds = toolGroupService.getToolGroupIds();
       const { OrientationMarkerTool } = cornerstoneTools;
-      
+
       // AXIS = 2, CUBE = 1 (from OrientationMarkerTool constants)
       const validTypes = {
         'axis': 2,
         'cube': 1,
         'axes': 2, // alias for axis
       };
-      
+
       const overlayMarkerType = validTypes[markerType?.toLowerCase()] ?? 2; // default to AXIS
-      
+
       toolGroupIds.forEach(toolGroupId => {
         const toolGroup = ToolGroupManager.getToolGroup(toolGroupId);
         if (toolGroup) {
           try {
             // Get current configuration
             const currentConfig = toolGroup.getToolConfiguration(toolNames.OrientationMarker);
-            
+
             // Update the configuration with new marker type
             toolGroup.setToolConfiguration(toolNames.OrientationMarker, {
               ...currentConfig,
               overlayMarkerType,
             });
-            
+
             console.log(`✅ Updated orientation marker for tool group: ${toolGroupId}`);
           } catch (error) {
             console.warn(`Tool ${toolNames.OrientationMarker} not found in group ${toolGroupId}`);
           }
         }
       });
-      
+
       // Trigger re-render
       const renderingEngine = cornerstoneViewportService.getRenderingEngine();
       if (renderingEngine) {
         renderingEngine.render();
       }
-      
+
       uiNotificationService.show({
         title: 'Orientation Marker',
         message: `Orientation marker style set to: ${markerType.toUpperCase()}`,
@@ -2863,21 +3225,21 @@ function commandsModule({
     },
     toggleOrientationMarkerType: () => {
       console.log('🔄 [toggleOrientationMarkerType] Toggling orientation marker type');
-      
+
       const toolGroup = ToolGroupManager.getToolGroup('default');
       if (!toolGroup) {
         console.warn('Default tool group not found');
         return;
       }
-      
+
       try {
         const currentConfig = toolGroup.getToolConfiguration(toolNames.OrientationMarker);
         const currentType = currentConfig?.overlayMarkerType ?? 2;
-        
+
         // Toggle between AXIS (2) and CUBE (1)
         const newType = currentType === 2 ? 1 : 2;
         const typeName = newType === 2 ? 'axis' : 'cube';
-        
+
         actions.setOrientationMarkerType({ markerType: typeName });
       } catch (error) {
         console.error('Error toggling orientation marker:', error);
@@ -3082,6 +3444,92 @@ function commandsModule({
       const renderingEngine = cornerstoneViewportService.getRenderingEngine();
       renderingEngine.render();
     },
+
+    /**
+     * Navigate to planning mode with axial primary and 3D layout
+     * This command navigates to the planner mode and sets up the primaryAxialWith3D layout
+     */
+    navigateToPlanningWithLayout: () => {
+      const { uiNotificationService, segmentationService } = servicesManager.services;
+
+      try {
+        console.log('🔄 [navigateToPlanningWithLayout] Starting navigation to planning mode...');
+
+        // Capture current segmentation state before navigation
+        console.log('   📊 Capturing current segmentation state...');
+        const segmentationState = captureSegmentationState(segmentationService);
+        if (segmentationState) {
+          sessionStorage.setItem('segmentationStateFromSegmentation', JSON.stringify(segmentationState));
+          console.log('   ✅ Segmentation state captured and stored');
+        }
+
+        // Get current URL and construct planner path
+        const currentPath = window.location.pathname;
+        const searchParams = window.location.search;
+
+        // Replace /segmentation with /planner, preserving query parameters
+        let plannerPath = currentPath.replace('/segmentation', '/planner');
+        if (searchParams) {
+          plannerPath += searchParams;
+        }
+
+        console.log(`   Current path: ${currentPath}`);
+        console.log(`   Planner path: ${plannerPath}`);
+
+        // Navigate to planner mode using routerService for proper mode lifecycle
+        const { routerService } = servicesManager.services;
+        if (routerService) {
+          console.log('   Using routerService for navigation...');
+          routerService.navigate(plannerPath);
+        } else {
+          console.log('   Using navigateHistory command as fallback...');
+          commandsManager.runCommand('navigateHistory', {
+            to: plannerPath,
+            options: {
+              replace: false, // Add to history stack
+            },
+          });
+        }
+
+        // Wait for navigation to complete, then set the layout
+        // Use a longer delay to ensure the mode has fully switched
+        setTimeout(() => {
+        try {
+          console.log('   Setting hanging protocol to fourUpMesh...');
+
+          // Set the hanging protocol to fourUpMesh (4 mesh window mode)
+          commandsManager.runCommand('setHangingProtocol', {
+            protocolId: 'fourUpMesh',
+          });
+
+            console.log('✅ [navigateToPlanningWithLayout] Successfully navigated to planning mode');
+
+          uiNotificationService.show({
+            title: 'Navigation',
+            message: 'Switched to planning mode with 4 mesh window layout',
+            type: 'success',
+            duration: 3000,
+          });
+          } catch (error) {
+            console.error('❌ [navigateToPlanningWithLayout] Error setting layout:', error);
+          uiNotificationService.show({
+            title: 'Navigation',
+            message: 'Switched to planning mode, but failed to set 4 mesh layout. You can manually select the layout.',
+            type: 'warning',
+            duration: 3000,
+          });
+          }
+        }, 1000); // Wait 1 second for navigation to complete
+      } catch (error) {
+        console.error('❌ [navigateToPlanningWithLayout] Error navigating to planning mode:', error);
+        uiNotificationService.show({
+          title: 'Navigation Error',
+          message: `Failed to navigate to planning mode: ${error.message || error}`,
+          type: 'error',
+          duration: 5000,
+        });
+      }
+    },
   };
 
   const definitions = {
@@ -3255,6 +3703,24 @@ function commandsModule({
     },
     setVolumeLighting: {
       commandFn: actions.setVolumeLighting,
+    },
+    toggleVolumeVisibility: {
+      commandFn: actions.toggleVolumeVisibility,
+    },
+    showVolumeRendering: {
+      commandFn: actions.showVolumeRendering,
+    },
+    hideVolumeRendering: {
+      commandFn: actions.hideVolumeRendering,
+    },
+    swapViewportWithPrimary: {
+      commandFn: actions.swapViewportWithPrimary,
+    },
+    handlePrimaryAxialWith3DDoubleClick: {
+      commandFn: actions.handlePrimaryAxialWith3DDoubleClick,
+    },
+    getVolumeVisibility: {
+      commandFn: actions.getVolumeVisibility,
     },
     resetCrosshairs: {
       commandFn: actions.resetCrosshairs,
@@ -3468,6 +3934,11 @@ function commandsModule({
     },
     setVolumeRenderingInteractionSampleDistance: {
       commandFn: actions.setVolumeRenderingInteractionSampleDistance,
+      storeContexts: [],
+      options: {},
+    },
+    navigateToPlanningWithLayout: {
+      commandFn: actions.navigateToPlanningWithLayout,
       storeContexts: [],
       options: {},
     },

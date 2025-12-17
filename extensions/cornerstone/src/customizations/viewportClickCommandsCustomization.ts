@@ -1,6 +1,6 @@
 export default {
   cornerstoneViewportClickCommands: {
-    doubleClick: ['toggleOneUp'],
+    doubleClick: ['handlePrimaryAxialWith3DDoubleClick'],
     button1: ['closeContextMenu'],
     button3: [
       {
