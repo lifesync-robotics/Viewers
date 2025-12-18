@@ -1,4 +1,5 @@
 import * as cornerstoneTools from '@cornerstonejs/tools';
+import * as csCore from '@cornerstonejs/core';
 import cloneDeep from 'lodash.clonedeep';
 
 interface BidirectionalAxis {
@@ -55,8 +56,8 @@ export async function updateSegmentationStats({
   const updatedSegmentation = cloneDeep(segmentation);
   let hasUpdates = false;
 
-  // Loop through each segment's stats
-  Object.entries(stats).forEach(([segmentIndex, segmentStats]) => {
+  // Loop through each segment's stats (using for...of to support await)
+  for (const [segmentIndex, segmentStats] of Object.entries(stats)) {
     const index = parseInt(segmentIndex);
 
     if (!updatedSegmentation.segments[index].cachedStats) {
@@ -102,7 +103,67 @@ export async function updateSegmentationStats({
       updatedSegmentation.segments[index].cachedStats.namedStats = namedStats;
       hasUpdates = true;
     }
-  });
+
+    // Calculate and store center point for segment navigation
+    // This is needed for jumpToSegmentCenter to work correctly
+    // Try to get center from stats, or calculate it from bounding box
+    try {
+      const volumeId = updatedSegmentation.representationData?.LABELMAP?.volumeId;
+      if (volumeId) {
+        const volume = csCore.cache.getVolume(volumeId);
+        if (volume) {
+          // Try to get center from segmentStats if available
+          let imageCenter: csCore.Types.Point3 | null = null;
+
+          if (segmentStats.centerOfMass) {
+            imageCenter = [
+              segmentStats.centerOfMass[0],
+              segmentStats.centerOfMass[1],
+              segmentStats.centerOfMass[2],
+            ] as csCore.Types.Point3;
+          } else {
+            // Calculate center from volume bounds if centerOfMass is not available
+            // Get the segmentation volume to calculate bounds
+            try {
+              const segmentation = updatedSegmentation;
+              const volumeId = segmentation.representationData?.LABELMAP?.volumeId;
+              if (volumeId) {
+                const segVolume = csCore.cache.getVolume(volumeId);
+                if (segVolume) {
+                  // Get the bounds of the volume
+                  const imageData = segVolume.imageData;
+                  const dimensions = imageData.getDimensions();
+
+                  // Calculate center from volume dimensions
+                  imageCenter = [
+                    dimensions[0] / 2,
+                    dimensions[1] / 2,
+                    dimensions[2] / 2,
+                  ] as csCore.Types.Point3;
+                }
+              }
+            } catch (error) {
+              console.warn(`Failed to calculate center from volume bounds for segment ${index}:`, error);
+            }
+          }
+
+          if (imageCenter) {
+            // Convert image coordinates to world coordinates
+            const worldCenter = volume.imageData.indexToWorld(imageCenter);
+
+            // Store center in the format expected by _getSegmentCenter
+            updatedSegmentation.segments[index].cachedStats.center = {
+              image: imageCenter,
+              world: worldCenter,
+            };
+            hasUpdates = true;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to calculate center for segment ${index}:`, error);
+    }
+  }
 
   return hasUpdates ? updatedSegmentation : null;
 }

@@ -24,6 +24,25 @@ interface UploadedModel {
   progress?: number;
 }
 
+// Color palette for distinct model colors (RGB values 0-1)
+const MODEL_COLOR_PALETTE: [number, number, number][] = [
+  [0.8, 0.2, 0.2],   // Red
+  [0.2, 0.6, 0.8],   // Blue
+  [0.2, 0.8, 0.3],   // Green
+  [0.9, 0.6, 0.1],   // Orange
+  [0.7, 0.3, 0.8],   // Purple
+  [0.1, 0.8, 0.8],   // Cyan
+  [0.9, 0.8, 0.2],   // Yellow
+  [0.8, 0.4, 0.6],   // Pink
+  [0.5, 0.3, 0.1],   // Brown
+  [0.4, 0.7, 0.5],   // Teal
+  [0.9, 0.4, 0.4],   // Light Red
+  [0.4, 0.4, 0.9],   // Light Blue
+];
+
+// Track loaded model count for color assignment
+let simpleGlobalModelColorIndex = 0;
+
 function ModelUploadSimple({
   viewportId,
   onComplete,
@@ -35,6 +54,16 @@ function ModelUploadSimple({
   const [uploadedModels, setUploadedModels] = useState<UploadedModel[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Skip DICOM center offset for models already in world coordinates (e.g., segmentation models)
+  const [skipDicomCenterOffset, setSkipDicomCenterOffset] = useState(false);
+
+  // Get next color from palette (cycles through colors)
+  const getNextColor = (): [number, number, number] => {
+    const color = MODEL_COLOR_PALETTE[simpleGlobalModelColorIndex % MODEL_COLOR_PALETTE.length];
+    simpleGlobalModelColorIndex++;
+    return color;
+  };
 
   const processFiles = async (files: FileList | File[]) => {
     if (onStarted) {
@@ -71,10 +100,15 @@ function ModelUploadSimple({
       );
 
       try {
+        // Get unique color for this model
+        const modelColor = getNextColor();
+        console.log(`🎨 [ModelUploadSimple] Assigning color to ${file.name}:`, modelColor);
+
         const loadedModel = await modelStateService.loadModelFromFileInput(file, {
           viewportId,
-          color: defaultColor,
+          color: modelColor,
           opacity: defaultOpacity,
+          skipDicomCenterOffset,
         });
 
         if (loadedModel) {
@@ -279,6 +313,20 @@ function ModelUploadSimple({
               Select Files
             </button>
           </div>
+
+          {/* Skip DICOM center offset checkbox */}
+          <label
+            className="flex items-center gap-2 text-sm text-white cursor-pointer"
+            onClick={e => e.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              checked={skipDicomCenterOffset}
+              onChange={e => setSkipDicomCenterOffset(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500"
+            />
+            <span>Segmentation model (already in world coordinates)</span>
+          </label>
 
           <div className="text-xs text-gray-500 max-w-md">
             <p>💡 You can select multiple files at once</p>

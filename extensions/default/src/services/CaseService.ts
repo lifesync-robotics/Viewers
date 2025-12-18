@@ -258,8 +258,26 @@ class CaseService extends PubSubService {
       const caseData = await this.getCase(this.activeCaseId);
       this.activeCase = caseData;
       console.log('📁 Active case loaded:', this.activeCase.caseId);
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to load active case:', error);
+
+      // If case not found (404), clear the invalid case ID from localStorage
+      if (error.message && (
+        error.message.includes('404') ||
+        error.message.includes('Not Found') ||
+        error.message.includes('not found')
+      )) {
+        console.warn(`⚠️ Case ${this.activeCaseId} not found, clearing from localStorage`);
+        this.activeCaseId = null;
+        localStorage.removeItem('syncforge_active_case_id');
+
+        // Broadcast that active case was cleared
+        this._broadcastEvent(EVENTS.ACTIVE_CASE_CHANGED, {
+          caseId: null,
+          case: null,
+        });
+      }
+
       this.activeCase = null;
     }
   }
@@ -482,18 +500,32 @@ class CaseService extends PubSubService {
       const response = await fetch(`${this.apiUrl}/api/cases/${caseId}`);
 
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.statusText}`);
+        // Parse error message from response if available
+        let errorMessage = `API request failed: ${response.statusText}`;
+        if (response.status === 404) {
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.error || `Case ${caseId} not found`;
+          } catch {
+            errorMessage = `Case ${caseId} not found`;
+          }
+        }
+        const error = new Error(errorMessage);
+        (error as any).status = response.status;
+        throw error;
       }
 
       const data = await response.json();
 
       if (!data.success) {
-        throw new Error(data.error || 'Failed to fetch case');
+        const error = new Error(data.error || 'Failed to fetch case');
+        (error as any).status = 404; // Treat API error as not found
+        throw error;
       }
 
       console.log(`✅ Case fetched: ${caseId}`);
       return data.case;
-    } catch (error) {
+    } catch (error: any) {
       console.error(`❌ Failed to fetch case ${caseId}:`, error);
       throw error;
     }
@@ -637,7 +669,7 @@ class CaseService extends PubSubService {
     }
   ): Promise<Study> {
     const enrollAllSeries = metadata?.enrollAllSeries ?? false;
-    
+
     // If enrollAllSeries is true, use the enroll-from-orthanc endpoint
     if (enrollAllSeries) {
       console.log(`📁 Enrolling study ${studyInstanceUID} in case ${caseId} from Orthanc with auto-series enrollment`);
@@ -678,7 +710,7 @@ class CaseService extends PubSubService {
         console.log(`📊 Series 注册统计:`);
         console.log(`   - 从 Orthanc 找到: ${seriesInfo.totalSeriesFound || 0} 个 Series`);
         console.log(`   - 成功注册: ${data.enrolledSeriesCount || 0} 个 Series`);
-        
+
         if (seriesInfo.seriesList && seriesInfo.seriesList.length > 0) {
           console.log(`📋 已注册的 Series 列表:`);
           seriesInfo.seriesList.forEach((series: any, index: number) => {
@@ -689,14 +721,14 @@ class CaseService extends PubSubService {
             console.log(`      - Instances: ${series.instanceCount || 0}`);
           });
         }
-        
+
         if (seriesInfo.errors && seriesInfo.errors.length > 0) {
           console.warn(`⚠️  Series 注册过程中的错误:`);
           seriesInfo.errors.forEach((error: any, index: number) => {
             console.warn(`   ${index + 1}. ${error.message || 'Unknown error'}`);
           });
         }
-        
+
         return data.study;
       } catch (error) {
         console.error('❌ Failed to enroll study from Orthanc:', error);

@@ -42,6 +42,25 @@ interface ServerModel {
 
 const baseClassNames = 'flex flex-row h-full gap-4 p-4';
 
+// Color palette for distinct model colors (RGB values 0-1)
+const MODEL_COLOR_PALETTE: [number, number, number][] = [
+  [0.8, 0.2, 0.2],   // Red
+  [0.2, 0.6, 0.8],   // Blue
+  [0.2, 0.8, 0.3],   // Green
+  [0.9, 0.6, 0.1],   // Orange
+  [0.7, 0.3, 0.8],   // Purple
+  [0.1, 0.8, 0.8],   // Cyan
+  [0.9, 0.8, 0.2],   // Yellow
+  [0.8, 0.4, 0.6],   // Pink
+  [0.5, 0.3, 0.1],   // Brown
+  [0.4, 0.7, 0.5],   // Teal
+  [0.9, 0.4, 0.4],   // Light Red
+  [0.4, 0.4, 0.9],   // Light Blue
+];
+
+// Track loaded model count for color assignment
+let globalModelColorIndex = 0;
+
 function ModelUpload({
   viewportId,
   onComplete,
@@ -61,6 +80,13 @@ function ModelUpload({
   const [uploadedModels, setUploadedModels] = useState<UploadedModel[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  // Get next color from palette (cycles through colors)
+  const getNextColor = (): [number, number, number] => {
+    const color = MODEL_COLOR_PALETTE[globalModelColorIndex % MODEL_COLOR_PALETTE.length];
+    globalModelColorIndex++;
+    return color;
+  };
+
   // Server models state
   const [serverModels, setServerModels] = useState<ServerModel[]>([]);
   const [selectedModelUrl, setSelectedModelUrl] = useState<string>('');
@@ -71,6 +97,9 @@ function ModelUpload({
   const [ndiProbeInfo, setNdiProbeInfo] = useState<ServerModel | null>(null);
   const [isLoadingNdiProbe, setIsLoadingNdiProbe] = useState(false);
   const [selectedNdiProbeUrl, setSelectedNdiProbeUrl] = useState<string>('');
+
+  // Skip DICOM center offset for models already in world coordinates (e.g., segmentation models)
+  const [skipDicomCenterOffset, setSkipDicomCenterOffset] = useState(false);
 
   console.log('🎨 [ModelUpload] ModelStateService available:', !!modelStateService);
   console.log('🎨 [ModelUpload] Current viewport ID:', viewportId);
@@ -128,11 +157,16 @@ function ModelUpload({
       );
 
       try {
+        // Get unique color for this model
+        const modelColor = getNextColor();
+        console.log(`🎨 [ModelUpload] Assigning color to ${file.name}:`, modelColor);
+
         const loadedModel = await modelStateService.loadModelFromFileInput(file, {
           viewportId,
-          color: defaultColor,
+          color: modelColor,
           opacity: defaultOpacity,
           visible: true,
+          skipDicomCenterOffset,
         });
 
         if (loadedModel) {
@@ -285,7 +319,7 @@ function ModelUpload({
         // Extract tool ID from filename (e.g., "DR-VR06-A32.STL" -> "DR-VR06-A32")
         // This will be used as the model ID to match tracking system expectations
         const toolId = data.probe.filename ? data.probe.filename.replace(/\.(stl|STL|obj|OBJ)$/i, '') : data.probe.id;
-        
+
         // Convert NDI probe format to ServerModel format
         const ndiProbe: ServerModel = {
           id: toolId, // Use tool ID (e.g., "DR-VR06-A32") instead of database ID
@@ -406,6 +440,17 @@ function ModelUpload({
                   <div className="text-sm text-secondary-light">
                     or drag and drop files here
                   </div>
+
+                  {/* Skip DICOM center offset checkbox */}
+                  <label className="flex items-center gap-2 text-sm text-white cursor-pointer mt-2">
+                    <input
+                      type="checkbox"
+                      checked={skipDicomCenterOffset}
+                      onChange={e => setSkipDicomCenterOffset(e.target.checked)}
+                      className="w-4 h-4 rounded border-secondary-light bg-secondary-dark text-primary-light focus:ring-primary-light"
+                    />
+                    <span>Segmentation model (already in world coordinates)</span>
+                  </label>
 
                   {/* Supported formats */}
                   <div className="text-xs text-aqua-pale">

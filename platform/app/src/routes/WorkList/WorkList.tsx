@@ -2355,7 +2355,7 @@ function WorkList({
                           }
                           onClick={() => {}}
                           dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
-                          className={!isValidMode && 'bg-[#222d44]'}
+                          className={!isValidMode ? 'bg-[#222d44]' : undefined}
                         >
                           {mode.displayName}
                         </Button>

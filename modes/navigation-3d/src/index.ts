@@ -76,14 +76,14 @@ function navigationOnModeEnter(args) {
       const utilityModule = extensionManager.getModuleEntry(
         '@ohif/extension-cornerstone.utilityModule.tools'
       );
-      
+
       if (!utilityModule?.exports?.toolNames) {
         console.warn('⚠️ [Navigation Mode] Tool names not available');
         return;
       }
-      
+
       const { toolNames } = utilityModule.exports;
-      
+
       if (!toolNames.OrientationMarker) {
         console.warn('⚠️ [Navigation Mode] OrientationMarker tool not found');
         return;
@@ -106,7 +106,7 @@ function navigationOnModeEnter(args) {
           },
         }],
       };
-      
+
       console.log('🔧 [Navigation Mode] Adding OrientationMarker tool (AXIS style, disabled by default, Stack & Volume viewports)...');
 
       toolGroupIds.forEach(toolGroupId => {
@@ -130,8 +130,42 @@ function navigationOnModeEnter(args) {
     if (toolbarService && navigationToolbarButtons) {
       // Register the buttons first
       toolbarService.register(navigationToolbarButtons);
-      console.log('✅ [Navigation Mode] NavigationOrientationMarker toolbar button registered');
-      
+      console.log('✅ [Navigation Mode] Navigation toolbar buttons registered');
+
+      // Note: Hotkeys are registered via customization service (ohif.hotkeyBindings)
+      // Add custom hotkey using keyboard event listener as fallback
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.shiftKey && event.key.toLowerCase() === 'v') {
+          event.preventDefault();
+          commandsManager.runCommand('toggleVolumeVisibility');
+          console.log('🔧 [Navigation Mode] toggleVolumeVisibility triggered via Shift+V');
+        }
+      };
+      document.addEventListener('keydown', handleKeyDown);
+      // Store for cleanup
+      (window as any).__navigationModeHotkeyHandler = handleKeyDown;
+      console.log('✅ [Navigation Mode] Hotkey Shift+V registered for toggleVolumeVisibility');
+
+      // Add ToggleVolumeVisibility to primary toolbar for easy access
+      toolbarService.addButtons([
+        {
+          id: 'ToggleVolumeVisibility',
+          sectionId: 'primary',
+          uiType: 'ohif.toolButton',
+          props: {
+            icon: 'VolumeRendering',
+            label: 'Volume',
+            tooltip: 'Toggle volume rendering visibility (Shift+V)',
+            commands: {
+              commandName: 'toggleVolumeVisibility',
+              commandOptions: {},
+            },
+            evaluate: 'evaluate.action',
+          },
+        },
+      ]);
+      console.log('✅ [Navigation Mode] ToggleVolumeVisibility button added to primary toolbar');
+
       // Update MoreTools section to include our button
       toolbarService.updateSection('MoreTools', [
         'Reset',
@@ -153,7 +187,7 @@ function navigationOnModeEnter(args) {
         'UltrasoundDirectionalTool',
         'WindowLevelRegion',
         'SegmentLabelTool',
-        'NavigationOrientationMarker', // Our custom button (unique ID, no conflict!)
+        'NavigationOrientationMarker',
       ]);
       console.log('✅ [Navigation Mode] NavigationOrientationMarker button added to MoreTools section');
     }
@@ -250,6 +284,14 @@ function navigationOnModeEnter(args) {
 function navigationOnModeExit(args) {
   console.log('🧹 [Navigation Mode] Starting cleanup...');
 
+  // Clean up hotkey event listener
+  const hotkeyHandler = (window as any).__navigationModeHotkeyHandler;
+  if (hotkeyHandler) {
+    document.removeEventListener('keydown', hotkeyHandler);
+    delete (window as any).__navigationModeHotkeyHandler;
+    console.log('✅ [Navigation Mode] Hotkey handler cleaned up');
+  }
+
   // Clean up viewport ready subscription
   if (this._viewportReadySubscription) {
     try {
@@ -311,4 +353,3 @@ const mode = {
 
 export default mode;
 export { initToolGroups, navigationToolbarButtonsCombined as toolbarButtons };
-

@@ -56,6 +56,18 @@ const segmentationRepresentationModifiedCallback = async (
     return;
   }
 
+  // Skip automatic Surface representation for 3D viewports to prevent system hang
+  // Building 3D surfaces from labelmaps can be very expensive and cause the system to freeze.
+  // Users should manually upload pre-generated 3D models (OBJ/STL) instead.
+  if (viewport.type === CoreEnums.ViewportType.VOLUME_3D) {
+    console.log(
+      '⚠️ [HydrateSegmentationSynchronizer] Skipping automatic Surface representation for 3D viewport:',
+      targetViewportId,
+      '- Use Upload Models button to load pre-generated 3D models instead'
+    );
+    return;
+  }
+
   const targetViewportRepresentation = segmentationService.getSegmentationRepresentations(
     targetViewportId,
     { segmentationId }
@@ -65,12 +77,10 @@ const segmentationRepresentationModifiedCallback = async (
     return;
   }
 
-  // Ensure the segmentation representation aligns with the target viewport type.
+  // For non-3D viewports, use the appropriate representation type
   const type: Enums.SegmentationRepresentations =
-    viewport.type === CoreEnums.ViewportType.VOLUME_3D
-      ? Enums.SegmentationRepresentations.Surface
-      : ((segmentationRepresentationType as Enums.SegmentationRepresentations) ??
-        Enums.SegmentationRepresentations.Labelmap);
+    (segmentationRepresentationType as Enums.SegmentationRepresentations) ??
+    Enums.SegmentationRepresentations.Labelmap;
 
   await segmentationService.addSegmentationRepresentation(targetViewportId, {
     segmentationId,

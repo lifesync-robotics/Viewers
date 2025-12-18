@@ -5,6 +5,7 @@
  */
 
 export { planningBackendService, default as PlanningBackendService } from './planningBackendService';
+export { default as ROISelectionService } from './ROISelectionService/ROISelectionService';
 export type {
   SessionStartRequest,
   SessionStartResponse,
