@@ -300,8 +300,18 @@ class SegmentationService extends PubSubService {
 
     let isConverted = false;
 
-    const defaultRepresentationType: csToolsEnums.SegmentationRepresentations =
-      csViewport.type === ViewportType.VOLUME_3D ? SURFACE : LABELMAP;
+    // For 3D viewports, skip automatic Surface representation to prevent system hang
+    // Users should use the Upload Models button to load pre-generated 3D models (OBJ/STL) instead
+    if (csViewport.type === ViewportType.VOLUME_3D) {
+      console.log(
+        '⚠️ [SegmentationService] Skipping automatic segmentation representation for 3D viewport:',
+        viewportId,
+        '- Use Upload Models button to load pre-generated 3D models instead'
+      );
+      return;
+    }
+
+    const defaultRepresentationType: csToolsEnums.SegmentationRepresentations = LABELMAP;
     let representationTypeToUse = type || defaultRepresentationType;
 
     if (representationTypeToUse === LABELMAP) {
@@ -310,7 +320,7 @@ class SegmentationService extends PubSubService {
         segmentation
       ) || { isVolumeViewport: false, isVolumeSegmentation: false };
 
-      ({ representationTypeToUse, isConverted } = await this.handleViewportConversion(
+      const result = await this.handleViewportConversion(
         isVolumeViewport,
         isVolumeSegmentation,
         csViewport,
@@ -318,7 +328,19 @@ class SegmentationService extends PubSubService {
         viewportId,
         segmentationId,
         representationTypeToUse
-      ));
+      );
+
+      representationTypeToUse = result.representationTypeToUse;
+      isConverted = result.isConverted;
+
+      // Skip this viewport if flagged (e.g., 3D viewports to prevent Surface auto-build)
+      if ((result as any).skipViewport) {
+        console.log(
+          '⚠️ [SegmentationService] Skipping segmentation representation for viewport:',
+          viewportId
+        );
+        return;
+      }
     }
 
     await this._addSegmentationRepresentation(
@@ -1400,9 +1422,18 @@ class SegmentationService extends PubSubService {
 
   private async handleVolumeViewportCase(csViewport, segmentation, isVolumeSegmentation) {
     if (csViewport.type === ViewportType.VOLUME_3D) {
+      // Skip automatic Surface representation for 3D viewports to prevent system hang
+      // Building 3D surfaces from labelmaps can be very expensive and cause the system to freeze.
+      // Users should manually upload pre-generated 3D models (OBJ/STL) instead.
+      console.warn(
+        '⚠️ [SegmentationService] Skipping automatic Surface representation for 3D viewport.',
+        'Use Upload Models button to load pre-generated 3D models (OBJ/STL) instead.'
+      );
+      // Return null to indicate we should skip this viewport
       return {
-        representationTypeToUse: SURFACE,
+        representationTypeToUse: null,
         isConverted: false,
+        skipViewport: true,
       };
     } else {
       await this.handleVolumeViewport(

@@ -1,5 +1,4 @@
 import React from 'react';
-import { withAppTypes } from '@ohif/core';
 
 // Import LifeSync components
 import ScrewManagementPanel from '../components/ScrewManagement/ScrewManagementPanel';
@@ -123,6 +122,10 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         />
       ),
     },
+  ];
+};
+
+export default getPanelModule;
     {
       name: 'vertebral-labels',
       iconName: 'tool-more-menu',
@@ -137,10 +140,3 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         />
       ),
     },
-  ];
-};
-
-export default getPanelModule;
-
-// Import LifeSync components
-import VertebralLabelsPanel from '../components/VertebralLabels/VertebralLabelsPanel';

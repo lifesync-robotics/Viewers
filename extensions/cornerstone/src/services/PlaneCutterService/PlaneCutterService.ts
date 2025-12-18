@@ -139,6 +139,7 @@ class PlaneCutterService extends PubSubService {
     const { modelId } = event;
 
     console.log(`🔪 [PlaneCutterService] Model added: ${modelId}`);
+    console.log(`   Current status: enabled=${this.isEnabled}, planeCutters=${this.planeCutters.length}`);
 
     if (!this.isEnabled) {
       console.log(`   ℹ️ Plane cutters not enabled, skipping`);
@@ -150,6 +151,7 @@ class PlaneCutterService extends PubSubService {
       return;
     }
 
+    console.log(`   ✅ Adding model ${modelId} to ${this.planeCutters.length} plane cutters`);
     // Add model to all plane cutters
     this.addModelToCutters(modelId);
   }
@@ -205,11 +207,16 @@ class PlaneCutterService extends PubSubService {
         return false;
       }
 
-      // Define the viewport IDs we need - support both fourUpMesh and MPR layouts
+      // Define the viewport IDs we need - support fourUpMesh, primaryAxialWith3D, and MPR layouts
       const targetViewports = [
+        // fourUpMesh layout viewport IDs
         { id: 'fourUpMesh-mpr-axial', orientation: 'axial' as const },
         { id: 'fourUpMesh-mpr-coronal', orientation: 'coronal' as const },
         { id: 'fourUpMesh-mpr-sagittal', orientation: 'sagittal' as const },
+        // primaryAxialWith3D layout viewport IDs (generated automatically by Cornerstone)
+        // Note: primaryAxialWith3D viewports don't have fixed IDs, they are generated dynamically
+        // So we rely on the orientation-based lookup for this layout
+        // MPR layout viewport IDs
         { id: 'mpr-axial', orientation: 'axial' as const },
         { id: 'mpr-coronal', orientation: 'coronal' as const },
         { id: 'mpr-sagittal', orientation: 'sagittal' as const },
@@ -266,17 +273,127 @@ class PlaneCutterService extends PubSubService {
         }
       }
 
+      // Always try finding by orientation as well (for layouts like primaryAxialWith3D)
+      // This ensures we find viewports even if they don't have specific IDs
+      if (orthographicViewports.length < 3) {
+        console.log(`🔍 [PlaneCutterService] Only found ${orthographicViewports.length}/3 viewports by ID, trying to find by orientation...`);
+
+        // Get all viewports from all engines
+        const allViewports: any[] = [];
+        for (const engine of renderingEngines) {
+          try {
+            const engineViewports = engine.getViewports();
+            console.log(`   📊 Engine ${engine.id} has ${engineViewports.length} viewports`);
+            allViewports.push(...engineViewports);
+          } catch (error) {
+            console.warn(`⚠️ Could not get viewports from engine:`, error);
+          }
+        }
+        console.log(`   📊 Total viewports found: ${allViewports.length}`);
+
+        // Find viewports by orientation using CornerstoneViewportService
+        const { cornerstoneViewportService } = this.servicesManager?.services || {};
+
+        if (cornerstoneViewportService) {
+          console.log(`   🔍 Checking ${allViewports.length} viewports for orientation...`);
+          for (const vp of allViewports) {
+            // Skip 3D viewports
+            if (vp.type === 'volume3d' || vp.viewportType === 'volume3d') {
+              console.log(`   ⏭️  Skipping 3D viewport: ${vp.id}`);
+              continue;
+            }
+
+            // Skip if we already have this orientation
+            const existingOrientation = orthographicViewports.find(ov => ov.viewport.id === vp.id)?.orientation;
+            if (existingOrientation) {
+              console.log(`   ⏭️  Skipping viewport ${vp.id} (already found as ${existingOrientation})`);
+              continue;
+            }
+
+            console.log(`   🔍 Checking viewport: ${vp.id} (type: ${vp.type || vp.viewportType})`);
+
+            try {
+              // Try to get orientation from viewport service
+              const viewportInfo = cornerstoneViewportService.getViewportInfo(vp.id);
+              if (viewportInfo) {
+                const orientation = viewportInfo.getOrientation();
+                console.log(`   📍 Viewport ${vp.id}: orientation from service = ${orientation}`);
+
+                if (orientation === 'axial' && !foundOrientations.has('axial')) {
+                  const renderer = vp.getRenderer();
+                  if (renderer) {
+                    orthographicViewports.push({ viewport: vp, orientation: 'axial' });
+                    foundOrientations.add('axial');
+                    console.log(`  ✅ Found axial viewport by orientation: ${vp.id}`);
+                  }
+                } else if (orientation === 'sagittal' && !foundOrientations.has('sagittal')) {
+                  const renderer = vp.getRenderer();
+                  if (renderer) {
+                    orthographicViewports.push({ viewport: vp, orientation: 'sagittal' });
+                    foundOrientations.add('sagittal');
+                    console.log(`  ✅ Found sagittal viewport by orientation: ${vp.id}`);
+                  }
+                } else if (orientation === 'coronal' && !foundOrientations.has('coronal')) {
+                  const renderer = vp.getRenderer();
+                  if (renderer) {
+                    orthographicViewports.push({ viewport: vp, orientation: 'coronal' });
+                    foundOrientations.add('coronal');
+                    console.log(`  ✅ Found coronal viewport by orientation: ${vp.id}`);
+                  }
+                }
+              }
+            } catch (error) {
+              console.log(`   ⚠️  Could not get orientation from service for ${vp.id}:`, error.message);
+              // Try fallback: check viewportOptions
+              const viewportOrientation = vp.viewportOptions?.orientation;
+              console.log(`   📍 Viewport ${vp.id}: viewportOptions.orientation = ${viewportOrientation || 'undefined'}`);
+              if (viewportOrientation) {
+                if (viewportOrientation === 'axial' && !foundOrientations.has('axial')) {
+                  const renderer = vp.getRenderer();
+                  if (renderer) {
+                    orthographicViewports.push({ viewport: vp, orientation: 'axial' });
+                    foundOrientations.add('axial');
+                    console.log(`  ✅ Found axial viewport by viewportOptions: ${vp.id}`);
+                  }
+                } else if (viewportOrientation === 'sagittal' && !foundOrientations.has('sagittal')) {
+                  const renderer = vp.getRenderer();
+                  if (renderer) {
+                    orthographicViewports.push({ viewport: vp, orientation: 'sagittal' });
+                    foundOrientations.add('sagittal');
+                    console.log(`  ✅ Found sagittal viewport by viewportOptions: ${vp.id}`);
+                  }
+                } else if (viewportOrientation === 'coronal' && !foundOrientations.has('coronal')) {
+                  const renderer = vp.getRenderer();
+                  if (renderer) {
+                    orthographicViewports.push({ viewport: vp, orientation: 'coronal' });
+                    foundOrientations.add('coronal');
+                    console.log(`  ✅ Found coronal viewport by viewportOptions: ${vp.id}`);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       if (orthographicViewports.length === 0) {
         console.warn('⚠️ [PlaneCutterService] No orthographic viewports found - viewports may not be ready yet');
         return false;
       }
 
       if (orthographicViewports.length < 3) {
-        console.warn(`⚠️ [PlaneCutterService] Only found ${orthographicViewports.length}/3 orthographic viewports - some may not be ready yet`);
-        return false;
+        console.warn(`⚠️ [PlaneCutterService] Only found ${orthographicViewports.length}/3 orthographic viewports`);
+        console.warn(`   Found orientations: ${Array.from(foundOrientations).join(', ') || 'none'}`);
+        console.warn(`   Missing orientations: ${['axial', 'sagittal', 'coronal'].filter(o => !foundOrientations.has(o)).join(', ')}`);
+        console.warn(`   This may be normal if the layout does not have all required viewports`);
+        // Continue anyway if we have at least one viewport (for debugging)
+        if (orthographicViewports.length === 0) {
+          return false;
+        }
+        console.warn(`   ⚠️ Continuing with ${orthographicViewports.length} viewport(s) - some may not work correctly`);
       }
 
-      console.log(`✅ [PlaneCutterService] Found all 3 orthographic viewports:`, orthographicViewports.map(v => v.viewport.id));
+      console.log(`✅ [PlaneCutterService] Found ${orthographicViewports.length} orthographic viewport(s):`, orthographicViewports.map(v => `${v.viewport.id} (${v.orientation})`));
 
       // Clear any existing plane cutters before creating new ones
       if (this.planeCutters.length > 0) {
@@ -622,6 +739,8 @@ class PlaneCutterService extends PubSubService {
    */
   public enable(): void {
     console.log('🟢 [PlaneCutterService] Enabling plane cutters');
+    console.log(`   Current plane cutters: ${this.planeCutters.length}`);
+    console.log(`   Current status: enabled=${this.isEnabled}`);
 
     if (this.planeCutters.length === 0) {
       console.warn('⚠️ [PlaneCutterService] No plane cutters initialized - cannot enable');
@@ -631,6 +750,7 @@ class PlaneCutterService extends PubSubService {
     }
 
     this.isEnabled = true;
+    console.log('✅ [PlaneCutterService] Plane cutters enabled');
 
     // Add all existing models to cutters
     const { modelStateService } = this.servicesManager.services;
@@ -639,10 +759,12 @@ class PlaneCutterService extends PubSubService {
     console.log(`   Found ${models.length} existing models to add to ${this.planeCutters.length} plane cutters`);
 
     for (const model of models) {
+      console.log(`   Adding existing model: ${model.metadata.id}`);
       this.addModelToCutters(model.metadata.id);
     }
 
     this._broadcastEvent(EVENTS.PLANE_CUTTER_ENABLED, {});
+    console.log('🎉 [PlaneCutterService] Enable process completed');
   }
 
   /**

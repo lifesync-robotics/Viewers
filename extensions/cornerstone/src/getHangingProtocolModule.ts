@@ -6,6 +6,7 @@ import { mprAnd3DVolumeViewport } from './hps/mprAnd3DVolumeViewport';
 import { only3D } from './hps/only3D';
 import { primary3D } from './hps/primary3D';
 import { primaryAxial } from './hps/primaryAxial';
+import { primaryAxialWith3D } from './hps/primaryAxialWith3D';
 import { frameView } from './hps/frameView';
 
 function getHangingProtocolModule() {
@@ -33,6 +34,10 @@ function getHangingProtocolModule() {
     {
       name: primaryAxial.id,
       protocol: primaryAxial,
+    },
+    {
+      name: primaryAxialWith3D.id,
+      protocol: primaryAxialWith3D,
     },
     {
       name: only3D.id,

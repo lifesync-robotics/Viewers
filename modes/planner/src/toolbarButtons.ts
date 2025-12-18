@@ -61,7 +61,21 @@ const plannerToolbarButtons: Button[] = [
       ],
     },
   },
+  {
+    id: 'ToggleVolumeVisibility',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'VolumeRendering',
+      label: 'Volume',
+      tooltip: 'Toggle volume rendering visibility (Shift+V)',
+      commands: {
+        commandName: 'toggleVolumeVisibility',
+        commandOptions: {},
+      },
+      // Simple action evaluator - always enabled
+      evaluate: 'evaluate.action',
+    },
+  },
 ];
 
 export default plannerToolbarButtons;
-
