@@ -71,9 +71,9 @@ class TrackingService extends PubSubService {
   //   [0.0000, 0.0000, 0.0000, 1.0000]
   // ]; // PR space to DICOM image space (from registration)
   private prToDicomMatrix: number[][] = [
-  [-0.9814, -0.0938, 0.1673, -20.46],
-    [0.0522, 0.7083, 0.7039, 159.9],
-    [-0.1846, 0.6996, -0.69, 219.2],
+  [-0.987, -0.0495, 0.1475, -23.63],
+    [0.053, 0.7803, 0.6229, 168.7],
+    [-0.146, 0.6233, -0.768, 146.4],
     [0.0000, 0.0000, 0.0000, 1.0000]
   ]; // PR space to DICOM image space (from registration)
   

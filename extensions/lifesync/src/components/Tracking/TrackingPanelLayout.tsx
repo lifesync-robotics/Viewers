@@ -147,20 +147,20 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
     markerToTooltipMatrix.map(row => [...row])
   );
 
-  // String representations for input fields from editable matrices
-  const prToDicomMatrixInput = React.useMemo(() =>
-    editablePrToDicomMatrix.map(row => row.map(val => val.toString())),
-    [editablePrToDicomMatrix]
+  // String representations for input fields - maintained separately to allow intermediate input states
+  const [prToDicomMatrixInput, setPrToDicomMatrixInput] = React.useState<string[][]>(
+    prToDicomMatrix.map(row => row.map(val => val.toString()))
   );
-  const markerToTooltipMatrixInput = React.useMemo(() =>
-    editableMarkerToTooltipMatrix.map(row => row.map(val => val.toString())),
-    [editableMarkerToTooltipMatrix]
+  const [markerToTooltipMatrixInput, setMarkerToTooltipMatrixInput] = React.useState<string[][]>(
+    markerToTooltipMatrix.map(row => row.map(val => val.toString()))
   );
 
   // Sync editable matrices when service matrices change
   React.useEffect(() => {
     setEditablePrToDicomMatrix(prToDicomMatrix.map(row => [...row]));
     setEditableMarkerToTooltipMatrix(markerToTooltipMatrix.map(row => [...row]));
+    setPrToDicomMatrixInput(prToDicomMatrix.map(row => row.map(val => val.toString())));
+    setMarkerToTooltipMatrixInput(markerToTooltipMatrix.map(row => row.map(val => val.toString())));
   }, [prToDicomMatrix, markerToTooltipMatrix]);
 
   const primaryButtonLabel = !selectedConfigId
@@ -331,6 +331,7 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                     onClick={() => {
                       const identity = identityMatrix.map(row => [...row]);
                       setEditablePrToDicomMatrix(identity);
+                      setPrToDicomMatrixInput(identity.map(row => row.map(val => val.toString())));
                       setMatricesApplied(false);
                     }}
                     className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
@@ -347,22 +348,46 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                         value={val}
                         onChange={(e) => {
                           const inputValue = e.target.value;
-                          // Update editable matrix directly
-                          const parsed = parseFloat(inputValue);
-                          if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
-                            const newMatrix = editablePrToDicomMatrix.map(r => [...r]);
-                            newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
-                            setEditablePrToDicomMatrix(newMatrix);
+                          
+                          // Allow intermediate input states for negative numbers and decimals
+                          // Valid patterns: empty, "-", ".", "-.", valid numbers, partial numbers like "1.", "-1.", "-.5"
+                          const isValidPartialInput = 
+                            inputValue === '' || 
+                            inputValue === '-' || 
+                            inputValue === '.' || 
+                            inputValue === '-.' ||
+                            /^-?\d*\.?\d*$/.test(inputValue);
+                          
+                          if (isValidPartialInput) {
+                            // Update string input immediately
+                            const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
+                            newInputMatrix[i][j] = inputValue;
+                            setPrToDicomMatrixInput(newInputMatrix);
+                            
+                            // Update numeric matrix only if we have a valid complete number
+                            const parsed = parseFloat(inputValue);
+                            if (!isNaN(parsed)) {
+                              const newMatrix = editablePrToDicomMatrix.map(r => [...r]);
+                              newMatrix[i][j] = parsed;
+                              setEditablePrToDicomMatrix(newMatrix);
+                            }
+                            
+                            setMatricesApplied(false);
                           }
-                          setMatricesApplied(false);
                         }}
                         onBlur={(e) => {
-                          // On blur, clean up the input to show valid number
+                          // On blur, ensure we have a valid number and clean up the display
                           const parsed = parseFloat(e.target.value);
                           const finalValue = isNaN(parsed) ? 0 : parsed;
+                          
+                          // Update both numeric matrix and string input
                           const newMatrix = editablePrToDicomMatrix.map(r => [...r]);
                           newMatrix[i][j] = finalValue;
                           setEditablePrToDicomMatrix(newMatrix);
+                          
+                          const newInputMatrix = prToDicomMatrixInput.map(r => [...r]);
+                          newInputMatrix[i][j] = finalValue.toString();
+                          setPrToDicomMatrixInput(newInputMatrix);
                         }}
                         className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
                       />
@@ -379,6 +404,7 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                     onClick={() => {
                       const identity = identityMatrix.map(row => [...row]);
                       setEditableMarkerToTooltipMatrix(identity);
+                      setMarkerToTooltipMatrixInput(identity.map(row => row.map(val => val.toString())));
                       setMatricesApplied(false);
                     }}
                     className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
@@ -395,22 +421,46 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
                         value={val}
                         onChange={(e) => {
                           const inputValue = e.target.value;
-                          // Update editable matrix directly
-                          const parsed = parseFloat(inputValue);
-                          if (!isNaN(parsed) || inputValue === '' || inputValue === '-' || inputValue === '.' || inputValue === '-.') {
-                            const newMatrix = editableMarkerToTooltipMatrix.map(r => [...r]);
-                            newMatrix[i][j] = isNaN(parsed) ? 0 : parsed;
-                            setEditableMarkerToTooltipMatrix(newMatrix);
+                          
+                          // Allow intermediate input states for negative numbers and decimals
+                          // Valid patterns: empty, "-", ".", "-.", valid numbers, partial numbers like "1.", "-1.", "-.5"
+                          const isValidPartialInput = 
+                            inputValue === '' || 
+                            inputValue === '-' || 
+                            inputValue === '.' || 
+                            inputValue === '-.' ||
+                            /^-?\d*\.?\d*$/.test(inputValue);
+                          
+                          if (isValidPartialInput) {
+                            // Update string input immediately
+                            const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
+                            newInputMatrix[i][j] = inputValue;
+                            setMarkerToTooltipMatrixInput(newInputMatrix);
+                            
+                            // Update numeric matrix only if we have a valid complete number
+                            const parsed = parseFloat(inputValue);
+                            if (!isNaN(parsed)) {
+                              const newMatrix = editableMarkerToTooltipMatrix.map(r => [...r]);
+                              newMatrix[i][j] = parsed;
+                              setEditableMarkerToTooltipMatrix(newMatrix);
+                            }
+                            
+                            setMatricesApplied(false);
                           }
-                          setMatricesApplied(false);
                         }}
                         onBlur={(e) => {
-                          // On blur, clean up the input to show valid number
+                          // On blur, ensure we have a valid number and clean up the display
                           const parsed = parseFloat(e.target.value);
                           const finalValue = isNaN(parsed) ? 0 : parsed;
+                          
+                          // Update both numeric matrix and string input
                           const newMatrix = editableMarkerToTooltipMatrix.map(r => [...r]);
                           newMatrix[i][j] = finalValue;
                           setEditableMarkerToTooltipMatrix(newMatrix);
+                          
+                          const newInputMatrix = markerToTooltipMatrixInput.map(r => [...r]);
+                          newInputMatrix[i][j] = finalValue.toString();
+                          setMarkerToTooltipMatrixInput(newInputMatrix);
                         }}
                         className="w-full px-1 py-1 text-xs font-mono text-white bg-gray-800 border border-gray-600 rounded focus:outline-none focus:border-blue-500"
                       />

@@ -316,28 +316,30 @@ export function getCameraConfigForView(
 
   switch (viewType) {
     case 'axial':
-      // Axial view: looking down along Z-axis (superior → inferior)
-      viewDirection = vec3.fromValues(0, 0, -1); // Looking down
+      // Axial view: looking along tooltip Z-axis (follows tooltip orientation)
+      viewDirection = vec3.clone(tooltipZAxis); // Looking along tooltip Z-axis
+      vec3.negate(viewDirection, viewDirection);
       viewUp = vec3.clone(tooltipYAxis); // Tooltip Y-axis points up in view
       break;
 
     case 'sagittal':
-      // Sagittal view: looking from side along X-axis (left → right or right → left)
+      // Sagittal view: looking along tooltip X-axis (left → right or right → left)
       viewDirection = vec3.clone(tooltipXAxis); // Looking along tooltip X-axis
       vec3.negate(viewDirection, viewDirection);
-      viewUp = vec3.fromValues(0, 0, 1); // Z-axis (superior) points up
+      viewUp = vec3.clone(tooltipZAxis); // Tooltip Z-axis points up (perpendicular to axial)
       break;
 
     case 'coronal':
-      // Coronal view: looking from front/back along Y-axis (anterior → posterior or posterior → anterior)
+      // Coronal view: looking along tooltip Y-axis (anterior → posterior or posterior → anterior)
       viewDirection = vec3.clone(tooltipYAxis); // Looking along tooltip Y-axis
       vec3.negate(viewDirection, viewDirection);
-      viewUp = vec3.fromValues(0, 0, 1); // Z-axis (superior) points up
+      viewUp = vec3.clone(tooltipZAxis); // Tooltip Z-axis points up (perpendicular to axial)
       break;
 
     default:
       // Default to axial
-      viewDirection = vec3.fromValues(0, 0, -1);
+      viewDirection = vec3.clone(tooltipZAxis);
+      vec3.negate(viewDirection, viewDirection);
       viewUp = vec3.clone(tooltipYAxis);
       break;
   }
