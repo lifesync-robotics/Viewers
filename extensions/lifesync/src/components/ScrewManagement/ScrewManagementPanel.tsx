@@ -1088,24 +1088,24 @@ export default function ScrewManagementPanel({ servicesManager }) {
    */
   const parseLevelAndSideFromLabel = (label: string): { level: string; side: string } => {
     const trimmedLabel = label.trim();
-
+    
     // Pattern 1: With separator (L3-L, L3-R, T5-L, etc.)
     // Matches: {level}-{side_abbr}, where level = L/T/C/S + number, side_abbr = L or R
     const patternWithSeparator = /^([LTCS]\d+)[-\s]([LR])$/i;
     const matchWithSeparator = trimmedLabel.match(patternWithSeparator);
-
+    
     if (matchWithSeparator) {
       const level = matchWithSeparator[1].toUpperCase(); // L3, T5, C7, S1, etc.
       const sideAbbr = matchWithSeparator[2].toUpperCase(); // L or R
       const side = sideAbbr === 'L' ? 'left' : 'right';
       return { level, side };
     }
-
+    
     // Pattern 2: Without separator (L3L, L3R, T5L, etc.)
     // Matches: {level}{side_abbr}, where level = L/T/C/S + number, side_abbr = L or R
     const patternWithoutSeparator = /^([LTCS]\d+)([LR])$/i;
     const matchWithoutSeparator = trimmedLabel.match(patternWithoutSeparator);
-
+    
     if (matchWithoutSeparator) {
       const level = matchWithoutSeparator[1].toUpperCase(); // L3, T5, C7, S1, etc.
       const sideAbbr = matchWithoutSeparator[2].toUpperCase(); // L or R
@@ -2324,8 +2324,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
     const newCapOffset = (newLength / 2) + (capHeight / 2) + capCenterOffset;
 
     // Create screw transform by offsetting backwards from cap position
-    const screwTransform = capTransform instanceof Float32Array
-      ? Array.from(capTransform)
+    const screwTransform = capTransform instanceof Float32Array 
+      ? Array.from(capTransform) 
       : [...capTransform];
 
     // Reverse the offset: move backwards along coronal direction
@@ -2400,7 +2400,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
         // ✅ Cap exists - use cap position as reference
         console.log(`✅ Found cap model - using cap position as reference`);
         const capTransform = modelStateService.getScrewTransform(capModel.metadata.id);
-
+        
         if (capTransform && capTransform.length === 16) {
           // Calculate new screw transform from cap position
           newScrewTransform = calculateScrewTransformFromCap(capTransform, updatedLength);
@@ -2425,8 +2425,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
           throw new Error('Cannot get transform matrix for screw');
         }
 
-        newScrewTransform = currentTransform instanceof Float32Array
-          ? Array.from(currentTransform)
+        newScrewTransform = currentTransform instanceof Float32Array 
+          ? Array.from(currentTransform) 
           : [...currentTransform];
         console.log(`⚠️ Using existing screw transform (cap not found or invalid)`);
       }
@@ -2452,7 +2452,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
           throw new Error(updateResponse.error || 'Backend update failed');
         }
         console.log('✅ Screw updated in backend');
-
+        
         // ✅ IMPORTANT: Reload the updated screw from backend to ensure state sync
         // This prevents the issue where panel reopen shows old data
         try {
