@@ -18,6 +18,8 @@ import {
   jumpToFiducialPosition,
   syncFiducialsToViewport,
   removeFiducialFromViewport,
+  updateFiducialAnnotationInViewport,
+  getCrosshairPosition,
 } from './fiducialUtils';
 import './RegistrationPanel.css';
 
@@ -77,6 +79,11 @@ export default function FiducialTemplateEditorPanel({
       return;
     }
 
+    if (!caseId) {
+      setError('Case ID is required to load template. Please ensure case ID is available.');
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
@@ -92,12 +99,12 @@ export default function FiducialTemplateEditorPanel({
 
       console.log('📥 Loading fiducial template...');
       const result = await registrationService.loadFiducials(seriesInstanceUID, {
-        case_id: caseId || undefined,
+        case_id: caseId,
       });
 
       setFiducials(result.fiducials);
       setTemplateLoaded(true);
-      setTemplateId(result.template_id);
+      setTemplateId(result.template_id);  // 保存 template_id 用于后续更新
       setSuccessMessage(`Template loaded: ${result.fiducials.length} fiducials`);
       setError(null);
 
@@ -119,6 +126,11 @@ export default function FiducialTemplateEditorPanel({
       return;
     }
 
+    if (!caseId) {
+      setError('Case ID is required to save template. Please ensure case ID is available.');
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
@@ -134,8 +146,9 @@ export default function FiducialTemplateEditorPanel({
 
       console.log('💾 Saving fiducial template...');
       const result = await registrationService.saveFiducials(seriesInstanceUID, fiducials, {
-        case_id: caseId || undefined,
+        case_id: caseId,
         created_by: 'OHIF User',
+        template_id: templateId || undefined,  // 如果已有 templateId，传递它以便更新
       });
 
       setTemplateLoaded(true);
@@ -184,7 +197,7 @@ export default function FiducialTemplateEditorPanel({
         const newFiducial: Fiducial = {
           ...result.fiducial,
           point_id: pointId,
-          label: `Fiducial ${fiducials.length + 1}`,
+          label: pointId, // Use point_id as label (e.g., "F1"), user can edit later
           placed_by: 'OHIF User',
         };
 
@@ -206,18 +219,42 @@ export default function FiducialTemplateEditorPanel({
   const handleEditFiducial = (fiducialId: string) => {
     const fiducial = fiducials.find(f => f.point_id === fiducialId);
     if (fiducial) {
-      setEditingFiducial(fiducial);
+      // Get current crosshair position
+      const crosshairPos = getCrosshairPosition(servicesManager);
+
+      if (crosshairPos && crosshairPos.length >= 3) {
+        // Update fiducial position to crosshair position
+        const updatedFiducial: Fiducial = {
+          ...fiducial,
+          dicom_position_mm: [crosshairPos[0], crosshairPos[1], crosshairPos[2]],
+        };
+        setEditingFiducial(updatedFiducial);
+        console.log(`✅ Updated fiducial ${fiducialId} position to crosshair:`, crosshairPos);
+      } else {
+        // If no crosshair position found, use original position
+        console.warn('⚠️ No crosshair position found, using original position');
+        setEditingFiducial(fiducial);
+      }
+
       setSelectedFiducialId(fiducialId);
     }
   };
 
-  const handleSaveFiducial = (updatedFiducial: Fiducial) => {
-    setFiducials(prev =>
-      prev.map(f => (f.point_id === updatedFiducial.point_id ? updatedFiducial : f))
+  const handleSaveFiducial = async (updatedFiducial: Fiducial) => {
+    // Immediately update React state (UI responds instantly)
+    const updatedFiducials = fiducials.map(f =>
+      f.point_id === updatedFiducial.point_id ? updatedFiducial : f
     );
-    setSuccessMessage(`Fiducial ${updatedFiducial.point_id} updated`);
+    setFiducials(updatedFiducials);
+
+    // Immediately update viewport annotation (user sees instant feedback)
+    updateFiducialAnnotationInViewport(servicesManager, updatedFiducial);
+
+    // Only update UI, don't save to database
+    // Database will be saved when user clicks "Save Template" button
+    setSuccessMessage(`Fiducial ${updatedFiducial.point_id} updated (click "Save Template" to persist)`);
     setTimeout(() => setSuccessMessage(null), 3000);
-    console.log('✅ Fiducial updated:', updatedFiducial);
+    console.log('✅ Fiducial updated (not saved to database yet):', updatedFiducial);
   };
 
   const handleJumpToFiducial = (fiducialId: string) => {
@@ -362,4 +399,3 @@ export default function FiducialTemplateEditorPanel({
     </div>
   );
 }
-

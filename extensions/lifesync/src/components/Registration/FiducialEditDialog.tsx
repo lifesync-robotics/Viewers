@@ -46,6 +46,7 @@ export default function FiducialEditDialog({
       anatomical_landmark: anatomicalLandmark,
       notes,
       confidence,
+      // dicom_position_mm is already updated from crosshair position in handleEditFiducial
     };
     onSave(updatedFiducial);
     onClose();
@@ -123,6 +124,9 @@ export default function FiducialEditDialog({
             <label>DICOM Position (mm):</label>
             <div className="position-display">
               [{fiducial.dicom_position_mm.map(v => v.toFixed(2)).join(', ')}]
+            </div>
+            <div className="position-hint" style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
+              Position updated from crosshair location when Edit was clicked
             </div>
           </div>
 

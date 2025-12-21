@@ -30,6 +30,7 @@ interface FiducialMarkerAnnotation extends annotation.Annotation {
     };
     label?: string;
     radius?: number; // Sphere radius in mm
+    color?: number[]; // Custom color [R, G, B] for projected points (e.g., [255, 100, 100] for red)
   };
 }
 
@@ -124,7 +125,12 @@ class FiducialMarkerTool extends AnnotationTool {
   /**
    * Check if mouse is near annotation (for interaction)
    */
-  isPointNearTool = (element: HTMLDivElement, annotation: FiducialMarkerAnnotation, canvasCoords: cs3DTypes.Point2, proximity: number): boolean => {
+  isPointNearTool = (
+    element: HTMLDivElement,
+    annotation: FiducialMarkerAnnotation,
+    canvasCoords: cs3DTypes.Point2,
+    proximity: number
+  ): boolean => {
     const enabledElement = getEnabledElement(element);
     const { viewport } = enabledElement;
 
@@ -135,7 +141,10 @@ class FiducialMarkerTool extends AnnotationTool {
     const canvasPoint = viewport.worldToCanvas(point);
 
     // Calculate distance in canvas space
-    const dist = vec3.distance([canvasPoint[0], canvasPoint[1], 0], [canvasCoords[0], canvasCoords[1], 0]);
+    const dist = vec3.distance(
+      [canvasPoint[0], canvasPoint[1], 0],
+      [canvasCoords[0], canvasCoords[1], 0]
+    );
 
     return dist < proximity;
   };
@@ -150,7 +159,10 @@ class FiducialMarkerTool extends AnnotationTool {
   /**
    * Render the annotation
    */
-  renderAnnotation = (enabledElement: cs3DTypes.IEnabledElement, svgDrawingHelper: any): boolean => {
+  renderAnnotation = (
+    enabledElement: cs3DTypes.IEnabledElement,
+    svgDrawingHelper: any
+  ): boolean => {
     let renderStatus = false;
     const { viewport } = enabledElement;
     const { element } = viewport;
@@ -178,7 +190,17 @@ class FiducialMarkerTool extends AnnotationTool {
 
       styleSpecifier.annotationUID = annotationUID;
 
-      const color = this.getStyle('color', styleSpecifier, annotation);
+      // Check if annotation has a custom color in data.color (for projected points with *)
+      // If data.color exists, use it; otherwise use the default style
+      let color: number[];
+      if (data.color && Array.isArray(data.color) && data.color.length >= 3) {
+        // Use custom color from data (e.g., red for projected points)
+        color = data.color as number[];
+      } else {
+        // Use default style color
+        color = this.getStyle('color', styleSpecifier, annotation);
+      }
+
       const lineWidth = this.getStyle('lineWidth', styleSpecifier, annotation);
       const lineDash = this.getStyle('lineDash', styleSpecifier, annotation);
 
@@ -189,11 +211,7 @@ class FiducialMarkerTool extends AnnotationTool {
       }
 
       // Ensure point is a clean numeric array for worldToCanvas
-      const worldPoint: cs3DTypes.Point3 = [
-        Number(point[0]),
-        Number(point[1]),
-        Number(point[2])
-      ];
+      const worldPoint: cs3DTypes.Point3 = [Number(point[0]), Number(point[1]), Number(point[2])];
 
       // Get camera to check if point is on current slice
       const camera = viewport.getCamera();
@@ -206,9 +224,7 @@ class FiducialMarkerTool extends AnnotationTool {
       const dy = worldPoint[1] - focalPoint[1];
       const dz = worldPoint[2] - focalPoint[2];
       const distance = Math.abs(
-        dx * viewPlaneNormal[0] +
-        dy * viewPlaneNormal[1] +
-        dz * viewPlaneNormal[2]
+        dx * viewPlaneNormal[0] + dy * viewPlaneNormal[1] + dz * viewPlaneNormal[2]
       );
 
       // Get slice spacing/thickness for this viewport
@@ -216,7 +232,9 @@ class FiducialMarkerTool extends AnnotationTool {
       const sliceThreshold = 5.0; // mm - increased from 2.0 to 5.0 for better visibility
 
       // Debug: Log slice check
-      console.log(`🎯 [${data.label}] distance=${distance.toFixed(2)}mm, threshold=${sliceThreshold}mm, visible=${distance <= sliceThreshold}`);
+      console.log(
+        `🎯 [${data.label}] distance=${distance.toFixed(2)}mm, threshold=${sliceThreshold}mm, visible=${distance <= sliceThreshold}`
+      );
 
       if (distance > sliceThreshold) {
         // Point is not on this slice, skip rendering
@@ -239,7 +257,7 @@ class FiducialMarkerTool extends AnnotationTool {
       const radiusPointWorld: cs3DTypes.Point3 = [
         worldPoint[0] + fixedRadiusMm,
         worldPoint[1],
-        worldPoint[2]
+        worldPoint[2],
       ];
       const radiusPointCanvas = viewport.worldToCanvas(radiusPointWorld);
 
@@ -253,19 +271,12 @@ class FiducialMarkerTool extends AnnotationTool {
 
       // Draw simple circle (0.5mm sphere in 2D projection)
       const circleUID = `${annotationUID}-circle`;
-      drawing.drawCircle(
-        svgDrawingHelper,
-        annotationUID,
-        circleUID,
-        canvasPoint,
-        canvasRadius,
-        {
-          color,
-          lineDash: '',
-          lineWidth: 2,
-          fill: color, // Solid fill
-        }
-      );
+      drawing.drawCircle(svgDrawingHelper, annotationUID, circleUID, canvasPoint, canvasRadius, {
+        color,
+        lineDash: '',
+        lineWidth: 2,
+        fill: color, // Solid fill
+      });
 
       // Draw label next to circle
       if (data.label) {
@@ -276,18 +287,11 @@ class FiducialMarkerTool extends AnnotationTool {
         ];
 
         const textUID = `${annotationUID}-text`;
-        drawing.drawTextBox(
-          svgDrawingHelper,
-          annotationUID,
-          textUID,
-          textLines,
-          textCanvasPoint,
-          {
-            color,
-            fontFamily: 'Helvetica, Arial, sans-serif',
-            fontSize: '12px',
-          }
-        );
+        drawing.drawTextBox(svgDrawingHelper, annotationUID, textUID, textLines, textCanvasPoint, {
+          color,
+          fontFamily: 'Helvetica, Arial, sans-serif',
+          fontSize: '12px',
+        });
       }
 
       renderStatus = true;

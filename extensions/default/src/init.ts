@@ -4,7 +4,8 @@ import { calculateSUVScalingFactors } from '@cornerstonejs/calculate-suv';
 import getPTImageIdInstanceMetadata from './getPTImageIdInstanceMetadata';
 import { registerHangingProtocolAttributes } from './hangingprotocols';
 import { HotkeysManager } from '@ohif/core';
-import RegistrationService from './services/RegistrationService';
+// RegistrationService is now provided by @ohif/extension-lifesync
+// import RegistrationService from './services/RegistrationService';
 import CaseService from './services/CaseService';
 
 const metadataProvider = classes.MetadataProvider;
@@ -19,8 +20,9 @@ export default function init({
   commandsManager,
   hotkeysManager,
 }: withAppTypes): void {
-  // Register RegistrationService
-  servicesManager.registerService(RegistrationService.REGISTRATION);
+  // RegistrationService is now provided by @ohif/extension-lifesync
+  // The lifesync extension's RegistrationService has the correct startRegistration method
+  // servicesManager.registerService(RegistrationService.REGISTRATION);
 
   // Register CaseService
   servicesManager.registerService(CaseService.REGISTRATION);

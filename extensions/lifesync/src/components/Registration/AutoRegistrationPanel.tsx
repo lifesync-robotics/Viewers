@@ -126,10 +126,10 @@ export default function AutoRegistrationPanel({
       // In the future, phantom_config will be passed to the API
 
       setStatus('completed');
-      console.log('✅ Auto registration session started:', session.session_id);
+      console.log('✅ Auto registration session started:', session.registration_id);
 
       // Show success message
-      alert(`✅ Auto registration session started!\nSession ID: ${session.session_id}\n\nNote: Phantom-based registration will be fully implemented when the server supports it.`);
+      alert(`✅ Auto registration session started!\nRegistration ID: ${session.registration_id}\n\nNote: Phantom-based registration will be fully implemented when the server supports it.`);
     } catch (err: any) {
       setError(err.message || 'Failed to start auto registration');
       setStatus('error');

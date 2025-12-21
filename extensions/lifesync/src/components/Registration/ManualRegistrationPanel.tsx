@@ -14,6 +14,8 @@ import {
   jumpToFiducialPosition,
   syncFiducialsToViewport,
   removeFiducialFromViewport,
+  updateFiducialAnnotationInViewport,
+  getCrosshairPosition,
 } from './fiducialUtils';
 import './RegistrationPanel.css';
 
@@ -46,7 +48,9 @@ export default function ManualRegistrationPanel({
     if (registrationService) {
       const isConnected = registrationService.isApiConnected();
       if (!isConnected) {
-        setError('Registration API not connected. Please check if the server is running on port 5002.');
+        setError(
+          'Registration API not connected. Please check if the server is running on port 5002.'
+        );
       }
     }
   }, [servicesManager]);
@@ -91,9 +95,9 @@ export default function ManualRegistrationPanel({
       });
 
       setSession(newSession);
-      setSuccessMessage(`Session started: ${newSession.session_id}`);
+      setSuccessMessage(`Session started: ${newSession.registration_id}`);
       setError(null);
-      console.log('✅ Session initialized:', newSession.session_id);
+      console.log('✅ Session initialized:', newSession.registration_id);
 
       // Auto-hide success message after 5 seconds
       setTimeout(() => setSuccessMessage(null), 5000);
@@ -235,7 +239,7 @@ export default function ManualRegistrationPanel({
         const newFiducial: Fiducial = {
           ...result.fiducial,
           point_id: pointId,
-          label: `Fiducial ${fiducials.length + 1}`, // Default label, user can edit
+          label: pointId, // Use point_id as label (e.g., "F1"), user can edit later
           placed_by: 'OHIF User',
         };
 
@@ -264,15 +268,36 @@ export default function ManualRegistrationPanel({
     console.log('✏️ Edit fiducial:', fiducialId);
     const fiducial = fiducials.find(f => f.point_id === fiducialId);
     if (fiducial) {
-      setEditingFiducial(fiducial);
+      // Get current crosshair position
+      const crosshairPos = getCrosshairPosition(servicesManager);
+
+      if (crosshairPos && crosshairPos.length >= 3) {
+        // Update fiducial position to crosshair position
+        const updatedFiducial: Fiducial = {
+          ...fiducial,
+          dicom_position_mm: [crosshairPos[0], crosshairPos[1], crosshairPos[2]],
+        };
+        setEditingFiducial(updatedFiducial);
+        console.log(`✅ Updated fiducial ${fiducialId} position to crosshair:`, crosshairPos);
+      } else {
+        // If no crosshair position found, use original position
+        console.warn('⚠️ No crosshair position found, using original position');
+        setEditingFiducial(fiducial);
+      }
+
       setSelectedFiducialId(fiducialId);
     }
   };
 
   const handleSaveFiducial = (updatedFiducial: Fiducial) => {
+    // Update React state
     setFiducials(prev =>
       prev.map(f => (f.point_id === updatedFiducial.point_id ? updatedFiducial : f))
     );
+
+    // Update viewport annotation (position and label)
+    updateFiducialAnnotationInViewport(servicesManager, updatedFiducial);
+
     setSuccessMessage(`Fiducial ${updatedFiducial.point_id} updated`);
     setTimeout(() => setSuccessMessage(null), 3000);
     console.log('✅ Fiducial updated:', updatedFiducial);
@@ -286,7 +311,7 @@ export default function ManualRegistrationPanel({
     }
 
     // Jump to fiducial position in all viewports
-    // Note: DICOM coordinates are already in world space (LPS = RAS for our purposes)
+    // Note: dicom_position_mm stores RAS coordinates (same as Cornerstone3D world coordinates)
     const success = jumpToFiducialPosition(
       servicesManager,
       fiducial.dicom_position_mm as [number, number, number]
@@ -349,15 +374,34 @@ export default function ManualRegistrationPanel({
       }
 
       console.log('🧮 Computing registration...');
-      console.log(`   Session ID: ${session.session_id}`);
+      console.log(`   Registration ID: ${session.registration_id}`);
       console.log(`   Series UID: ${seriesInstanceUID}`);
       console.log(`   Fiducials: ${fiducials.length}`);
 
-      // TODO: Implement when API endpoint is available
-      // const result = await registrationService.computeRegistration(seriesInstanceUID, session.session_id);
+      const result = await registrationService.computeRegistration(
+        seriesInstanceUID,
+        session.registration_id,
+        {
+          method: 'least_squares',
+          caseId: caseId || undefined, // Pass caseId
+        }
+      );
 
-      // For now, show a message that this will be implemented
-      alert('Compute registration functionality will be implemented when the API endpoint is available.\n\nThis requires:\n- All fiducials to have tracker positions captured\n- Registration computation algorithm on the server');
+      // Display result
+      setSuccessMessage(
+        `✅ Registration computed! FRE: ${result.quality_metrics.fre_mm.toFixed(2)}mm, Quality: ${result.quality_metrics.quality}`
+      );
+      setTimeout(() => setSuccessMessage(null), 10000);
+
+      // Display point residuals
+      if (result.point_residuals && result.point_residuals.length > 0) {
+        console.log('Point Residuals:');
+        result.point_residuals.forEach(residual => {
+          console.log(
+            `  ${residual.point_id} (${residual.label}): ${residual.error_mm.toFixed(2)}mm`
+          );
+        });
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to compute registration');
       console.error('❌ Error computing registration:', err);
@@ -376,29 +420,42 @@ export default function ManualRegistrationPanel({
       )}
 
       {/* Success Message */}
-      {successMessage && (
-        <div className="success-message">{successMessage}</div>
-      )}
+      {successMessage && <div className="success-message">{successMessage}</div>}
 
       {/* Template Management - Moved to top for better visibility */}
       <div className="section template-management-section">
         <h3>📋 Fiducial Template Management</h3>
-        <p className="hint" style={{ marginBottom: '12px', fontSize: '12px' }}>
-          Create, edit, and manage fiducial templates. Templates can be saved and reused for registration.
+        <p
+          className="hint"
+          style={{ marginBottom: '12px', fontSize: '12px' }}
+        >
+          Create, edit, and manage fiducial templates. Templates can be saved and reused for
+          registration.
         </p>
 
         {/* Template Status */}
         <div className="template-status">
           {templateLoaded ? (
             <div className="template-info">
-              <p>✅ <strong>Template loaded:</strong> {fiducials.length} fiducial{fiducials.length !== 1 ? 's' : ''}</p>
+              <p>
+                ✅ <strong>Template loaded:</strong> {fiducials.length} fiducial
+                {fiducials.length !== 1 ? 's' : ''}
+              </p>
             </div>
           ) : fiducials.length > 0 ? (
-            <div className="template-info" style={{ background: 'rgba(251, 191, 36, 0.1)', borderLeftColor: '#fbbf24' }}>
-              <p>📝 <strong>Unsaved template:</strong> {fiducials.length} fiducial{fiducials.length !== 1 ? 's' : ''} (not saved yet)</p>
+            <div
+              className="template-info"
+              style={{ background: 'rgba(251, 191, 36, 0.1)', borderLeftColor: '#fbbf24' }}
+            >
+              <p>
+                📝 <strong>Unsaved template:</strong> {fiducials.length} fiducial
+                {fiducials.length !== 1 ? 's' : ''} (not saved yet)
+              </p>
             </div>
           ) : (
-            <p className="hint">No template loaded. Create a new template by adding fiducials below.</p>
+            <p className="hint">
+              No template loaded. Create a new template by adding fiducials below.
+            </p>
           )}
         </div>
 
@@ -426,8 +483,12 @@ export default function ManualRegistrationPanel({
       {/* Add Fiducial Button - Available without session for template editing */}
       <div className="section">
         <h3>📍 Add Fiducial Points</h3>
-        <p className="hint" style={{ marginBottom: '12px', fontSize: '12px' }}>
-          Position the crosshair on an anatomical landmark in the viewport, then click to add a fiducial point.
+        <p
+          className="hint"
+          style={{ marginBottom: '12px', fontSize: '12px' }}
+        >
+          Position the crosshair on an anatomical landmark in the viewport, then click to add a
+          fiducial point.
         </p>
         <button
           onClick={handleAddFiducial}
@@ -437,7 +498,12 @@ export default function ManualRegistrationPanel({
           {isLoading ? 'Adding...' : '📍 Add Fiducial at Crosshair'}
         </button>
         {!seriesInstanceUID && (
-          <p className="hint" style={{ color: '#fbbf24', marginTop: '8px' }}>⚠️ Please load a DICOM study first</p>
+          <p
+            className="hint"
+            style={{ color: '#fbbf24', marginTop: '8px' }}
+          >
+            ⚠️ Please load a DICOM study first
+          </p>
         )}
       </div>
 
@@ -445,7 +511,10 @@ export default function ManualRegistrationPanel({
       {fiducials.length > 0 ? (
         <div className="section">
           <h3>✏️ Edit Fiducials ({fiducials.length})</h3>
-          <p className="hint" style={{ marginBottom: '12px', fontSize: '12px' }}>
+          <p
+            className="hint"
+            style={{ marginBottom: '12px', fontSize: '12px' }}
+          >
             Click on a fiducial to select it, then use the buttons to edit, jump to, or delete it.
           </p>
           <FiducialList
@@ -460,7 +529,10 @@ export default function ManualRegistrationPanel({
       ) : (
         <div className="section">
           <h3>✏️ Edit Fiducials</h3>
-          <p className="hint" style={{ textAlign: 'center', padding: '20px', color: '#8892b0' }}>
+          <p
+            className="hint"
+            style={{ textAlign: 'center', padding: '20px', color: '#8892b0' }}
+          >
             No fiducials yet. Add your first fiducial point above to get started.
           </p>
         </div>

@@ -56,7 +56,7 @@ window.config = {
   // Volume rendering performance optimizations
   preferSizeOverAccuracy: true,  // Use half-float for VR/MPR to reduce memory usage
   useNorm16Texture: true,        // Use 16-bit normalized textures when supported
-  groupEnabledModesFirst: true,
+  groupEnabledModesFirst: false,  // Set to false to use the order defined in pluginConfig.json
   allowMultiSelectExport: false,
   maxNumRequests: {
     interaction: 100,

@@ -31,10 +31,12 @@ interface ToolTrackingData {
     tracker: {
       position_mm: [number, number, number];
       rotation_deg: [number, number, number];
+      tooltip_position_mm?: [number, number, number];
     };
     patient_reference: {
       position_mm: [number, number, number];
       rotation_deg: [number, number, number];
+      tooltip_position_mm?: [number, number, number];
     };
   };
 }
