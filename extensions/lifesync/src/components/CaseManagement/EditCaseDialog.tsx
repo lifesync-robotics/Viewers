@@ -1,5 +1,12 @@
 import React from 'react';
-import { Icons, Button as ButtonNext, Calendar, Popover, PopoverContent, PopoverTrigger } from '@ohif/ui-next';
+import {
+  Icons,
+  Button as ButtonNext,
+  Calendar,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@ohif/ui-next';
 import { Calendar as CalendarIcon } from 'lucide-react';
 import { format, parse, isValid } from 'date-fns';
 
@@ -34,12 +41,7 @@ interface EditCaseDialogProps {
   onUpdate: (updates: any) => Promise<void>;
 }
 
-const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
-  isOpen,
-  caseData,
-  onClose,
-  onUpdate,
-}) => {
+const EditCaseDialog: React.FC<EditCaseDialogProps> = ({ isOpen, caseData, onClose, onUpdate }) => {
   const [formData, setFormData] = React.useState({
     patientMRN: '',
     patientName: '',
@@ -70,8 +72,14 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
       });
       setError(null);
     }
-  }, [isOpen, caseData?.caseId, caseData?.patientInfo?.mrn, caseData?.patientInfo?.name, caseData?.patientInfo?.dateOfBirth, caseData?.status]);
-
+  }, [
+    isOpen,
+    caseData?.caseId,
+    caseData?.patientInfo?.mrn,
+    caseData?.patientInfo?.name,
+    caseData?.patientInfo?.dateOfBirth,
+    caseData?.status,
+  ]);
 
   const handleUpdate = async () => {
     setIsUpdating(true);
@@ -117,7 +125,9 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
     }
   };
 
-  if (!isOpen) return null;
+  if (!isOpen) {
+    return null;
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
@@ -126,7 +136,7 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
           <h2 className="text-xl font-bold text-white">Edit Case</h2>
           <button
             onClick={onClose}
-            className="text-primary-light hover:text-white transition-colors"
+            className="text-primary-light transition-colors hover:text-white"
             disabled={isUpdating}
           >
             <Icons.Close className="h-5 w-5" />
@@ -134,25 +144,23 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
         </div>
 
         {error && (
-          <div className="mb-4 rounded bg-red-500 bg-opacity-20 border border-red-500 p-3 text-sm text-red-300">
+          <div className="mb-4 rounded border border-red-500 bg-red-500 bg-opacity-20 p-3 text-sm text-red-300">
             {error}
           </div>
         )}
 
-        <div className="mb-4 rounded bg-blue-500 bg-opacity-20 border border-blue-500/30 p-3 text-sm text-blue-300">
-          <div className="font-medium mb-1">ℹ️ Editing Case: {caseData.caseId}</div>
+        <div className="mb-4 rounded border border-blue-500/30 bg-blue-500 bg-opacity-20 p-3 text-sm text-blue-300">
+          <div className="mb-1 font-medium">ℹ️ Editing Case: {caseData.caseId}</div>
           <div className="text-xs">Only modified fields will be updated</div>
         </div>
 
         <div className="space-y-4">
           <div>
-            <label className="text-primary-light mb-1 block text-sm font-medium">
-              Patient MRN
-            </label>
+            <label className="text-primary-light mb-1 block text-sm font-medium">Patient MRN</label>
             <input
               type="text"
               value={formData.patientMRN}
-              onChange={(e) => setFormData({ ...formData, patientMRN: e.target.value })}
+              onChange={e => setFormData({ ...formData, patientMRN: e.target.value })}
               placeholder="e.g., MRN-12345"
               className="bg-primary-dark text-primary-light border-primary-light w-full rounded border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={isUpdating}
@@ -166,7 +174,7 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
             <input
               type="text"
               value={formData.patientName}
-              onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
+              onChange={e => setFormData({ ...formData, patientName: e.target.value })}
               placeholder="e.g., John Doe"
               className="bg-primary-dark text-primary-light border-primary-light w-full rounded border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={isUpdating}
@@ -183,49 +191,59 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
                 type="date"
                 lang="en"
                 value={formData.dateOfBirth}
-                onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+                onChange={e => setFormData({ ...formData, dateOfBirth: e.target.value })}
                 className="bg-primary-dark text-primary-light border-primary-light flex-1 rounded border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isUpdating}
               />
               {/* Calendar picker button */}
-              <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
+              <Popover
+                open={isDatePickerOpen}
+                onOpenChange={setIsDatePickerOpen}
+              >
                 <PopoverTrigger asChild>
                   <button
                     type="button"
                     onClick={() => setIsDatePickerOpen(!isDatePickerOpen)}
                     disabled={isUpdating}
-                    className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 border border-blue-500 rounded px-2 py-2 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-secondary-dark disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-lg hover:shadow-xl w-8 h-8"
+                    className="focus:ring-offset-secondary-dark flex h-8 w-8 items-center justify-center rounded border border-blue-500 bg-blue-600 px-2 py-2 text-sm font-medium text-white shadow-lg transition-colors hover:bg-blue-700 hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 active:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
                     title="Select Date"
                   >
                     <CalendarIcon className="h-4 w-4" />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent 
-                  className="w-auto p-0 bg-secondary-dark border-secondary-light"
+                <PopoverContent
+                  className="bg-secondary-dark border-secondary-light w-auto p-0"
                   align="end"
                 >
                   <Calendar
                     mode="single"
-                    selected={formData.dateOfBirth && isValid(parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date()))
-                      ? parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date())
-                      : undefined}
-                    onSelect={(date) => {
+                    selected={
+                      formData.dateOfBirth &&
+                      isValid(parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date()))
+                        ? parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date())
+                        : undefined
+                    }
+                    onSelect={date => {
                       if (date) {
-                        setFormData({ 
-                          ...formData, 
-                          dateOfBirth: format(date, 'yyyy-MM-dd') 
+                        setFormData({
+                          ...formData,
+                          dateOfBirth: format(date, 'yyyy-MM-dd'),
                         });
                         setIsDatePickerOpen(false);
                       }
                     }}
-                    defaultMonth={formData.dateOfBirth && isValid(parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date()))
-                      ? parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date())
-                      : new Date()}
+                    defaultMonth={
+                      formData.dateOfBirth &&
+                      isValid(parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date()))
+                        ? parse(formData.dateOfBirth, 'yyyy-MM-dd', new Date())
+                        : new Date()
+                    }
                     className="rounded-md border-0"
                     formatters={{
                       formatMonthCaption: (month, options) => {
-                        return String(month.getMonth() + 1).padStart(2, '0');
-                      }
+                        // return String(month.getMonth() + 1).padStart(2, '0');
+                        return format(month, 'MMMM');
+                      },
                     }}
                   />
                 </PopoverContent>
@@ -234,12 +252,10 @@ const EditCaseDialog: React.FC<EditCaseDialogProps> = ({
           </div>
 
           <div>
-            <label className="text-primary-light mb-1 block text-sm font-medium">
-              Status
-            </label>
+            <label className="text-primary-light mb-1 block text-sm font-medium">Status</label>
             <select
               value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+              onChange={e => setFormData({ ...formData, status: e.target.value })}
               className="bg-primary-dark text-primary-light border-primary-light w-full rounded border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={isUpdating}
             >

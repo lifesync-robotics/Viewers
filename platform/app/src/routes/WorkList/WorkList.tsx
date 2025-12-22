@@ -542,6 +542,7 @@ function WorkList({
   const [caseStudies, setCaseStudies] = useState(new Map()); // caseId -> studies
   const [loadingCases, setLoadingCases] = useState(false);
   const [casePagination, setCasePagination] = useState(null); // Pagination info from API
+  const [orthancStudyData, setOrthancStudyData] = useState(new Map()); // studyInstanceUID -> studyData from Orthanc
 
   // ~ Create Case Dialog State
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -794,7 +795,8 @@ function WorkList({
       } else if (!s2Prop && s1Prop) {
         return 1 * sortModifier;
       } else if (sortBy === 'studyDate') {
-        return _sortStringDates(s1, s2, sortModifier);create
+        return _sortStringDates(s1, s2, sortModifier);
+        create;
       }
 
       return 0;
@@ -912,7 +914,21 @@ function WorkList({
       try {
         const caseStudiesData = await caseService.getStudiesForCase(caseId);
         // Safe access with fallback to empty array
-        setCaseStudies(prev => new Map(prev.set(caseId, caseStudiesData?.studies || [])));
+        const studies = caseStudiesData?.studies || [];
+
+        // Debug: Log study data structure to help diagnose missing fields
+        if (studies.length > 0) {
+          console.log('🔍 Case studies data loaded:', {
+            caseId,
+            studyCount: studies.length,
+            firstStudy: studies[0],
+            firstStudyFields: studies[0] ? Object.keys(studies[0]) : [],
+            firstStudyDescription: studies[0]?.description || studies[0]?.studyDescription || 'N/A',
+            firstStudyModalities: studies[0]?.modalities || studies[0]?.modality || 'N/A',
+          });
+        }
+
+        setCaseStudies(prev => new Map(prev.set(caseId, studies)));
       } catch (error) {
         console.warn(`Failed to load studies for case ${caseId}:`, error);
         // Set empty array on error
@@ -920,6 +936,86 @@ function WorkList({
       }
     },
     [caseService]
+  );
+
+  // Fetch study data from Orthanc when not available in filteredStudies
+  const fetchStudyFromOrthanc = useCallback(
+    async (studyInstanceUID: string) => {
+      if (!studyInstanceUID || orthancStudyData.has(studyInstanceUID)) {
+        return; // Already fetched, no need to fetch again
+      }
+
+      if (!caseService) {
+        return;
+      }
+
+      try {
+        // Use caseService's apiUrl to fetch study data
+        const apiUrl = caseService.apiUrl || 'http://localhost:3001';
+        const response = await fetch(`${apiUrl}/api/dicom/studies/${studyInstanceUID}`);
+
+        if (!response.ok) {
+          console.warn(
+            `Failed to fetch study ${studyInstanceUID} from Orthanc:`,
+            response.statusText
+          );
+          return;
+        }
+
+        const data = await response.json();
+
+        if (data.success && data.study) {
+          const series = data.study.series || [];
+
+          // Calculate total instances across all series
+          const totalInstances = series.reduce((total, s) => {
+            const count = s.instanceCount || s.instances || s.instance_count || 0;
+            return total + (typeof count === 'number' ? count : parseInt(count) || 0);
+          }, 0);
+
+          // Extract all unique modalities from series
+          const modalitiesFromSeries = series
+            .map(s => s.modality || s.Modality)
+            .filter(m => m && m.trim() !== '')
+            .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
+
+          // Transform data format to match frontend expected format
+          const studyData = {
+            studyInstanceUID: data.study.studyInstanceUID,
+            studyInstanceUid: data.study.studyInstanceUID,
+            patientName: data.study.patientInfo?.name || null,
+            mrn: data.study.patientInfo?.id || null,
+            description: data.study.studyInfo?.description || null,
+            studyDescription: data.study.studyInfo?.description || null,
+            // Prefer modalities from studyInfo, fallback to extracting from series
+            modalities: data.study.studyInfo?.modalities || modalitiesFromSeries,
+            studyDate: data.study.studyInfo?.date || null,
+            studyTime: data.study.studyInfo?.time || null,
+            instanceCount: totalInstances || 0,
+            instances: totalInstances || 0,
+            series: series,
+          };
+
+          setOrthancStudyData(prev => new Map(prev.set(studyInstanceUID, studyData)));
+
+          // Also update seriesInStudiesMap
+          if (series.length > 0) {
+            const seriesData = series.map(s => ({
+              seriesInstanceUID: s.seriesInstanceUID || s.series_instance_uid,
+              seriesNumber: s.seriesNumber || s.series_number || 0,
+              modality: s.modality || '',
+              description: s.description || s.series_description || '',
+              numSeriesInstances: s.instanceCount || s.instances || s.instance_count || 0,
+              instanceCount: s.instanceCount || s.instances || s.instance_count || 0,
+            }));
+            seriesInStudiesMap.set(studyInstanceUID, sortBySeriesDate(seriesData));
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch study ${studyInstanceUID} from Orthanc:`, error);
+      }
+    },
+    [caseService, orthancStudyData]
   );
 
   // Custom upload function using /api/dicom/studies/upload
@@ -998,20 +1094,23 @@ function WorkList({
             0
           );
 
-          message = `✅ Upload and enrollment successful!\n\n` +
+          message =
+            `✅ Upload and enrollment successful!\n\n` +
             `- ${result.studiesUploaded} study(ies) uploaded\n` +
             `- ${successCount} study(ies) successfully enrolled to Case ${addStudyToCaseId}\n` +
             `- Total ${totalSeries} series enrolled\n`;
 
           // Show detailed enrollment information
           if (result.enrollmentResults.length > 0) {
-            const details = result.enrollmentResults.map(r => {
-              if (r.success) {
-                return `  ✓ ${r.studyUID}: ${r.enrolledSeriesCount || 0} series`;
-              } else {
-                return `  ✗ ${r.studyUID || r.orthancStudyId}: ${r.error}`;
-              }
-            }).join('\n');
+            const details = result.enrollmentResults
+              .map(r => {
+                if (r.success) {
+                  return `  ✓ ${r.studyUID}: ${r.enrolledSeriesCount || 0} series`;
+                } else {
+                  return `  ✗ ${r.studyUID || r.orthancStudyId}: ${r.error}`;
+                }
+              })
+              .join('\n');
 
             console.log('Enrollment details:\n' + details);
           }
@@ -1066,7 +1165,16 @@ function WorkList({
     } finally {
       setIsUploading(false);
     }
-  }, [selectedFiles, clinicalPhase, addStudyToCaseId, caseService, onRefresh, loadCases, loadStudiesForCase, caseStudies]);
+  }, [
+    selectedFiles,
+    clinicalPhase,
+    addStudyToCaseId,
+    caseService,
+    onRefresh,
+    loadCases,
+    loadStudiesForCase,
+    caseStudies,
+  ]);
 
   // Handle study selection - open enroll dialog
   const handleStudyClick = useCallback(study => {
@@ -1212,7 +1320,8 @@ function WorkList({
         patientInfo: updatedCase.patientInfo || {
           mrn: updatedCase.patientInfo?.mrn || selectedCase.patientInfo?.mrn || '',
           name: updatedCase.patientInfo?.name || selectedCase.patientInfo?.name || '',
-          dateOfBirth: updatedCase.patientInfo?.dateOfBirth || selectedCase.patientInfo?.dateOfBirth || '',
+          dateOfBirth:
+            updatedCase.patientInfo?.dateOfBirth || selectedCase.patientInfo?.dateOfBirth || '',
         },
         status: updatedCase.status || selectedCase.status || 'created',
       });
@@ -1438,6 +1547,38 @@ function WorkList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedRows, studies, viewMode, cases, expandedCases, caseStudies, filteredStudies]);
 
+  // Auto-fetch study data from Orthanc when case is expanded and study is not in filteredStudies
+  useEffect(() => {
+    // When case is expanded, check if study data needs to be fetched from Orthanc
+    if (viewMode === 'cases' && expandedCases.length > 0) {
+      expandedCases.forEach(caseId => {
+        const studies = caseStudies.get(caseId) || [];
+        studies.forEach(study => {
+          const studyUID = study.studyInstanceUID || study.studyInstanceUid;
+          if (studyUID) {
+            // Check if in filteredStudies
+            const inFilteredStudies = filteredStudies.some(s => {
+              const filteredUID = s.studyInstanceUid || s.studyInstanceUID || '';
+              return filteredUID.toLowerCase() === studyUID.toLowerCase();
+            });
+
+            // If not in filteredStudies and not yet fetched from Orthanc, fetch it
+            if (!inFilteredStudies && !orthancStudyData.has(studyUID)) {
+              fetchStudyFromOrthanc(studyUID);
+            }
+          }
+        });
+      });
+    }
+  }, [
+    expandedCases,
+    caseStudies,
+    filteredStudies,
+    orthancStudyData,
+    fetchStudyFromOrthanc,
+    viewMode,
+  ]);
+
   const isFiltering = (filterValues, defaultFilterValues) => {
     return !isEqual(filterValues, defaultFilterValues);
   };
@@ -1466,8 +1607,10 @@ function WorkList({
             {
               key: 'caseId',
               content: (
-                <div className={`flex items-center gap-2 rounded px-2 py-1 ${isActiveCase ? 'bg-blue-800/40' : 'bg-blue-900/20'}`}>
-                  {isActiveCase && <span className="text-blue-400 text-lg">★</span>}
+                <div
+                  className={`flex items-center gap-2 rounded px-2 py-1 ${isActiveCase ? 'bg-blue-800/40' : 'bg-blue-900/20'}`}
+                >
+                  {isActiveCase && <span className="text-lg text-blue-400">★</span>}
                   <Icons.Database className="h-5 w-5 text-blue-400" />
                   <span className="text-base font-bold text-blue-200">📁 {caseItem.caseId}</span>
                   {/* {isActiveCase && <span className="ml-2 text-xs bg-blue-600/60 px-2 py-0.5 rounded text-blue-200">ACTIVE</span>} */}
@@ -1479,7 +1622,7 @@ function WorkList({
             {
               key: 'patientName',
               content: (
-                <span className="font-semibold text-white whitespace-nowrap">
+                <span className="whitespace-nowrap font-semibold text-white">
                   {caseItem.patientName || 'Unknown Patient'}
                 </span>
               ),
@@ -1503,7 +1646,7 @@ function WorkList({
               key: 'studyCount',
               content: (
                 <div className="flex items-center gap-2 whitespace-nowrap">
-                  <Icons.GroupLayers className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                  <Icons.GroupLayers className="h-4 w-4 flex-shrink-0 text-gray-400" />
                   <span>{caseItem.studyCount} studies</span>
                 </div>
               ),
@@ -1512,7 +1655,9 @@ function WorkList({
             {
               key: 'actions',
               content: (
-                <div className="flex items-center gap-0.5"> {/* Changed from gap-1 to gap-0.5 */}
+                <div className="flex items-center gap-0.5">
+                  {' '}
+                  {/* Changed from gap-1 to gap-0.5 */}
                   <button
                     onClick={async e => {
                       e.stopPropagation();
@@ -1541,10 +1686,10 @@ function WorkList({
                         setLoadingOrthancStudies(false);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/20 px-1 py-1 transition-colors hover:bg-green-900/50 whitespace-nowrap" // Changed from px-1.5 to px-1
+                    className="flex items-center gap-1 whitespace-nowrap rounded border border-green-500/30 bg-green-900/20 px-1 py-1 transition-colors hover:bg-green-900/50" // Changed from px-1.5 to px-1
                     title="Add Study to Case"
                   >
-                    <Icons.Add className="h-3.5 w-3.5 text-green-400 flex-shrink-0" />
+                    <Icons.Add className="h-3.5 w-3.5 flex-shrink-0 text-green-400" />
                     <span className="text-xs text-green-300">Add Study</span>
                   </button>
                   <button
@@ -1554,7 +1699,10 @@ function WorkList({
                       console.log('🔍 WorkList: ========== DEBUG INFO ==========');
                       console.log('🔍 Original caseItem:', JSON.stringify(caseItem, null, 2));
                       console.log('🔍 caseItem.patientInfo:', caseItem.patientInfo);
-                      console.log('🔍 caseItem.patientInfo?.dateOfBirth:', caseItem.patientInfo?.dateOfBirth);
+                      console.log(
+                        '🔍 caseItem.patientInfo?.dateOfBirth:',
+                        caseItem.patientInfo?.dateOfBirth
+                      );
                       console.log('🔍 caseItem.patientMRN:', caseItem.patientMRN);
                       console.log('🔍 caseItem.patientName:', caseItem.patientName);
                       console.log('🔍 ===========================================');
@@ -1573,16 +1721,22 @@ function WorkList({
                       };
 
                       // 🔍 DEBUG: Check transformed data
-                      console.log('🔍 WorkList: caseDataForDialog:', JSON.stringify(caseDataForDialog, null, 2));
-                      console.log('🔍 WorkList: caseDataForDialog.patientInfo?.dateOfBirth:', caseDataForDialog.patientInfo?.dateOfBirth);
+                      console.log(
+                        '🔍 WorkList: caseDataForDialog:',
+                        JSON.stringify(caseDataForDialog, null, 2)
+                      );
+                      console.log(
+                        '🔍 WorkList: caseDataForDialog.patientInfo?.dateOfBirth:',
+                        caseDataForDialog.patientInfo?.dateOfBirth
+                      );
 
                       setSelectedCase(caseDataForDialog);
                       setIsEditDialogOpen(true);
                     }}
-                    className="flex items-center gap-1 rounded border border-blue-500/30 bg-blue-900/20 px-1 py-1 transition-colors hover:bg-blue-900/50 whitespace-nowrap" // Changed from px-1.5 to px-1
+                    className="flex items-center gap-1 whitespace-nowrap rounded border border-blue-500/30 bg-blue-900/20 px-1 py-1 transition-colors hover:bg-blue-900/50" // Changed from px-1.5 to px-1
                     title="Edit Case"
                   >
-                    <Icons.Settings className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
+                    <Icons.Settings className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
                     <span className="text-xs text-blue-300">Edit</span>
                   </button>
                   <button
@@ -1608,10 +1762,10 @@ function WorkList({
                         alert(`Failed to delete case: ${err.message}`);
                       }
                     }}
-                    className="flex items-center gap-1 rounded border border-red-500/30 bg-red-900/20 px-1 py-1 transition-colors hover:bg-red-900/50 whitespace-nowrap" // Changed from px-1.5 to px-1
+                    className="flex items-center gap-1 whitespace-nowrap rounded border border-red-500/30 bg-red-900/20 px-1 py-1 transition-colors hover:bg-red-900/50" // Changed from px-1.5 to px-1
                     title="Delete Case"
                   >
-                    <Icons.Cancel className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+                    <Icons.Cancel className="h-3.5 w-3.5 flex-shrink-0 text-red-400" />
                     <span className="text-xs text-red-300">Del</span>
                   </button>
                 </div>
@@ -1645,429 +1799,503 @@ function WorkList({
             const studyRowKey = rowIndex++;
             const isStudyExpanded = expandedRows.some(k => k === studyRowKey);
 
-            // Find the full study data from filteredStudies
-            const fullStudy = filteredStudies.find(
-              s => s.studyInstanceUid === study.studyInstanceUID
-            );
+            // Find the full study data from filteredStudies (for additional info like patientName)
+            // If not found in filteredStudies, try to get from Orthanc data
+            // This ensures search and non-search views show the same information
+            const studyUID = study.studyInstanceUID || study.studyInstanceUid || '';
+            let fullStudy = filteredStudies.find(s => {
+              // Try both field name formats, case-insensitive
+              const filteredUID = s.studyInstanceUid || s.studyInstanceUID || '';
+              return filteredUID.toLowerCase() === studyUID.toLowerCase();
+            });
 
-            if (!fullStudy) {
-              // Study not loaded yet - show placeholder with remove button
-              const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
-
-              rows.push({
-                dataCY: `studyPlaceholder-${study.studyInstanceUID}`,
-                clickableCY: study.studyInstanceUID,
-                className: isActiveCaseStudy
-                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40'
-                  : 'hover:bg-primary-dark',
-                row: [
-                  {
-                    key: 'studyIndent',
-                    content: (
-                      <div className="ml-6 text-gray-500 flex items-center gap-1">
-                        {isActiveCaseStudy && <span className="text-blue-400 text-xs">●</span>}
-                        └─
-                      </div>
-                    ),
-                    gridCol: 1,
-                  },
-                  {
-                    key: 'studyInfo',
-                    content: (
-                      <div className="text-gray-400">
-                        <span className="text-sm">
-                        {study.description || 'Study not found in Orthanc (may have been deleted)'}
-                        </span>
-                        <br />
-                        <span className="text-xs text-gray-500">
-                          StudyUID: {study.studyInstanceUID.substring(0, 30)}...
-                        </span>
-                      </div>
-                    ),
-                    gridCol: 10,
-                  },
-                  {
-                    key: 'phase',
-                    content: <span className="text-xs text-blue-400">{study.clinicalPhase}</span>,
-                    gridCol: 3,
-                  },
-                  {
-                    key: 'status',
-                    content: <span className="text-xs text-yellow-500">Missing from Orthanc</span>,
-                    gridCol: 2,
-                  },
-                  {
-                    key: 'removeButton',
-                    content: (
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          if (
-                            window.confirm(
-                              'Remove this study from the case?\n\nThis study is not in Orthanc worklist.'
-                            )
-                          ) {
-                            if (caseService) {
-                              caseService
-                                .removeStudy(caseItem.caseId, study.studyInstanceUID)
-                                .then(() => {
-                                  console.log(`✅ Study removed from case`);
-                                  window.location.reload();
-                                })
-                                .catch(err => {
-                                  console.error('Failed to remove study:', err);
-                                  alert('Failed to remove study');
-                                });
-                            }
-                          }
-                        }}
-                        className="rounded p-1 transition-colors hover:bg-red-900/50"
-                        title="Remove from Case"
-                      >
-                        <Icons.Close className="h-4 w-4 text-red-400 hover:text-red-300" />
-                      </button>
-                    ),
-                    gridCol: 1,
-                  },
-                ],
-                expandedContent: null, // Placeholder rows don't expand
-                onClickRow: () => {},
-                isExpanded: false,
-                isStudyRow: true,
-              });
-              return; // Skip to next study
+            // If not found in filteredStudies, try to get from Orthanc data
+            if (!fullStudy && studyUID) {
+              fullStudy = orthancStudyData.get(studyUID);
             }
 
-            // Study found - show full details
-            if (fullStudy) {
-              const {
-                studyInstanceUid,
-                accession,
-                modalities,
-                instances,
-                description,
-                mrn,
-                patientName,
-                date,
-                time,
-              } = fullStudy;
+            // Use fullStudy if available, otherwise use case study data
+            // Trust the case data - if study is in case, it exists
+            const displayStudy = fullStudy || study;
 
-              const studyDate =
-                date &&
-                moment(date, ['YYYYMMDD', 'YYYY.MM.DD'], true).isValid() &&
-                moment(date, ['YYYYMMDD', 'YYYY.MM.DD']).format(
-                  t('Common:localDateFormat', 'MMM-DD-YYYY')
-                );
-              const studyTime =
-                time &&
-                moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).isValid() &&
-                moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).format(
-                  t('Common:localTimeFormat', 'hh:mm A')
-                );
+            // Extract data with fallbacks - support both fullStudy and case study formats
+            const studyInstanceUid = fullStudy
+              ? fullStudy.studyInstanceUid || fullStudy.studyInstanceUID || study.studyInstanceUID
+              : study.studyInstanceUID;
 
-              const makeCopyTooltipCell = textValue => {
-                if (!textValue) {
-                  return '';
+            const {
+              accession,
+              modalities: fullStudyModalities,
+              instances,
+              description: fullStudyDescription,
+              mrn,
+              patientName,
+              date,
+              time,
+            } = fullStudy || {};
+
+            // Enhanced field extraction with multiple fallback options
+            // Support both camelCase and snake_case, and different field names from different APIs
+            const description =
+              fullStudyDescription ||
+              fullStudy?.studyDescription ||
+              study.description ||
+              study.studyDescription ||
+              '';
+
+            // Enhanced modalities extraction - handle both array and string formats
+            let modalitiesValue = '';
+            if (fullStudyModalities) {
+              modalitiesValue = Array.isArray(fullStudyModalities)
+                ? fullStudyModalities.join(', ')
+                : fullStudyModalities;
+            } else if (fullStudy?.modalities) {
+              modalitiesValue = Array.isArray(fullStudy.modalities)
+                ? fullStudy.modalities.join(', ')
+                : fullStudy.modalities;
+            } else if (study.modalities) {
+              modalitiesValue = Array.isArray(study.modalities)
+                ? study.modalities.join(', ')
+                : study.modalities;
+            } else if (study.modality) {
+              // Handle single modality string - convert to string format
+              modalitiesValue = Array.isArray(study.modality)
+                ? study.modality.join(', ')
+                : String(study.modality);
+            }
+
+            // If no modalities yet, try extracting from series
+            if (!modalitiesValue) {
+              // Extract from fullStudy.series
+              if (fullStudy?.series && fullStudy.series.length > 0) {
+                const seriesModalities = fullStudy.series
+                  .map(s => s.modality || s.Modality)
+                  .filter(m => m && m.trim() !== '')
+                  .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
+                if (seriesModalities.length > 0) {
+                  modalitiesValue = seriesModalities.join(', ');
                 }
-                return (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="cursor-pointer truncate">{textValue}</span>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <div className="flex items-center justify-between gap-2">
-                        {textValue}
-                        <Clipboard>{textValue}</Clipboard>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              };
+              }
 
-              // 🎨 Highlight active case studies with different background color
-              const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
+              // If still not found, extract from seriesInStudiesMap
+              if (!modalitiesValue && seriesInStudiesMap.has(studyInstanceUid)) {
+                const seriesList = seriesInStudiesMap.get(studyInstanceUid) || [];
+                const seriesModalities = seriesList
+                  .map(s => s.modality || s.Modality)
+                  .filter(m => m && m.trim() !== '')
+                  .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
+                if (seriesModalities.length > 0) {
+                  modalitiesValue = seriesModalities.join(', ');
+                }
+              }
 
-              rows.push({
-                dataCY: `studyRow-${studyInstanceUid}`,
-                clickableCY: studyInstanceUid,
-                className: isActiveCaseStudy
-                  ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40'
-                  : 'hover:bg-primary-dark',
-                row: [
-                  {
-                    key: 'studyIndent',
-                    content: (
-                      <div className="ml-6 text-gray-500 flex items-center gap-1">
-                        {isActiveCaseStudy && <span className="text-blue-400 text-xs">●</span>}
-                        └─
-                      </div>
-                    ),
-                    gridCol: 1,
-                  },
-                  {
-                    key: 'patientName',
-                    content: patientName ? makeCopyTooltipCell(patientName) : null,
-                    gridCol: 5,
-                  },
-                  {
-                    key: 'mrn',
-                    content: makeCopyTooltipCell(mrn),
-                    gridCol: 3,
-                  },
-                  {
-                    key: 'studyDate',
-                    content: (
-                      <div className="pr-4">
-                        {studyDate && <span className="mr-4">{studyDate}</span>}
-                        {studyTime && <span>{studyTime}</span>}
-                      </div>
-                    ),
-                    title: `${studyDate || ''} ${studyTime || ''}`,
-                    gridCol: 5,
-                  },
-                  {
-                    key: 'description',
-                    content: (
-                      <div className="flex items-center gap-2">
-                        {makeCopyTooltipCell(description)}
-                        {study.clinicalPhase && (
-                          <span className="whitespace-nowrap rounded border border-blue-500 bg-blue-900/40 px-2 py-0.5 text-xs text-blue-300">
-                            {study.clinicalPhase.replace(/([A-Z])/g, ' $1').trim()}
-                          </span>
-                        )}
-                      </div>
-                    ),
-                    gridCol: 5,
-                  },
-                  {
-                    key: 'modality',
-                    content: modalities,
-                    title: modalities,
-                    gridCol: 3,
-                  },
-                  {
-                    key: 'instances',
-                    content: (
-                      <>
-                        <Icons.GroupLayers
-                          className={classnames('mr-2 inline-flex w-4', {
-                            'text-primary': isStudyExpanded,
-                            'text-secondary-light': !isStudyExpanded,
-                          })}
-                        />
-                        {instances}
-                      </>
-                    ),
-                    title: (instances || 0).toString(),
-                    gridCol: 2,
-                  },
-                  {
-                    key: 'removeButton',
-                    content: (
-                      <button
-                        onClick={e => {
-                          e.stopPropagation(); // Prevent row expansion
-                          if (
-                            window.confirm(
-                              'Remove this study from the case?\n\nThe study will remain in Orthanc.'
-                            )
-                          ) {
-                            if (caseService) {
-                              caseService
-                                .removeStudy(caseItem.caseId, studyInstanceUid)
-                                .then(() => {
-                                  console.log(`✅ Study removed from case`);
-                                  window.location.reload();
-                                })
-                                .catch(err => {
-                                  console.error('Failed to remove study:', err);
-                                  alert('Failed to remove study');
-                                });
-                            }
+              // If still not found, extract from caseStudy.series
+              if (!modalitiesValue) {
+                const studiesInCase = caseStudies.get(caseItem.caseId) || [];
+                const caseStudy = studiesInCase.find(s => s.studyInstanceUID === studyInstanceUid);
+                if (caseStudy?.series && caseStudy.series.length > 0) {
+                  const seriesModalities = caseStudy.series
+                    .map(s => s.modality || s.Modality)
+                    .filter(m => m && m.trim() !== '')
+                    .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
+                  if (seriesModalities.length > 0) {
+                    modalitiesValue = seriesModalities.join(', ');
+                  }
+                }
+              }
+            }
+
+            const modalities = modalitiesValue || '';
+
+            // Debug: Log modalities value for troubleshooting mode buttons
+            if (studyInstanceUid) {
+              if (!modalities) {
+                console.warn('⚠️ No modalities found for study:', {
+                  studyInstanceUid,
+                  studyModality: study.modality,
+                  studyModalities: study.modalities,
+                  fullStudyModalities: fullStudy?.modalities,
+                  fullStudySeries: fullStudy?.series?.length || 0,
+                  hasSeriesInMap: seriesInStudiesMap.has(studyInstanceUid),
+                });
+              } else {
+                console.log('✅ Modalities found for study:', {
+                  studyInstanceUid,
+                  modalities,
+                  source: fullStudyModalities
+                    ? 'fullStudyModalities'
+                    : fullStudy?.modalities
+                      ? 'fullStudy.modalities'
+                      : study.modalities
+                        ? 'study.modalities'
+                        : study.modality
+                          ? 'study.modality'
+                          : 'series',
+                });
+              }
+            }
+
+            const studyDate =
+              study.studyDate || study.study_date || date || fullStudy?.studyDate || null;
+
+            // Enhanced instances extraction
+            const instanceCount =
+              instances ||
+              fullStudy?.instanceCount ||
+              fullStudy?.instances ||
+              study.instanceCount ||
+              study.instances ||
+              0;
+
+            // Enhanced patientName extraction - get from caseItem if not in study
+            // This ensures search and non-search views show the same information
+            const patientNameValue =
+              patientName ||
+              fullStudy?.patientName ||
+              caseItem.patientName ||
+              caseItem.patientInfo?.name ||
+              'Anonymous';
+
+            // Enhanced MRN extraction - get from caseItem if not in study
+            const mrnValue =
+              mrn ||
+              fullStudy?.mrn ||
+              caseItem.patientMRN ||
+              caseItem.patientInfo?.mrn ||
+              caseItem.mrn ||
+              '';
+
+            // Format dates
+            const formattedStudyDate =
+              studyDate &&
+              moment(studyDate, ['YYYYMMDD', 'YYYY.MM.DD', 'YYYY-MM-DD'], true).isValid() &&
+              moment(studyDate, ['YYYYMMDD', 'YYYY.MM.DD', 'YYYY-MM-DD']).format(
+                t('Common:localDateFormat', 'MMM-DD-YYYY')
+              );
+            const studyTime =
+              time &&
+              moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).isValid() &&
+              moment(time, ['HH', 'HHmm', 'HHmmss', 'HHmmss.SSS']).format(
+                t('Common:localTimeFormat', 'hh:mm A')
+              );
+
+            const makeCopyTooltipCell = textValue => {
+              if (!textValue) {
+                return '';
+              }
+              return (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-pointer truncate">{textValue}</span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <div className="flex items-center justify-between gap-2">
+                      {textValue}
+                      <Clipboard>{textValue}</Clipboard>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            };
+
+            // 🎨 Highlight active case studies with different background color
+            const isActiveCaseStudy = activeCaseId && caseItem.caseId === activeCaseId;
+
+            rows.push({
+              dataCY: `studyRow-${studyInstanceUid}`,
+              clickableCY: studyInstanceUid,
+              className: isActiveCaseStudy
+                ? 'bg-blue-900/30 border-l-4 border-blue-500 hover:bg-blue-900/40'
+                : 'hover:bg-primary-dark',
+              row: [
+                {
+                  key: 'studyIndent',
+                  content: (
+                    <div className="ml-6 flex items-center gap-1 text-gray-500">
+                      {isActiveCaseStudy && <span className="text-xs text-blue-400">●</span>}
+                      └─
+                    </div>
+                  ),
+                  gridCol: 1,
+                },
+                {
+                  key: 'patientName',
+                  content: patientNameValue ? makeCopyTooltipCell(patientNameValue) : null,
+                  gridCol: 5,
+                },
+                {
+                  key: 'mrn',
+                  content: makeCopyTooltipCell(mrnValue),
+                  gridCol: 3,
+                },
+                {
+                  key: 'studyDate',
+                  content: (
+                    <div className="pr-4">
+                      {formattedStudyDate && <span className="mr-4">{formattedStudyDate}</span>}
+                      {studyTime && <span>{studyTime}</span>}
+                    </div>
+                  ),
+                  title: `${formattedStudyDate || ''} ${studyTime || ''}`,
+                  gridCol: 5,
+                },
+                {
+                  key: 'description',
+                  content: (
+                    <div className="flex items-center gap-2">
+                      {makeCopyTooltipCell(description)}
+                      {study.clinicalPhase && (
+                        <span className="whitespace-nowrap rounded border border-blue-500 bg-blue-900/40 px-2 py-0.5 text-xs text-blue-300">
+                          {study.clinicalPhase.replace(/([A-Z])/g, ' $1').trim()}
+                        </span>
+                      )}
+                    </div>
+                  ),
+                  gridCol: 5,
+                },
+                {
+                  key: 'modality',
+                  content: modalities,
+                  title: modalities,
+                  gridCol: 3,
+                },
+                {
+                  key: 'instances',
+                  content: (
+                    <>
+                      <Icons.GroupLayers
+                        className={classnames('mr-2 inline-flex w-4', {
+                          'text-primary': isStudyExpanded,
+                          'text-secondary-light': !isStudyExpanded,
+                        })}
+                      />
+                      {instanceCount || 0}
+                    </>
+                  ),
+                  title: (instanceCount || 0).toString(),
+                  gridCol: 2,
+                },
+                {
+                  key: 'removeButton',
+                  content: (
+                    <button
+                      onClick={e => {
+                        e.stopPropagation(); // Prevent row expansion
+                        if (
+                          window.confirm(
+                            'Remove this study from the case?\n\nThe study will remain in Orthanc.'
+                          )
+                        ) {
+                          if (caseService) {
+                            caseService
+                              .removeStudy(caseItem.caseId, studyInstanceUid)
+                              .then(() => {
+                                console.log(`✅ Study removed from case`);
+                                window.location.reload();
+                              })
+                              .catch(err => {
+                                console.error('Failed to remove study:', err);
+                                alert('Failed to remove study');
+                              });
                           }
-                        }}
-                        className="rounded p-1 transition-colors hover:bg-red-900/50"
-                        title="Remove from Case"
-                      >
-                        <Icons.Close className="h-4 w-4 text-red-400 hover:text-red-300" />
-                      </button>
-                    ),
-                    gridCol: 1,
-                  },
-                ],
-                expandedContent: (
-                  <StudyListExpandedRow
-                    seriesTableColumns={{
-                      description: t('StudyList:Description'),
-                      seriesNumber: t('StudyList:Series'),
-                      modality: t('StudyList:Modality'),
-                      instances: t('StudyList:Instances'),
-                    }}
-                    seriesTableDataSource={
-                      seriesInStudiesMap.has(studyInstanceUid)
-                        ? seriesInStudiesMap.get(studyInstanceUid).map(s => {
-                            return {
-                              description: s.description || '(empty)',
-                              seriesNumber: s.seriesNumber ?? '',
-                              modality: s.modality || '',
-                              instances: s.numSeriesInstances || '',
-                            };
-                          })
-                        : []
-                    }
-                  >
-                    {/* Series Management - Compact Version */}
-                    {(() => {
-                      // Get caseStudy from caseStudies map (fetched from API)
-                      const studiesInCase = caseStudies.get(caseItem.caseId) || [];
-                      const caseStudy = studiesInCase.find(
-                        s => s.studyInstanceUID === studyInstanceUid
-                      );
+                        }
+                      }}
+                      className="rounded p-1 transition-colors hover:bg-red-900/50"
+                      title="Remove from Case"
+                    >
+                      <Icons.Close className="h-4 w-4 text-red-400 hover:text-red-300" />
+                    </button>
+                  ),
+                  gridCol: 1,
+                },
+              ],
+              expandedContent: (
+                <StudyListExpandedRow
+                  seriesTableColumns={{
+                    description: t('StudyList:Description'),
+                    seriesNumber: t('StudyList:Series'),
+                    modality: t('StudyList:Modality'),
+                    instances: t('StudyList:Instances'),
+                  }}
+                  seriesTableDataSource={
+                    seriesInStudiesMap.has(studyInstanceUid)
+                      ? seriesInStudiesMap.get(studyInstanceUid).map(s => {
+                          return {
+                            description: s.description || s.seriesDescription || '(empty)',
+                            seriesNumber: s.seriesNumber ?? '',
+                            modality: s.modality || '',
+                            instances: s.numSeriesInstances || s.instanceCount || '',
+                          };
+                        })
+                      : []
+                  }
+                >
+                  {/* Series Management - Compact Version */}
+                  {(() => {
+                    // Get caseStudy from caseStudies map (fetched from API)
+                    const studiesInCase = caseStudies.get(caseItem.caseId) || [];
+                    const caseStudy = studiesInCase.find(
+                      s => s.studyInstanceUID === studyInstanceUid
+                    );
+
+                    return (
+                      caseStudy &&
+                      caseStudy.series &&
+                      caseStudy.series.length > 0 && (
+                        <div className="mb-3 rounded border border-gray-700 bg-gray-900/30 p-2">
+                          <div className="mb-1 flex items-center justify-between">
+                            <h5 className="text-xs font-semibold text-gray-300">
+                              Series: {caseStudy.series.filter(s => s.isEnrolled).length}/
+                              {caseStudy.series.length} enrolled
+                            </h5>
+                          </div>
+                          <div className="space-y-1">
+                            {caseStudy.series.map(series => (
+                              <div
+                                key={series.seriesInstanceUID}
+                                className="flex items-center gap-2 rounded bg-gray-800/40 px-2 py-1 text-xs"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={series.isEnrolled}
+                                  onChange={async e => {
+                                    if (caseService) {
+                                      try {
+                                        await caseService.toggleSeriesEnrollment(
+                                          caseItem.caseId,
+                                          studyInstanceUid,
+                                          series.seriesInstanceUID,
+                                          e.target.checked
+                                        );
+                                        window.location.reload();
+                                      } catch (err) {
+                                        console.error('Failed to toggle series:', err);
+                                      }
+                                    }
+                                  }}
+                                  className="h-3 w-3"
+                                />
+                                <span className="text-blue-400">#{series.seriesNumber}</span>
+                                <span className="text-gray-400">{series.modality}</span>
+                                <span className="flex-1 text-white">
+                                  {series.description ||
+                                    series.seriesDescription ||
+                                    '(no description)'}
+                                </span>
+                                <span className="text-gray-500">
+                                  {series.instanceCount || series.instances || 0} img
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    );
+                  })()}
+                  <div className="flex flex-row gap-2">
+                    {(appConfig.groupEnabledModesFirst
+                      ? appConfig.loadedModes.sort((a, b) => {
+                          // Ensure modalities is a string for replaceAll
+                          const modalitiesStrForSort =
+                            typeof modalities === 'string' ? modalities : String(modalities || '');
+                          const modalitiesToCheckForSort = modalitiesStrForSort.replaceAll(
+                            '/',
+                            '\\'
+                          );
+
+                          const isValidA = a.isValidMode({
+                            modalities: modalitiesToCheckForSort,
+                            study: displayStudy,
+                          }).valid;
+                          const isValidB = b.isValidMode({
+                            modalities: modalitiesToCheckForSort,
+                            study: displayStudy,
+                          }).valid;
+
+                          return isValidB - isValidA;
+                        })
+                      : appConfig.loadedModes
+                    ).map((mode, i) => {
+                      if (mode.hide) {
+                        return null;
+                      }
+                      // Ensure modalities is a string for replaceAll
+                      const modalitiesStr =
+                        typeof modalities === 'string' ? modalities : String(modalities || '');
+                      const modalitiesToCheck = modalitiesStr.replaceAll('/', '\\');
+
+                      const { valid: isValidMode, description: invalidModeDescription } =
+                        mode.isValidMode({
+                          modalities: modalitiesToCheck,
+                          study: displayStudy,
+                        });
+                      if (isValidMode === null) {
+                        return null;
+                      }
+
+                      const query = new URLSearchParams();
+                      if (filterValues.configUrl) {
+                        query.append('configUrl', filterValues.configUrl);
+                      }
+                      query.append('StudyInstanceUIDs', studyInstanceUid);
+
+                      // Add caseId if available (case-centric view)
+                      if (caseItem && caseItem.caseId) {
+                        query.append('caseId', caseItem.caseId);
+                      }
+
+                      preserveQueryParameters(query);
 
                       return (
-                        caseStudy &&
-                        caseStudy.series &&
-                        caseStudy.series.length > 0 && (
-                          <div className="mb-3 rounded border border-gray-700 bg-gray-900/30 p-2">
-                            <div className="mb-1 flex items-center justify-between">
-                              <h5 className="text-xs font-semibold text-gray-300">
-                                Series: {caseStudy.series.filter(s => s.isEnrolled).length}/
-                                {caseStudy.series.length} enrolled
-                              </h5>
-                            </div>
-                            <div className="space-y-1">
-                              {caseStudy.series.map(series => (
-                                <div
-                                  key={series.seriesInstanceUID}
-                                  className="flex items-center gap-2 rounded bg-gray-800/40 px-2 py-1 text-xs"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={series.isEnrolled}
-                                    onChange={async e => {
-                                      if (caseService) {
-                                        try {
-                                          await caseService.toggleSeriesEnrollment(
-                                            caseItem.caseId,
-                                            studyInstanceUid,
-                                            series.seriesInstanceUID,
-                                            e.target.checked
-                                          );
-                                          window.location.reload();
-                                        } catch (err) {
-                                          console.error('Failed to toggle series:', err);
-                                        }
-                                      }
-                                    }}
-                                    className="h-3 w-3"
-                                  />
-                                  <span className="text-blue-400">#{series.seriesNumber}</span>
-                                  <span className="text-gray-400">{series.modality}</span>
-                                  <span className="flex-1 text-white">
-                                    {series.description || '(no description)'}
-                                  </span>
-                                  <span className="text-gray-500">{series.instanceCount} img</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                        mode.displayName && (
+                          <Link
+                            className={isValidMode ? '' : 'cursor-not-allowed'}
+                            key={i}
+                            to={`${mode.routeName}${dataPath || ''}?${query.toString()}`}
+                            onClick={event => {
+                              if (!isValidMode) {
+                                event.preventDefault();
+                              }
+                            }}
+                          >
+                            <Button
+                              type={ButtonEnums.type.primary}
+                              size={ButtonEnums.size.smallTall}
+                              disabled={!isValidMode}
+                              startIconTooltip={
+                                !isValidMode ? (
+                                  <div className="font-inter flex w-[206px] whitespace-normal text-left text-xs font-normal text-white">
+                                    {invalidModeDescription}
+                                  </div>
+                                ) : null
+                              }
+                              startIcon={
+                                isValidMode ? (
+                                  <Icons.LaunchArrow className="!h-[20px] !w-[20px] text-black" />
+                                ) : (
+                                  <Icons.LaunchInfo className="!h-[20px] !w-[20px] text-black" />
+                                )
+                              }
+                              onClick={() => {}}
+                              dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
+                              className={!isValidMode ? 'bg-[#222d44]' : undefined}
+                            >
+                              {mode.displayName}
+                            </Button>
+                          </Link>
                         )
                       );
-                    })()}
-                    <div className="flex flex-row gap-2">
-                      {(appConfig.groupEnabledModesFirst
-                        ? appConfig.loadedModes.sort((a, b) => {
-                            const isValidA = a.isValidMode({
-                              modalities: modalities.replaceAll('/', '\\'),
-                              study: fullStudy,
-                            }).valid;
-                            const isValidB = b.isValidMode({
-                              modalities: modalities.replaceAll('/', '\\'),
-                              study: fullStudy,
-                            }).valid;
-
-                            return isValidB - isValidA;
-                          })
-                        : appConfig.loadedModes
-                      ).map((mode, i) => {
-                        if (mode.hide) {
-                          return null;
-                        }
-                        const modalitiesToCheck = modalities.replaceAll('/', '\\');
-
-                        const { valid: isValidMode, description: invalidModeDescription } =
-                          mode.isValidMode({
-                            modalities: modalitiesToCheck,
-                            study: fullStudy,
-                          });
-                        if (isValidMode === null) {
-                          return null;
-                        }
-
-                        const query = new URLSearchParams();
-                        if (filterValues.configUrl) {
-                          query.append('configUrl', filterValues.configUrl);
-                        }
-                        query.append('StudyInstanceUIDs', studyInstanceUid);
-
-                        // Add caseId if available (case-centric view)
-                        if (caseItem && caseItem.caseId) {
-                          query.append('caseId', caseItem.caseId);
-                        }
-
-                        preserveQueryParameters(query);
-
-                        return (
-                          mode.displayName && (
-                            <Link
-                              className={isValidMode ? '' : 'cursor-not-allowed'}
-                              key={i}
-                              to={`${mode.routeName}${dataPath || ''}?${query.toString()}`}
-                              onClick={event => {
-                                if (!isValidMode) {
-                                  event.preventDefault();
-                                }
-                              }}
-                            >
-                              <Button
-                                type={ButtonEnums.type.primary}
-                                size={ButtonEnums.size.smallTall}
-                                disabled={!isValidMode}
-                                startIconTooltip={
-                                  !isValidMode ? (
-                                    <div className="font-inter flex w-[206px] whitespace-normal text-left text-xs font-normal text-white">
-                                      {invalidModeDescription}
-                                    </div>
-                                  ) : null
-                                }
-                                startIcon={
-                                  isValidMode ? (
-                                    <Icons.LaunchArrow className="!h-[20px] !w-[20px] text-black" />
-                                  ) : (
-                                    <Icons.LaunchInfo className="!h-[20px] !w-[20px] text-black" />
-                                  )
-                                }
-                                onClick={() => {}}
-                                dataCY={`mode-${mode.routeName}-${studyInstanceUid}`}
-                                className={!isValidMode ? 'bg-[#222d44]' : undefined}
-                              >
-                                {mode.displayName}
-                              </Button>
-                            </Link>
-                          )
-                        );
-                      })}
-                    </div>
-                  </StudyListExpandedRow>
+                    })}
+                  </div>
+                </StudyListExpandedRow>
+              ),
+              onClickRow: () =>
+                setExpandedRows(s =>
+                  isStudyExpanded ? s.filter(n => studyRowKey !== n) : [...s, studyRowKey]
                 ),
-                onClickRow: () =>
-                  setExpandedRows(s =>
-                    isStudyExpanded ? s.filter(n => studyRowKey !== n) : [...s, studyRowKey]
-                  ),
-                isExpanded: isStudyExpanded,
-                isStudyRow: true,
-              });
-            }
+              isExpanded: isStudyExpanded,
+              isStudyRow: true,
+            });
           });
         }
       });
@@ -2439,42 +2667,42 @@ function WorkList({
   const DicomUploadComponent = customizationService.getCustomization('dicomUploadComponent');
 
   const uploadProps = undefined;
-    // DicomUploadComponent && dataSource.getConfig()?.dicomUploadEnabled
-    //   ? {
-    //       title: 'Upload files',
-    //       closeButton: true,
-    //       shouldCloseOnEsc: false,
-    //       shouldCloseOnOverlayClick: false,
-    //       content: () => (
-    //         <DicomUploadComponent
-    //           dataSource={dataSource}
-    //           onComplete={() => {
-    //             hide();
-    //             onRefresh();
-    //           }}
-    //           onStarted={() => {
-    //             show({
-    //               ...uploadProps,
-    //               // when upload starts, hide the default close button as closing the dialogue must be handled by the upload dialogue itself
-    //               closeButton: false,
-    //             });
-    //           }}
-    //         />
-    //       ),
-    //     }
-    //   : undefined;
+  // DicomUploadComponent && dataSource.getConfig()?.dicomUploadEnabled
+  //   ? {
+  //       title: 'Upload files',
+  //       closeButton: true,
+  //       shouldCloseOnEsc: false,
+  //       shouldCloseOnOverlayClick: false,
+  //       content: () => (
+  //         <DicomUploadComponent
+  //           dataSource={dataSource}
+  //           onComplete={() => {
+  //             hide();
+  //             onRefresh();
+  //           }}
+  //           onStarted={() => {
+  //             show({
+  //               ...uploadProps,
+  //               // when upload starts, hide the default close button as closing the dialogue must be handled by the upload dialogue itself
+  //               closeButton: false,
+  //             });
+  //           }}
+  //         />
+  //       ),
+  //     }
+  //   : undefined;
 
   const dataSourceConfigurationComponent = customizationService.getCustomization(
     'ohif.dataSourceConfigurationComponent'
   );
 
-  // 示例：假设有一个函数处理跳转到plan（根据您的代码调整）
-  const handleOpenPlanning = (caseId) => {
-    // 设置标志
+  // Example: Function to handle navigation to plan (adjust according to your code)
+  const handleOpenPlanning = caseId => {
+    // Set flag
     localStorage.setItem('ohif_from_case', 'true');
 
-    // 新增：尝试预清理渲染缓存（如果extensionManager有访问servicesManager）
-    const servicesManager = extensionManager.getActiveServicesManager(); // 基于第527行extensionManager
+    // New: Try to pre-clear rendering cache (if extensionManager has access to servicesManager)
+    const servicesManager = extensionManager.getActiveServicesManager(); // Based on line 527 extensionManager
     if (servicesManager) {
       const { modelStateService, viewportStateService } = servicesManager.services;
       modelStateService.clearAllModels();
@@ -2482,15 +2710,14 @@ function WorkList({
       console.log('🧹 Pre-cleared rendering cache before navigating to plan');
     }
 
-    // 执行导航
+    // Execute navigation
     navigate(`/plan?caseId=${caseId}`);
   };
 
-  // 在useEffect中保持设置标志（第2470-2474行）
+  // Keep setting flag in useEffect (lines 2470-2474)
   useEffect(() => {
-    localStorage.setItem('ohif_from_case', 'true');  // Set flag when in WorkList (case)
+    localStorage.setItem('ohif_from_case', 'true'); // Set flag when in WorkList (case)
   }, []);
-
 
   return (
     <div className="flex h-screen flex-col bg-black">
@@ -2603,31 +2830,31 @@ function WorkList({
               </div>
             )} */}
             {displayedCount > 0 ? (
-            <div className="flex grow flex-col">
-              <StudyListTable
-                tableDataSource={paginatedTableData}
-                numOfStudies={displayedCount}
-                querying={querying}
-                filtersMeta={filtersMeta}
-              />
-              <div className="grow">
-                <StudyListPagination
-                  onChangePage={onPageNumberChange}
-                  onChangePerPage={onResultsPerPageChange}
-                  currentPage={pageNumber}
-                  perPage={resultsPerPage}
+              <div className="flex grow flex-col">
+                <StudyListTable
+                  tableDataSource={paginatedTableData}
+                  numOfStudies={displayedCount}
+                  querying={querying}
+                  filtersMeta={filtersMeta}
                 />
+                <div className="grow">
+                  <StudyListPagination
+                    onChangePage={onPageNumberChange}
+                    onChangePerPage={onResultsPerPageChange}
+                    currentPage={pageNumber}
+                    perPage={resultsPerPage}
+                  />
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center pt-48">
-              {appConfig.showLoadingIndicator && isLoadingData ? (
-                <LoadingIndicatorProgress className={'h-full w-full bg-black'} />
-              ) : (
-                <EmptyStudies />
-              )}
-            </div>
-          )}
+            ) : (
+              <div className="flex flex-col items-center justify-center pt-48">
+                {appConfig.showLoadingIndicator && isLoadingData ? (
+                  <LoadingIndicatorProgress className={'h-full w-full bg-black'} />
+                ) : (
+                  <EmptyStudies />
+                )}
+              </div>
+            )}
           </div>
         </ScrollArea>
       </div>
@@ -2882,12 +3109,8 @@ function WorkList({
                               <option value="PreOperativePlanning">PreOperativePlanning</option>
                               <option value="PreOperativeCheck">PreOperativeCheck</option>
                               <option value="IntraOperative">IntraOperative</option>
-                              <option value="PostOperativeImmediate">
-                                PostOperativeImmediate
-                              </option>
-                              <option value="PostOperativeShortTerm">
-                                PostOperativeShortTerm
-                              </option>
+                              <option value="PostOperativeImmediate">PostOperativeImmediate</option>
+                              <option value="PostOperativeShortTerm">PostOperativeShortTerm</option>
                               <option value="PostOperativeLongTerm">PostOperativeLongTerm</option>
                               <option value="Surveillance">Surveillance</option>
                               <option value="Revision">Revision</option>
@@ -2896,12 +3119,11 @@ function WorkList({
                           <div className="rounded border border-blue-500/30 bg-blue-900/20 p-3">
                             <div className="text-sm text-blue-300">
                               <span className="font-semibold">Will auto-enroll to Case ID:</span>{' '}
-                              <span className="font-mono text-blue-200">
-                                {addStudyToCaseId}
-                              </span>
+                              <span className="font-mono text-blue-200">{addStudyToCaseId}</span>
                             </div>
                             <p className="mt-2 text-xs text-gray-400">
-                              After upload completes, study and all series will be automatically enrolled to this Case
+                              After upload completes, study and all series will be automatically
+                              enrolled to this Case
                             </p>
                           </div>
                         </div>
@@ -2936,7 +3158,9 @@ function WorkList({
                       {/* Upload Progress */}
                       {isUploading && (
                         <div className="rounded-lg border border-blue-500/50 bg-blue-900/20 p-4">
-                          <div className="mb-2 text-sm text-blue-300">Uploading, please wait...</div>
+                          <div className="mb-2 text-sm text-blue-300">
+                            Uploading, please wait...
+                          </div>
                           <div className="h-2 w-full overflow-hidden rounded-full bg-gray-700">
                             <div
                               className="h-full animate-pulse bg-blue-500"
