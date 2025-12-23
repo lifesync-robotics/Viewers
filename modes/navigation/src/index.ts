@@ -11,7 +11,6 @@ import { initToolGroups, toolbarButtons, cornerstone,
   modeInstance as basicModeInstance,
 } from '@ohif/mode-basic';
 import { getRenderingEngine } from '@cornerstonejs/core';
-// import navigationToolbarButtons from './toolbarButtons';
 
 export const tracked = {
   measurements: '@ohif/extension-measurement-tracking.panelModule.trackedMeasurements',
@@ -135,11 +134,12 @@ function captureViewportIds({ servicesManager }) {
 /**
  * Navigation mode entry hook
  * Extends the basic mode's onModeEnter to activate Crosshairs tool
- * and add OrientationMarker tool (disabled by default, user can toggle)
  */
 function navigationOnModeEnter(args) {
   const { commandsManager, servicesManager, extensionManager } = args;
-  const { viewportGridService, toolbarService, toolGroupService } = servicesManager.services;
+  const { viewportGridService, toolbarService, toolGroupService, surgicalWorkflowService } = servicesManager.services;
+
+  console.log('🚀 [Navigation Mode] onModeEnter - Navigation stage');
 
   // Call the base mode's onModeEnter first to initialize tool groups
   const baseOnModeEnter = basicModeInstance.onModeEnter;
@@ -152,97 +152,43 @@ function navigationOnModeEnter(args) {
     }
   }
 
-  // Add OrientationMarker tool to tool groups AFTER viewports are ready
-  // This prevents the "Cannot read properties of undefined (reading 'getViewports')" error
-  const addOrientationMarkerWhenReady = () => {
+  // Workflow integration
+  // NOTE: We DON'T set the stage here - workflow navigation already handles that!
+  // Modes should only READ the current stage, never SET it
+  if (surgicalWorkflowService) {
     try {
-      const utilityModule = extensionManager.getModuleEntry(
-        '@ohif/extension-cornerstone.utilityModule.tools'
-      );
-      
-      if (!utilityModule?.exports?.toolNames) {
-        console.warn('⚠️ [Navigation Mode] Tool names not available');
-        return;
-      }
-      
-      const { toolNames } = utilityModule.exports;
-      
-      if (!toolNames.OrientationMarker) {
-        console.warn('⚠️ [Navigation Mode] OrientationMarker tool not found');
-        return;
+      const currentStage = surgicalWorkflowService.getCurrentStage();
+      console.log(`✅ [Navigation Mode] Current workflow stage: ${currentStage}`);
+
+      // Load navigation reference from workflow if available
+      const navigationData = surgicalWorkflowService.getStageData(currentStage);
+      if (navigationData && navigationData.sessionId) {
+        console.log('📂 [Navigation Mode] Navigation reference found:', {
+          sessionId: navigationData.sessionId,
+          trackingData: navigationData.trackingData,
+        });
+        // Note: Fetch actual navigation data from backend if needed
+        // await fetchNavigationDataFromBackend(navigationData.sessionId);
       }
 
-      // Add to all tool groups - OrientationMarker supports both Stack (2D) and Volume (3D) viewports
-      const toolGroupIds = ['default', 'mpr', 'SRToolGroup', 'volume3d'];
-      const orientationMarkerConfig = {
-        disabled: [{
-          toolName: toolNames.OrientationMarker,
-          configuration: {
-            orientationWidget: {
-              enabled: true,
-              viewportCorner: 'BOTTOM_LEFT', // VTK.js Corners enum: 'BOTTOM_LEFT', 'BOTTOM_RIGHT', 'TOP_LEFT', 'TOP_RIGHT'
-              viewportSize: 0.2,
-              minPixelSize: 100,
-              maxPixelSize: 150,
-            },
-            overlayMarkerType: 2, // 2 = AXIS style (arrows), 1 = CUBE style
-          },
-        }],
-      };
-      
-      console.log('🔧 [Navigation Mode] Adding OrientationMarker tool (AXIS style, disabled by default, Stack & Volume viewports)...');
-
-      toolGroupIds.forEach(toolGroupId => {
-        try {
-          const toolGroup = toolGroupService.getToolGroup(toolGroupId);
-          if (toolGroup && !toolGroup.hasTool(toolNames.OrientationMarker)) {
-            toolGroupService.addToolsToToolGroup(toolGroupId, orientationMarkerConfig);
-            console.log(`✅ [Navigation Mode] OrientationMarker added to ${toolGroupId}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ [Navigation Mode] Could not add OrientationMarker to ${toolGroupId}:`, error.message);
+      // Check dependencies: Get all stages and check if prerequisites are completed
+      const allStages = surgicalWorkflowService.getState().stages;
+      for (const [stageId, stageData] of Object.entries(allStages)) {
+        const data = stageData as any;
+        if (stageId !== currentStage && data.completed) {
+          console.log(`✅ [Navigation Mode] Prerequisite stage completed: ${stageId}`);
+        } else if (stageId !== currentStage && !data.completed) {
+          console.warn(`⚠️ [Navigation Mode] Prerequisite stage not completed: ${stageId}`);
         }
-      });
+      }
     } catch (error) {
-      console.warn('⚠️ [Navigation Mode] Error adding OrientationMarker tool:', error);
+      console.error('❌ [Navigation Mode] Error reading workflow stage:', error);
     }
-  };
+  } else {
+    console.warn('⚠️ [Navigation Mode] WorkflowService not available');
+  }
 
-  // // Register navigation-specific toolbar buttons (disabled for now)
-  // try {
-  //   if (toolbarService && navigationToolbarButtons) {
-  //     // Register the buttons first
-  //     toolbarService.register(navigationToolbarButtons);
-  //     console.log('✅ [Navigation Mode] NavigationOrientationMarker toolbar button registered');
-  //     
-  //     // Update MoreTools section to include our button
-  //     toolbarService.updateSection('MoreTools', [
-  //       'Reset',
-  //       'rotate-right',
-  //       'flipHorizontal',
-  //       'ImageSliceSync',
-  //       'ReferenceLines',
-  //       'ImageOverlayViewer',
-  //       'StackScroll',
-  //       'invert',
-  //       'Probe',
-  //       'Cine',
-  //       'Angle',
-  //       'CobbAngle',
-  //       'Magnify',
-  //       'CalibrationLine',
-  //       'TagBrowser',
-  //       'AdvancedMagnify',
-  //       'UltrasoundDirectionalTool',
-  //       'WindowLevelRegion',
-  //       'SegmentLabelTool',
-  //       'NavigationOrientationMarker', // Our custom button (unique ID, no conflict!)
-  //     ]);
-  //     console.log('✅ [Navigation Mode] NavigationOrientationMarker button added to MoreTools section');
-  //   }
-  // } catch (error) {
-  //   console.error('❌ [Navigation Mode] Failed to register toolbar buttons:', error);
-  // }
+  // Toolbar buttons removed - OrientationMarker causes errors before volume is ready
 
   // Subscribe to VIEWPORTS_READY event to add tools and activate Crosshairs
   try {
@@ -253,10 +199,7 @@ function navigationOnModeEnter(args) {
           console.log('📋 [Navigation Mode] VIEWPORTS_READY event received');
           
           setTimeout(() => {
-            // First, add OrientationMarker tool (now that viewports/rendering engine exist)
-            addOrientationMarkerWhenReady();
-            
-            // Then, activate Crosshairs tool
+            // Activate Crosshairs tool
             try {
               const utilityModule = extensionManager.getModuleEntry(
                 '@ohif/extension-cornerstone.utilityModule.tools'
@@ -295,7 +238,7 @@ function navigationOnModeEnter(args) {
     console.error('❌ [Navigation Mode] Failed to subscribe to viewport events:', error);
   }
 
-  console.log('✅ [Navigation Mode] Initialization complete - OrientationMarker will be added when viewports are ready');
+  console.log('✅ [Navigation Mode] Initialization complete');
 }
 
 /**
@@ -303,6 +246,38 @@ function navigationOnModeEnter(args) {
  */
 function navigationOnModeExit(args) {
   console.log('🧹 [Navigation Mode] Starting cleanup...');
+
+  const { servicesManager } = args;
+  const { surgicalWorkflowService } = servicesManager.services;
+
+  // Save navigation reference to workflow (backend stores actual navigation data)
+  // NOTE: Do NOT set 'completed' here - workflow handles completion status
+  if (surgicalWorkflowService) {
+    try {
+      // Get navigation reference (e.g., from backend after save)
+      const sessionId = sessionStorage.getItem('ohif_session_id') || null;
+      const trackingData = sessionStorage.getItem('navigation_tracking_data') || null;
+      
+      // Get current stage from workflow service - NO HARDCODING!
+      const currentStage = surgicalWorkflowService.getCurrentStage();
+      const currentStageData = surgicalWorkflowService.getStageData(currentStage);
+      
+      surgicalWorkflowService.updateStageData(currentStage, {
+        // Preserve existing completed status (set by workflow advancement)
+        completed: currentStageData.completed,
+        sessionId: sessionId,
+        trackingData: trackingData,
+        timestamp: Date.now(),
+      });
+
+      console.log(`✅ [Navigation Mode] Navigation reference saved for ${currentStage}:`, {
+        sessionId,
+        completed: currentStageData.completed,
+      });
+    } catch (error) {
+      console.error('❌ [Navigation Mode] Error saving workflow reference:', error);
+    }
+  }
 
   // Clean up viewport ready subscription
   if (this._viewportReadySubscription) {

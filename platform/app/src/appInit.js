@@ -27,6 +27,7 @@ import {
 
 import loadModules, { loadModule as peerImport } from './pluginImports';
 import { publicUrl } from './utils/publicUrl';
+import { WorkflowService, registerWorkflowCommands, initializeWorkflowConfig } from './lifesync';
 
 /**
  * @param {object|func} appConfigOrFunc - application configuration, or a function that returns application configuration
@@ -62,6 +63,17 @@ async function appInit(appConfigOrFunc, defaultExtensions, defaultModes) {
 
   servicesManager.setExtensionManager(extensionManager);
 
+  // Initialize workflow configuration BEFORE creating WorkflowService
+  // This ensures the YAML config is loaded before the service constructor runs
+  console.log('🔧 [appInit] Initializing workflow configuration...');
+  try {
+    await initializeWorkflowConfig();
+    console.log('✅ [appInit] Workflow configuration initialized');
+  } catch (error) {
+    console.error('❌ [appInit] Failed to initialize workflow configuration:', error);
+    throw error; // Fail loudly - config is required
+  }
+
   servicesManager.registerServices([
     [MultiMonitorService.REGISTRATION, appConfig.multimonitor],
     UINotificationService.REGISTRATION,
@@ -79,8 +91,24 @@ async function appInit(appConfigOrFunc, defaultExtensions, defaultModes) {
     PanelService.REGISTRATION,
     WorkflowStepsService.REGISTRATION,
     [StudyPrefetcherService.REGISTRATION, appConfig.studyPrefetcher],
+    // LifeSync Surgical Workflow Service (config already initialized above)
+    [WorkflowService.REGISTRATION, appConfig.workflow || {}],
     // TrackingService.REGISTRATION - now registered by extensions/default
   ]);
+
+  console.log('✅ [appInit] WorkflowService registered');
+
+  // Get workflow service and set services manager reference
+  const workflowService = servicesManager.services.surgicalWorkflowService;
+  if (workflowService) {
+    workflowService.setServicesManager(servicesManager);
+    workflowService.setCommandsManager(commandsManager);
+    console.log('✅ [appInit] WorkflowService connected to ServicesManager and CommandsManager');
+  }
+
+  // Register workflow commands
+  registerWorkflowCommands(commandsManager);
+  console.log('✅ [appInit] Workflow commands registered');
 
   errorHandler.getHTTPErrorHandler = () => {
     if (typeof appConfig.httpErrorHandler === 'function') {

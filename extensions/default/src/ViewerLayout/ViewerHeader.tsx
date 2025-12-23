@@ -9,10 +9,11 @@ import HeaderPatientInfo from './HeaderPatientInfo';
 import { PatientInfoVisibility } from './HeaderPatientInfo/HeaderPatientInfo';
 import { preserveQueryParameters } from '@ohif/app';
 import { Types } from '@ohif/core';
+import { WorkflowWidget } from '@ohif/app/src/lifesync/components';
 
 function ViewerHeader({ appConfig }: withAppTypes<{ appConfig: AppTypes.Config }>) {
   const { servicesManager, extensionManager, commandsManager } = useSystem();
-  const { customizationService } = servicesManager.services;
+  const { customizationService, surgicalWorkflowService } = servicesManager.services;
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -87,7 +88,15 @@ function ViewerHeader({ appConfig }: withAppTypes<{ appConfig: AppTypes.Config }
       isReturnEnabled={!!appConfig.showStudyList}
       onClickReturnButton={onClickReturnButton}
       WhiteLabeling={appConfig.whiteLabeling}
-      Secondary={<Toolbar buttonSection="secondary" />}
+      Secondary={
+        <div className="flex items-center gap-3">
+          {surgicalWorkflowService && <WorkflowWidget />}
+          {surgicalWorkflowService && (
+            <div className="border-primary-dark h-[25px] border-r"></div>
+          )}
+          <Toolbar buttonSection="secondary" />
+        </div>
+      }
       PatientInfo={
         appConfig.showPatientInfo !== PatientInfoVisibility.DISABLED && (
           <HeaderPatientInfo

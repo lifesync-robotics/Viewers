@@ -1,0 +1,26 @@
+{
+  "name": "dicom-server-upload-examples",
+  "version": "1.0.0",
+  "description": "Example server implementations for DICOM upload extension",
+  "main": "sample-server.js",
+  "scripts": {
+    "start": "node sample-server.js",
+    "dev": "nodemon sample-server.js"
+  },
+  "keywords": [
+    "dicom",
+    "upload",
+    "server",
+    "example"
+  ],
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+

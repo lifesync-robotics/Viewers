@@ -13,15 +13,14 @@ import { useSearchParams } from 'react-router-dom';
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { crosshairsHandler } from '../../utils/crosshairsHandler';
 import { getScrewColor } from '../../utils/screwColorScheme';
-import { planningBackendService } from '../../services';
+import { planningBackendService, anatomyService } from '../../services';
 import PlanSelectionDialog from './PlanSelectionDialog';
 import ScrewSelectionDialog from './ScrewSelectionDialog';
 import {
   Header,
   SessionStatus,
   LoadingScreen,
-  SaveScrewButton,
-  ScrewToolbar,
+  CompactToolbar,
   ScrewListHeader,
   EmptyScrewList,
   ScrewTable,
@@ -127,6 +126,19 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [updatingScrewId, setUpdatingScrewId] = useState<string | null>(null);
   const [availableDiameters, setAvailableDiameters] = useState<number[]>([]);
   const [availableLengths, setAvailableLengths] = useState<number[]>([]);
+
+  // Auto Screw Placement state
+  const [selectedVertebraForAuto, setSelectedVertebraForAuto] = useState<string>('');
+  const [isLoadingAutoPlacement, setIsLoadingAutoPlacement] = useState(false);
+
+  // Vertebral levels state
+  const [vertebralLevels, setVertebralLevels] = useState<string[]>([]);
+  const [vertebralLevelsLoading, setVertebralLevelsLoading] = useState(false);
+  const [vertebralLevelsError, setVertebralLevelsError] = useState<string | null>(null);
+  
+  // Segmentation availability state
+  const [hasSegmentation, setHasSegmentation] = useState<boolean>(false);
+  const [checkingSegmentation, setCheckingSegmentation] = useState<boolean>(true);
 
   // Debug: Log screws whenever they change
   useEffect(() => {
@@ -317,6 +329,68 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   }, [sessionId]);
 
+  // Monitor for valid series ID detection after initial mount
+  // This helps when DICOM loads after component mount
+  useEffect(() => {
+    if (seriesInstanceUID === 'NO_SERIES_LOADED') {
+      console.log('⏳ [ScrewManagement] Waiting for DICOM series to load, setting up retry...');
+      
+      // Try to detect CT series ID periodically (not segmentation series)
+      const retryInterval = setInterval(() => {
+        try {
+          const { displaySetService, viewportGridService } = servicesManager.services;
+          const { activeViewportId, viewports } = viewportGridService.getState();
+          const viewport = viewports.get(activeViewportId);
+
+          if (viewport && viewport.displaySetInstanceUIDs && viewport.displaySetInstanceUIDs.length > 0) {
+            // Check each display set in the viewport
+            for (const displaySetInstanceUID of viewport.displaySetInstanceUIDs) {
+              const displaySet = displaySetService.getDisplaySetByUID(displaySetInstanceUID);
+              
+              // Look for CT series (not segmentation)
+              // AnatomyGuru needs the CT series ID, not the segmentation series ID
+              if (displaySet && 
+                  displaySet.SeriesInstanceUID && 
+                  displaySet.Modality === 'CT') {
+                
+                const detectedSeriesUID = displaySet.SeriesInstanceUID;
+                const detectedStudyUID = displaySet.StudyInstanceUID;
+                
+                console.log('✅ [ScrewManagement] CT series detected!');
+                console.log(`   Study UID: ${detectedStudyUID}`);
+                console.log(`   Series UID: ${detectedSeriesUID}`);
+                console.log(`   Modality: ${displaySet.Modality}`);
+                console.log(`   Description: ${displaySet.SeriesDescription || 'N/A'}`);
+                
+                // Update state with real UIDs
+                setSeriesInstanceUID(detectedSeriesUID);
+                setStudyInstanceUID(detectedStudyUID);
+                
+                // Clear the retry interval
+                clearInterval(retryInterval);
+                return; // Exit early
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('⚠️ [ScrewManagement] Error during series detection retry:', error);
+        }
+      }, 2000); // Check every 2 seconds
+
+      // Clean up after 30 seconds (max 15 retries)
+      const timeout = setTimeout(() => {
+        clearInterval(retryInterval);
+        console.warn('⏱️ [ScrewManagement] Series detection timeout - no CT series loaded after 30 seconds');
+      }, 30000);
+
+      // Cleanup function
+      return () => {
+        clearInterval(retryInterval);
+        clearTimeout(timeout);
+      };
+    }
+  }, [seriesInstanceUID, servicesManager]);
+
   /**
    * Load available screw dimensions from catalog
    */
@@ -376,10 +450,84 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
+  /**
+   * Check if segmentation data is available for the current series
+   * Uses getAvailableVertebrae to determine availability
+   */
+  const checkSegmentationAvailability = async () => {
+    if (!seriesInstanceUID) {
+      console.warn('⚠️ [ScrewManagement] No series ID available for segmentation check');
+      setHasSegmentation(false);
+      setCheckingSegmentation(false);
+      setVertebralLevels([]);
+      return;
+    }
+
+    setCheckingSegmentation(true);
+    setVertebralLevelsLoading(true);
+    
+    try {
+      console.log('🔍 [ScrewManagement] Checking segmentation availability for series:', seriesInstanceUID);
+
+      // Use existing getAvailableVertebrae endpoint to check availability
+      const response = await anatomyService.getAvailableVertebrae(seriesInstanceUID);
+
+      if (response.success && response.vertebrae && response.vertebrae.length > 0) {
+        setHasSegmentation(true);
+        setVertebralLevels(response.vertebrae);
+        console.log(`✅ [ScrewManagement] Segmentation available for series ${seriesInstanceUID}`);
+        console.log(`   Vertebral levels found: ${response.count}`);
+        console.log(`   Levels: ${response.vertebrae.join(', ')}`);
+      } else {
+        setHasSegmentation(false);
+        setVertebralLevels([]);
+        console.log(`ℹ️ [ScrewManagement] No segmentation data available for series ${seriesInstanceUID}`);
+        console.log(`   Auto screw placement will be hidden`);
+      }
+    } catch (error) {
+      console.error('❌ [ScrewManagement] Error checking segmentation availability:', error);
+      setHasSegmentation(false);
+      setVertebralLevels([]);
+    } finally {
+      setCheckingSegmentation(false);
+      setVertebralLevelsLoading(false);
+    }
+  };
+
+
+  /**
+   * Group vertebral levels by anatomical region
+   */
+  const getVertebralLevelsByRegion = () => {
+    const cervical = vertebralLevels.filter(level => level.startsWith('C'));
+    const thoracic = vertebralLevels.filter(level => level.startsWith('T'));
+    const lumbar = vertebralLevels.filter(level => level.startsWith('L'));
+    const sacral = vertebralLevels.filter(level => level.startsWith('S'));
+
+    return { cervical, thoracic, lumbar, sacral };
+  };
+
   // Load available dimensions on mount
   useEffect(() => {
     loadAvailableDimensions();
   }, []);
+
+  // Check segmentation availability when series changes
+  // This also loads vertebral levels automatically
+  useEffect(() => {
+    // Only check if we have a valid series ID (not a placeholder)
+    if (seriesInstanceUID && 
+        seriesInstanceUID !== 'NO_SERIES_LOADED' && 
+        !seriesInstanceUID.startsWith('NO_')) {
+      console.log('🔍 [ScrewManagement] Valid series ID detected, checking segmentation...');
+      checkSegmentationAvailability();
+    } else if (seriesInstanceUID === 'NO_SERIES_LOADED') {
+      console.log('⚠️ [ScrewManagement] Waiting for DICOM series to load...');
+      setHasSegmentation(false);
+      setCheckingSegmentation(false);
+      setVertebralLevels([]);
+    }
+  }, [seriesInstanceUID]);
 
   // Update available dimensions when screws change
   useEffect(() => {
@@ -3214,6 +3362,185 @@ export default function ScrewManagementPanel({ servicesManager }) {
     }
   };
 
+  /**
+   * Get auto screw placement from AnatomyGuru
+   */
+  const handleGetAutoScrewPlacement = async (vertebraLabel: string) => {
+    setIsLoadingAutoPlacement(true);
+    try {
+      console.log(`🤖 [AutoScrew] Getting auto screw placement for: ${vertebraLabel}`);
+      
+      // Use the CT series ID from state (already detected during initialization)
+      if (!seriesInstanceUID || seriesInstanceUID === 'NO_SERIES_LOADED') {
+        alert('⚠️ Could not detect CT series ID.\n\nPlease ensure a DICOM CT series is loaded in the viewport.');
+        console.error('❌ [AutoScrew] No CT series ID available');
+        return;
+      }
+      
+      console.log(`📋 [AutoScrew] Using CT series ID: ${seriesInstanceUID}`);
+      
+      // Call anatomy service with CT series ID
+      const response = await anatomyService.getScrewPlacement(seriesInstanceUID, vertebraLabel);
+      
+      if (!response.success) {
+        console.error(`❌ [AutoScrew] Failed: ${response.message}`);
+        alert(`Failed to get screw placement:\n${response.message}`);
+        return;
+      }
+      
+      // Log left screw info
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`🦴 AUTO SCREW PLACEMENT - ${vertebraLabel}`);
+      console.log(`${'='.repeat(80)}`);
+      console.log(`Series ID: ${response.seriesId}`);
+      console.log(`Vertebra: ${response.vertebraLabel}`);
+      console.log('');
+      
+      if (response.hasLeftScrew && response.leftScrew) {
+        console.log(`🔩 LEFT SCREW:`);
+        console.log(`   Entry Point:  [${response.leftScrew.entryPoint.x.toFixed(2)}, ${response.leftScrew.entryPoint.y.toFixed(2)}, ${response.leftScrew.entryPoint.z.toFixed(2)}] mm`);
+        console.log(`   Target Point: [${response.leftScrew.targetPoint.x.toFixed(2)}, ${response.leftScrew.targetPoint.y.toFixed(2)}, ${response.leftScrew.targetPoint.z.toFixed(2)}] mm`);
+        console.log(`   Trajectory:   [${response.leftScrew.trajectoryVector.x.toFixed(3)}, ${response.leftScrew.trajectoryVector.y.toFixed(3)}, ${response.leftScrew.trajectoryVector.z.toFixed(3)}] (normalized)`);
+        console.log(`   Length:       ${response.leftScrew.lengthMm.toFixed(1)} mm`);
+        console.log(`   Sagittal:     ${response.leftScrew.sagittalAngleDeg.toFixed(1)}°`);
+        console.log(`   Transverse:   ${response.leftScrew.transverseAngleDeg.toFixed(1)}°`);
+        console.log('');
+      } else {
+        console.log(`❌ LEFT SCREW: Not available`);
+        console.log('');
+      }
+      
+      if (response.hasRightScrew && response.rightScrew) {
+        console.log(`🔩 RIGHT SCREW:`);
+        console.log(`   Entry Point:  [${response.rightScrew.entryPoint.x.toFixed(2)}, ${response.rightScrew.entryPoint.y.toFixed(2)}, ${response.rightScrew.entryPoint.z.toFixed(2)}] mm`);
+        console.log(`   Target Point: [${response.rightScrew.targetPoint.x.toFixed(2)}, ${response.rightScrew.targetPoint.y.toFixed(2)}, ${response.rightScrew.targetPoint.z.toFixed(2)}] mm`);
+        console.log(`   Trajectory:   [${response.rightScrew.trajectoryVector.x.toFixed(3)}, ${response.rightScrew.trajectoryVector.y.toFixed(3)}, ${response.rightScrew.trajectoryVector.z.toFixed(3)}] (normalized)`);
+        console.log(`   Length:       ${response.rightScrew.lengthMm.toFixed(1)} mm`);
+        console.log(`   Sagittal:     ${response.rightScrew.sagittalAngleDeg.toFixed(1)}°`);
+        console.log(`   Transverse:   ${response.rightScrew.transverseAngleDeg.toFixed(1)}°`);
+        console.log('');
+      } else {
+        console.log(`❌ RIGHT SCREW: Not available`);
+        console.log('');
+      }
+      
+      // Log intersection analysis
+      if (response.intersectionAnalysis) {
+        console.log(`🔬 INTERSECTION ANALYSIS:`);
+        console.log(`   Has Intersection: ${response.intersectionAnalysis.hasIntersection ? '⚠️ YES' : '✅ NO'}`);
+        
+        if (response.intersectionAnalysis.hasIntersection) {
+          console.log(`   IoU:              ${response.intersectionAnalysis.iou.toFixed(4)}`);
+          console.log(`   Risk Level:       ${response.intersectionAnalysis.iou >= 0.3 ? '🔴 HIGH' : response.intersectionAnalysis.iou >= 0.1 ? '🟡 MODERATE' : '🟢 LOW'}`);
+          console.log(`   Center:           [${response.intersectionAnalysis.intersectionCenter.x.toFixed(2)}, ${response.intersectionAnalysis.intersectionCenter.y.toFixed(2)}, ${response.intersectionAnalysis.intersectionCenter.z.toFixed(2)}] mm`);
+          console.log(`   Volume:           ${response.intersectionAnalysis.intersectionVolume.toFixed(2)} mm³`);
+          console.log(`   Vertebra Volume:  ${response.intersectionAnalysis.vertebraVolume.toFixed(2)} mm³`);
+          console.warn(`\n   ⚠️ WARNING: Spinal cord intersection detected!`);
+          console.warn(`   This trajectory may pose a risk to the spinal cord.`);
+        } else {
+          console.log(`   ✅ No spinal cord intersection detected - trajectory appears safe.`);
+        }
+      }
+      
+      console.log(`${'='.repeat(80)}\n`);
+      
+      // ═════════════════════════════════════════════════════════
+      // Automatically place screws using retrieved entry points
+      // ═════════════════════════════════════════════════════════
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`🤖 [AutoScrew] AUTOMATICALLY PLACING SCREWS`);
+      console.log(`${'='.repeat(80)}`);
+      
+      const DEFAULT_RADIUS = 3.5; // mm - default screw radius
+      let placedScrews = [];
+      
+      // Place left screw if available
+      if (response.hasLeftScrew && response.leftScrew) {
+        try {
+          const leftLabel = `${vertebraLabel}-L`;
+          const leftPosition: [number, number, number] = [
+            response.leftScrew.entryPoint.x,
+            response.leftScrew.entryPoint.y,
+            response.leftScrew.entryPoint.z
+          ];
+          
+          console.log(`\n🔩 Placing LEFT screw: ${leftLabel}`);
+          console.log(`   Position: [${leftPosition[0].toFixed(2)}, ${leftPosition[1].toFixed(2)}, ${leftPosition[2].toFixed(2)}] mm`);
+          console.log(`   Length: ${response.leftScrew.lengthMm.toFixed(1)} mm`);
+          console.log(`   Radius: ${DEFAULT_RADIUS} mm (default)`);
+          
+          await saveScrew({
+            name: leftLabel,
+            radius: DEFAULT_RADIUS,
+            length: response.leftScrew.lengthMm,
+            source: 'custom',
+            position: leftPosition
+          });
+          
+          placedScrews.push('Left');
+          console.log(`✅ Left screw placed successfully`);
+        } catch (error) {
+          console.error(`❌ Failed to place left screw:`, error);
+        }
+      }
+      
+      // Place right screw if available
+      if (response.hasRightScrew && response.rightScrew) {
+        try {
+          const rightLabel = `${vertebraLabel}-R`;
+          const rightPosition: [number, number, number] = [
+            response.rightScrew.entryPoint.x,
+            response.rightScrew.entryPoint.y,
+            response.rightScrew.entryPoint.z
+          ];
+          
+          console.log(`\n🔩 Placing RIGHT screw: ${rightLabel}`);
+          console.log(`   Position: [${rightPosition[0].toFixed(2)}, ${rightPosition[1].toFixed(2)}, ${rightPosition[2].toFixed(2)}] mm`);
+          console.log(`   Length: ${response.rightScrew.lengthMm.toFixed(1)} mm`);
+          console.log(`   Radius: ${DEFAULT_RADIUS} mm (default)`);
+          
+          await saveScrew({
+            name: rightLabel,
+            radius: DEFAULT_RADIUS,
+            length: response.rightScrew.lengthMm,
+            source: 'custom',
+            position: rightPosition
+          });
+          
+          placedScrews.push('Right');
+          console.log(`✅ Right screw placed successfully`);
+        } catch (error) {
+          console.error(`❌ Failed to place right screw:`, error);
+        }
+      }
+      
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`✅ Auto placement complete: ${placedScrews.length} screw(s) placed`);
+      console.log(`${'='.repeat(80)}\n`);
+      
+      // Show success message
+      const hasIntersection = response.intersectionAnalysis?.hasIntersection;
+      const warningText = hasIntersection 
+        ? `\n\n⚠️ WARNING: Spinal cord intersection detected!\nIoU: ${response.intersectionAnalysis.iou.toFixed(4)}`
+        : '';
+      
+      alert(
+        `✅ Auto Screw Placement Complete!\n\n` +
+        `Vertebra: ${response.vertebraLabel}\n` +
+        `Screws Placed: ${placedScrews.join(', ')}\n` +
+        `Default Radius: ${DEFAULT_RADIUS} mm` +
+        warningText +
+        `\n\n📋 Check console for detailed information.`
+      );
+      
+    } catch (error) {
+      console.error('❌ [AutoScrew] Error:', error);
+      alert(`Error getting auto screw placement:\n${error.message}`);
+    } finally {
+      setIsLoadingAutoPlacement(false);
+    }
+  };
+
   // Use screws.length for actual screw count, not viewport snapshots
   const maxScrews = 10; // Maximum screws allowed
   const remainingSlots = Math.max(0, maxScrews - screws.length);
@@ -3225,16 +3552,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
   return (
     <ScrewManagementContainer>
       {/* Header */}
-      <Header
-        sessionId={sessionId}
-        onTestCrosshair={testCrosshairDetection}
-        onShowSessionState={showSessionState}
-        onLoadPlan={() => setShowPlanDialog(true)}
-        onSavePlan={savePlan}
-        onClearAll={clearAllScrews}
-        isSavingPlan={isSavingPlan}
-        hasScrews={screws.length > 0}
-      />
+      <Header sessionId={sessionId} />
 
       {/* Plan Selection Dialog */}
       <PlanSelectionDialog
@@ -3277,7 +3595,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       />
 
       {/* Vertebral Labels - Navigation and Screw Placement */}
-      <CrosshairBookmarks
+      {/* <CrosshairBookmarks
         bookmarks={crosshairBookmarks}
         selectedBookmarkId={selectedBookmarkId}
         onAddBookmark={addCrosshairBookmark}
@@ -3285,24 +3603,140 @@ export default function ScrewManagementPanel({ servicesManager }) {
         onUpdateBookmark={updateCrosshairBookmark}
         onDeleteBookmark={deleteCrosshairBookmark}
         onPlaceScrews={placeScrewsAtPositions}
-      />
+      /> */}
 
-      {/* Screw Interaction Toolbar */}
-      <ScrewToolbar
+      {/* Auto Screw Placement - Only show if segmentation is available */}
+      {checkingSegmentation ? (
+        <div className="space-y-2 border border-gray-600 rounded p-3 bg-gray-800 bg-opacity-20">
+          <div className="flex items-center justify-center gap-2 text-gray-400 text-sm">
+            <span className="animate-spin">⏳</span>
+            <span>Checking segmentation availability...</span>
+          </div>
+        </div>
+      ) : hasSegmentation ? (
+        <div className="space-y-2 border border-purple-600 rounded p-3 bg-purple-900 bg-opacity-20">
+          {/* Header */}
+          {/* <div className="flex items-center justify-between">
+            <h3 className="font-bold text-white text-sm">🤖 Auto Screw Placement</h3>
+            <span className="text-xs text-purple-300">AnatomyGuru AI</span>
+          </div> */}
+
+          {/* Vertebra Selection */}
+          <div className="flex gap-2 items-center">
+            <div className="flex-1">
+              <select
+                value={selectedVertebraForAuto}
+                onChange={(e) => setSelectedVertebraForAuto(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:border-purple-500 focus:outline-none text-sm"
+                disabled={isLoadingAutoPlacement || vertebralLevelsLoading}
+              >
+                <option value="">
+                  {vertebralLevelsLoading ? '-- Loading Vertebrae --' : vertebralLevels.length === 0 ? '-- No Vertebrae Found --' : '-- Select Vertebra --'}
+                </option>
+                {(() => {
+                  const { cervical, thoracic, lumbar, sacral } = getVertebralLevelsByRegion();
+                  return (
+                    <>
+                      {/* Cervical */}
+                      {cervical.length > 0 && (
+                        <optgroup label="Cervical">
+                          {cervical.map(label => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {/* Thoracic */}
+                      {thoracic.length > 0 && (
+                        <optgroup label="Thoracic">
+                          {thoracic.map(label => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {/* Lumbar */}
+                      {lumbar.length > 0 && (
+                        <optgroup label="Lumbar">
+                          {lumbar.map(label => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {/* Sacral */}
+                      {sacral.length > 0 && (
+                        <optgroup label="Sacral">
+                          {sacral.map(label => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </>
+                  );
+                })()}
+              </select>
+            </div>
+
+            {/* Get Placement Button */}
+            <button
+              onClick={() => selectedVertebraForAuto && handleGetAutoScrewPlacement(selectedVertebraForAuto)}
+              disabled={!selectedVertebraForAuto || isLoadingAutoPlacement}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
+              title="Get AI-generated screw placement from AnatomyGuru"
+            >
+              {isLoadingAutoPlacement ? (
+                <>
+                  <span className="animate-spin">⏳</span>
+                  <span>Loading...</span>
+                </>
+              ) : (
+                <>
+                  <span>🔍</span>
+                  <span>Get Placement</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Help Text */}
+          {/* <p className="text-xs text-gray-400">
+            💡 {vertebralLevels.length > 0 
+              ? `${vertebralLevels.length} vertebra(e) found in segmentation. Select one to get AI-generated screw placement.`
+              : 'Loading vertebral levels from segmentation...'}
+          </p> */}
+        </div>
+      ) : (
+        <div className="space-y-2 border border-gray-600 rounded p-3 bg-gray-800 bg-opacity-20">
+          <div className="flex items-start gap-2">
+            <span className="text-gray-400 text-sm">ℹ️</span>
+            <div className="flex-1">
+              <p className="text-gray-400 text-sm">
+                <strong>Auto Screw Placement unavailable</strong>
+              </p>
+              <p className="text-gray-500 text-xs mt-1">
+                No segmentation data found for this series. Auto placement requires vertebral segmentation from AnatomyGuru.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Compact Toolbar - All Tools Combined */}
+      <CompactToolbar
         isMoveToolActive={isMoveToolActive}
         onToggleMoveTool={toggleMoveTool}
-        hasScrews={screws.length > 0}
         selectedScrew={selectedScrew}
         modelCount={modelStateService.getAllModels().length}
         screwCount={screws.length}
-        onDebug={debugScrewInteraction}
-      />
-
-      {/* Save Screw Placement Button - Above the table */}
-      <SaveScrewButton
         remainingSlots={remainingSlots}
         maxScrews={maxScrews}
         onOpenDialog={() => setShowScrewDialog(true)}
+        onTestCrosshair={testCrosshairDetection}
+        onShowSessionState={showSessionState}
+        onLoadPlan={() => setShowPlanDialog(true)}
+        onSavePlan={savePlan}
+        onClearAll={clearAllScrews}
+        isSavingPlan={isSavingPlan}
+        hasScrews={screws.length > 0}
+        onDebug={debugScrewInteraction}
       />
 
       {/* Screws List - Table Layout */}

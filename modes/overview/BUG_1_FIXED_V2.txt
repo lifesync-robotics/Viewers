@@ -1,0 +1,154 @@
+================================================================================
+BUG #1 FIXED (Version 2): 4×4 Grid + Toolbar Issues
+================================================================================
+
+STATUS: ✅ FIXED (Version 2)
+
+PROBLEM:
+- Overview mode was not displaying 4×4 grid
+- Toolbar was missing
+- Only single viewport was shown
+
+ROOT CAUSE (Identified in V2):
+- Was NOT calling the base mode's onModeEnter() first
+- Base mode initializes: toolbar, tool groups, measurements
+- Without it, the mode had no toolbar or proper initialization
+
+SOLUTION V2:
+1. ✅ Call basicOnModeEnter.call(basicModeInstance, args) FIRST
+2. ✅ THEN register custom image load strategy
+3. ✅ THEN register hanging protocol
+4. ✅ Changed hangingProtocol from array to string ID reference
+
+KEY CHANGES IN V2:
+==================
+
+1. Import basicOnModeEnter (was missing):
+   ✅ import { ..., onModeEnter as basicOnModeEnter, ... }
+
+2. Call base mode FIRST in overviewOnModeEnter:
+   ✅ basicOnModeEnter.call(basicModeInstance, args)
+   
+   This gives us:
+   - ✅ Toolbar buttons
+   - ✅ Tool groups
+   - ✅ Measurements service
+   - ✅ All default functionality
+
+3. Changed hanging protocol reference:
+   ❌ Before: hangingProtocols: [overviewHangingProtocol]
+   ✅ After:  hangingProtocol: 'overview4x4'
+
+WHAT EACH PART DOES:
+====================
+
+basicOnModeEnter() - Sets up base functionality:
+  ✅ Clears measurements
+  ✅ Initializes tool groups (default, SR, etc.)
+  ✅ Registers toolbar buttons
+  ✅ Updates toolbar sections
+  ✅ Sets customization service
+  ✅ Sets workflow stage (if available)
+
+customImageLoadStrategy - Distributes frames:
+  ✅ Reads viewport gridPosition
+  ✅ Calculates frame index: round((position/15) * (totalFrames-1))
+  ✅ Returns {imageIndex, initialImageIndex}
+
+overviewHangingProtocol - Defines 4x4 grid:
+  ✅ Creates 16 viewports
+  ✅ 4 rows × 4 columns
+  ✅ Each has customViewportProps with gridPosition
+  ✅ Uses imageLoadStrategy: 'overviewEvenlySpaced'
+
+HOW TO TEST:
+============
+
+1. Rebuild the mode:
+   cd Viewers/modes/overview
+   yarn build
+
+2. Restart viewer:
+   cd ../../platform/app
+   yarn dev
+
+3. Load a study (16+ frames recommended)
+
+4. Select "Overview 4×4 Grid" mode
+
+EXPECTED RESULT:
+================
+✅ Toolbar appears at top (tools, measurements, etc.)
+✅ 16 viewports in 4×4 grid
+✅ Each viewport shows different frame
+✅ Frames evenly distributed
+✅ First viewport = first frame
+✅ Last viewport = last frame
+✅ Middle viewports = evenly spaced
+✅ Tools work (zoom, pan, window/level, measurements)
+✅ Left panel shows thumbnails
+✅ Right panel shows measurements
+
+CONSOLE LOGS YOU SHOULD SEE:
+=============================
+🚀 [Overview Mode] onModeEnter - Activating 4x4 Grid
+🚀 [BasicMode] onModeEnter - Beginning stage
+✅ [BasicMode] Workflow stage set to: beginning
+✅ [Overview Mode] Base mode initialization complete (toolbar, tools, etc.)
+✅ [Overview Mode] Custom image load strategy registered
+✅ [Overview Mode] 4x4 hanging protocol registered: overview4x4
+✅ [Overview Mode] Mode initialization complete
+📍 [Overview] Viewport 1: Frame 1/150
+📍 [Overview] Viewport 2: Frame 11/150
+📍 [Overview] Viewport 3: Frame 21/150
+...
+📍 [Overview] Viewport 16: Frame 150/150
+
+WHAT'S DIFFERENT FROM V1:
+=========================
+V1: ❌ Did own initialization (missing toolbar)
+V2: ✅ Calls base mode first (has toolbar)
+
+V1: ❌ hangingProtocols: [object]
+V2: ✅ hangingProtocol: 'overview4x4' (by ID)
+
+V1: ❌ Called functions manually
+V2: ✅ Extends base mode properly
+
+FILES MODIFIED (V2):
+===================
+✅ src/index.ts
+   - Added: import onModeEnter as basicOnModeEnter
+   - Changed: overviewOnModeEnter() to call base first
+   - Simplified: overviewOnModeExit()
+   - Changed: hangingProtocol to string ID
+
+✅ src/hangingProtocol.ts
+   - Added: imageLoadStrategy reference
+   - Added: customViewportProps with gridPosition
+
+FRAME DISTRIBUTION EXAMPLE (150 frames):
+========================================
+Viewport  1: Frame   0 (first)
+Viewport  2: Frame  10
+Viewport  3: Frame  20
+Viewport  4: Frame  30
+Viewport  5: Frame  40
+Viewport  6: Frame  50
+Viewport  7: Frame  60
+Viewport  8: Frame  70
+Viewport  9: Frame  80
+Viewport 10: Frame  90
+Viewport 11: Frame 100
+Viewport 12: Frame 110
+Viewport 13: Frame 120
+Viewport 14: Frame 130
+Viewport 15: Frame 140
+Viewport 16: Frame 150 (last)
+
+================================================================================
+Version 2 properly extends the base mode = Toolbar + 4x4 Grid working! 🎉
+================================================================================
+
+Now rebuild and test it!
+

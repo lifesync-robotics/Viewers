@@ -10,7 +10,6 @@ import { initToolGroups, toolbarButtons, cornerstone,
   mode as basicMode,
   modeInstance as basicModeInstance,
 } from '@ohif/mode-basic';
-import navigationToolbarButtons from './toolbarButtons';
 
 export const tracked = {
   measurements: '@ohif/extension-measurement-tracking.panelModule.trackedMeasurements',
@@ -52,7 +51,6 @@ export const navigationInstance = {
 /**
  * Navigation mode entry hook
  * Extends the basic mode's onModeEnter to activate Crosshairs tool
- * and add OrientationMarker tool (disabled by default, user can toggle)
  */
 function navigationOnModeEnter(args) {
   const { commandsManager, servicesManager, extensionManager } = args;
@@ -69,69 +67,9 @@ function navigationOnModeEnter(args) {
     }
   }
 
-  // Add OrientationMarker tool to tool groups AFTER viewports are ready
-  // This prevents the "Cannot read properties of undefined (reading 'getViewports')" error
-  const addOrientationMarkerWhenReady = () => {
-    try {
-      const utilityModule = extensionManager.getModuleEntry(
-        '@ohif/extension-cornerstone.utilityModule.tools'
-      );
-
-      if (!utilityModule?.exports?.toolNames) {
-        console.warn('⚠️ [Navigation Mode] Tool names not available');
-        return;
-      }
-
-      const { toolNames } = utilityModule.exports;
-
-      if (!toolNames.OrientationMarker) {
-        console.warn('⚠️ [Navigation Mode] OrientationMarker tool not found');
-        return;
-      }
-
-      // Add to all tool groups - OrientationMarker supports both Stack (2D) and Volume (3D) viewports
-      const toolGroupIds = ['default', 'mpr', 'SRToolGroup', 'volume3d'];
-      const orientationMarkerConfig = {
-        disabled: [{
-          toolName: toolNames.OrientationMarker,
-          configuration: {
-            orientationWidget: {
-              enabled: true,
-              viewportCorner: 'BOTTOM_LEFT', // VTK.js Corners enum: 'BOTTOM_LEFT', 'BOTTOM_RIGHT', 'TOP_LEFT', 'TOP_RIGHT'
-              viewportSize: 0.2,
-              minPixelSize: 100,
-              maxPixelSize: 150,
-            },
-            overlayMarkerType: 2, // 2 = AXIS style (arrows), 1 = CUBE style
-          },
-        }],
-      };
-
-      console.log('🔧 [Navigation Mode] Adding OrientationMarker tool (AXIS style, disabled by default, Stack & Volume viewports)...');
-
-      toolGroupIds.forEach(toolGroupId => {
-        try {
-          const toolGroup = toolGroupService.getToolGroup(toolGroupId);
-          if (toolGroup && !toolGroup.hasTool(toolNames.OrientationMarker)) {
-            toolGroupService.addToolsToToolGroup(toolGroupId, orientationMarkerConfig);
-            console.log(`✅ [Navigation Mode] OrientationMarker added to ${toolGroupId}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ [Navigation Mode] Could not add OrientationMarker to ${toolGroupId}:`, error.message);
-        }
-      });
-    } catch (error) {
-      console.warn('⚠️ [Navigation Mode] Error adding OrientationMarker tool:', error);
-    }
-  };
-
   // Register navigation-specific toolbar buttons
   try {
-    if (toolbarService && navigationToolbarButtons) {
-      // Register the buttons first
-      toolbarService.register(navigationToolbarButtons);
-      console.log('✅ [Navigation Mode] Navigation toolbar buttons registered');
-
+    if (toolbarService) {
       // Note: Hotkeys are registered via customization service (ohif.hotkeyBindings)
       // Add custom hotkey using keyboard event listener as fallback
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -165,31 +103,6 @@ function navigationOnModeEnter(args) {
         },
       ]);
       console.log('✅ [Navigation Mode] ToggleVolumeVisibility button added to primary toolbar');
-
-      // Update MoreTools section to include our button
-      toolbarService.updateSection('MoreTools', [
-        'Reset',
-        'rotate-right',
-        'flipHorizontal',
-        'ImageSliceSync',
-        'ReferenceLines',
-        'ImageOverlayViewer',
-        'StackScroll',
-        'invert',
-        'Probe',
-        'Cine',
-        'Angle',
-        'CobbAngle',
-        'Magnify',
-        'CalibrationLine',
-        'TagBrowser',
-        'AdvancedMagnify',
-        'UltrasoundDirectionalTool',
-        'WindowLevelRegion',
-        'SegmentLabelTool',
-        'NavigationOrientationMarker',
-      ]);
-      console.log('✅ [Navigation Mode] NavigationOrientationMarker button added to MoreTools section');
     }
   } catch (error) {
     console.error('❌ [Navigation Mode] Failed to register toolbar buttons:', error);
@@ -204,9 +117,6 @@ function navigationOnModeEnter(args) {
           console.log('📋 [Navigation Mode] VIEWPORTS_READY event received');
 
           setTimeout(() => {
-            // First, add OrientationMarker tool (now that viewports/rendering engine exist)
-            addOrientationMarkerWhenReady();
-
             // Apply volume rendering performance optimizations for 3D viewports
             try {
               const viewports = viewportGridService.getViewports();
@@ -275,7 +185,7 @@ function navigationOnModeEnter(args) {
     console.error('❌ [Navigation Mode] Failed to subscribe to viewport events:', error);
   }
 
-  console.log('✅ [Navigation Mode] Initialization complete - OrientationMarker will be added when viewports are ready');
+  console.log('✅ [Navigation Mode] Initialization complete');
 }
 
 /**
@@ -338,12 +248,6 @@ export const modeInstance = {
     _viewportReadySubscription: null,
   };
 
-// Combine basic toolbar buttons with navigation-specific buttons
-const navigationToolbarButtonsCombined = [
-  ...toolbarButtons,
-  ...navigationToolbarButtons,
-];
-
 const mode = {
   ...basicMode,
   id,
@@ -352,4 +256,4 @@ const mode = {
 };
 
 export default mode;
-export { initToolGroups, navigationToolbarButtonsCombined as toolbarButtons };
+export { initToolGroups, toolbarButtons };

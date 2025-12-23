@@ -249,9 +249,19 @@ module.exports = (env, argv) => {
     );
   }
 
+  // Configure watchOptions to ignore YAML config files and cornerstone
+  // Use a single RegExp that matches both patterns
   mergedConfig.watchOptions = {
-    ignored: /node_modules\/@cornerstonejs/,
+    ignored: /(node_modules\/@cornerstonejs|lifesync\/config\/workflow-config\.yaml$)/,
   };
+
+  // Add module rule for YAML files (load as raw text)
+  mergedConfig.module = mergedConfig.module || {};
+  mergedConfig.module.rules = mergedConfig.module.rules || [];
+  mergedConfig.module.rules.push({
+    test: /\.yaml$/,
+    type: 'asset/source',  // Load as raw text string
+  });
 
   return mergedConfig;
 };

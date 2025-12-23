@@ -17,73 +17,17 @@ export type { CrosshairBookmark, ScrewPlacementRequest } from './CrosshairBookma
 
 interface HeaderProps {
   sessionId: string | null;
-  onTestCrosshair: () => void;
-  onShowSessionState: () => void;
-  onLoadPlan: () => void;
-  onSavePlan: () => void;
-  onClearAll: () => void;
-  isSavingPlan: boolean;
-  hasScrews: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({
-  sessionId,
-  onTestCrosshair,
-  onShowSessionState,
-  onLoadPlan,
-  onSavePlan,
-  onClearAll,
-  isSavingPlan,
-  hasScrews,
-}) => (
-  <div className="flex items-center justify-between">
-    <h2 className="text-xl font-bold text-white">
-      🔩 Screw Management
-      {sessionId && <span className="text-sm font-normal text-green-400 ml-2">(API Connected)</span>}
-    </h2>
-    <div className="flex gap-1">
-      <button
-        onClick={onTestCrosshair}
-        className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-base"
-        title="Test Crosshair Detection"
-      >
-        🧪
-      </button>
-      <button
-        onClick={onShowSessionState}
-        className="px-2 py-1 bg-pink-600 hover:bg-purple-700 text-white rounded text-base"
-        title="Session Screw/Rod State"
-      >
-        📋
-      </button>
-      <button
-        onClick={onLoadPlan}
-        className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-base"
-        title="Load Plan"
-      >
-        📂
-      </button>
-      {hasScrews && (
-        <>
-          <button
-            onClick={onSavePlan}
-            disabled={isSavingPlan}
-            className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-base disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Save Plan"
-          >
-            {isSavingPlan ? '⏳' : '💾'}
-          </button>
-          <button
-            onClick={onClearAll}
-            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-base"
-            title="Clear All Screws"
-          >
-            🧹
-          </button>
-        </>
-      )}
-    </div>
-  </div>
+export const Header: React.FC<HeaderProps> = ({ sessionId }) => (
+  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+    🔩 Screw Management
+    {sessionId && (
+      <span className="text-green-400 text-xs" title="API Connected">
+        ●
+      </span>
+    )}
+  </h2>
 );
 
 // ═══════════════════════════════════════════════════════
@@ -145,118 +89,157 @@ export const LoadingScreen: React.FC = () => (
 );
 
 // ═══════════════════════════════════════════════════════
-// Screw Interaction Toolbar
+// Combined Compact Toolbar - All Tools in Multiple Rows
 // ═══════════════════════════════════════════════════════
 
-interface ScrewToolbarProps {
+interface CompactToolbarProps {
+  // Move Tool
   isMoveToolActive: boolean;
   onToggleMoveTool: () => void;
-  hasScrews: boolean;
   selectedScrew?: { label: string } | null;
   modelCount?: number;
   screwCount?: number;
+  // Add Screw
+  remainingSlots: number;
+  maxScrews: number;
+  onOpenDialog: () => void;
+  // Plan Actions
+  onTestCrosshair: () => void;
+  onShowSessionState: () => void;
+  onLoadPlan: () => void;
+  onSavePlan: () => void;
+  onClearAll: () => void;
+  isSavingPlan: boolean;
+  hasScrews: boolean;
+  // Debug
   onDebug?: () => void;
 }
 
-export const ScrewToolbar: React.FC<ScrewToolbarProps> = ({
+export const CompactToolbar: React.FC<CompactToolbarProps> = ({
   isMoveToolActive,
   onToggleMoveTool,
-  hasScrews,
   selectedScrew,
   modelCount = 0,
   screwCount = 0,
+  remainingSlots,
+  maxScrews,
+  onOpenDialog,
+  onTestCrosshair,
+  onShowSessionState,
+  onLoadPlan,
+  onSavePlan,
+  onClearAll,
+  isSavingPlan,
+  hasScrews,
   onDebug,
 }) => (
-  <div className="space-y-2 border border-purple-600 rounded p-3 bg-purple-900 bg-opacity-20">
-    <div className="flex items-center justify-between">
-      <h3 className="font-bold text-white text-sm">🛠️ Screw Tools</h3>
-      <div className="flex items-center gap-2">
-        {selectedScrew && (
-          <span className="text-xs text-green-400">
-            Selected: {selectedScrew.label}
-          </span>
-        )}
-        <span className="text-xs text-gray-500">
-          Models: {modelCount} | Screws: {screwCount}
-        </span>
-        {onDebug && (
-          <button
-            onClick={onDebug}
-            className="px-1 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs"
-            title="Debug screw interaction"
-          >
-            🔍
-          </button>
-        )}
-      </div>
-    </div>
+  <div className="space-y-2 border border-gray-600 rounded p-2 bg-gray-800 bg-opacity-30">
+    {/* Row 1: Add Screw & Move Tool */}
+    <div className="flex items-center gap-2">
+      <button
+        onClick={onOpenDialog}
+        disabled={remainingSlots === 0}
+        className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded transition disabled:bg-gray-600 disabled:cursor-not-allowed"
+        title={
+          remainingSlots === 0
+            ? '⚠️ Maximum screws reached. Delete old screws first.'
+            : `Add New Screw (${remainingSlots}/${maxScrews} slots remaining)`
+        }
+      >
+        ➕
+      </button>
+      <span className="text-xs text-gray-400" title="Available screw slots">
+        {remainingSlots}/{maxScrews}
+      </span>
 
-    <div className="flex gap-2">
-      {/* Move Tool Toggle Button - Always enabled for testing */}
+      <div className="w-px h-6 bg-gray-600 mx-1" />
+
       <button
         onClick={onToggleMoveTool}
-        className={`flex-1 px-4 py-2 rounded font-bold text-sm transition flex items-center justify-center gap-2 ${
+        className={`px-2 py-1 rounded transition ${
           isMoveToolActive
             ? 'bg-purple-600 text-white ring-2 ring-purple-400'
             : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
         }`}
-        title={isMoveToolActive ? 'Deactivate Move Tool' : 'Activate Move Tool - Click and drag screws on MPR'}
+        title={
+          isMoveToolActive
+            ? 'Move Tool Active - Click and drag screws on MPR'
+            : `Activate Move Tool (${screwCount} screws, ${modelCount} models)`
+        }
       >
-        <span className="text-lg">✋</span>
-        <span>{isMoveToolActive ? 'Move Active' : 'Move Screw'}</span>
+        ✋
       </button>
+
+      {selectedScrew && (
+        <span className="text-xs text-green-400 font-medium" title={`Selected: ${selectedScrew.label}`}>
+          {selectedScrew.label}
+        </span>
+      )}
     </div>
 
-    <p className="text-xs text-gray-400">
-      {isMoveToolActive
-        ? '✅ Click on a screw in MPR view, then drag to move it on the plane'
-        : `💡 Click to enable Move Tool (Screws: ${screwCount}, Models: ${modelCount})`}
-    </p>
+    {/* Row 2: Plan Actions */}
+    <div className="flex items-center gap-2">
+      <button
+        onClick={onLoadPlan}
+        className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded"
+        title="Load Plan"
+      >
+        📂
+      </button>
+
+      {hasScrews && (
+        <>
+          <button
+            onClick={onSavePlan}
+            disabled={isSavingPlan}
+            className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Save Plan"
+          >
+            {isSavingPlan ? '⏳' : '💾'}
+          </button>
+          <button
+            onClick={onClearAll}
+            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded"
+            title="Clear All Screws"
+          >
+            🧹
+          </button>
+        </>
+      )}
+    </div>
+
+    {/* Row 3: Debug/Test Tools */}
+    <div className="flex items-center gap-2">
+      <button
+        onClick={onTestCrosshair}
+        className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded"
+        title="Test Crosshair Detection"
+      >
+        🧪
+      </button>
+      <button
+        onClick={onShowSessionState}
+        className="px-2 py-1 bg-pink-600 hover:bg-pink-700 text-white rounded"
+        title="Session Screw/Rod State"
+      >
+        📋
+      </button>
+      {onDebug && (
+        <button
+          onClick={onDebug}
+          className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+          title="Debug screw interaction"
+        >
+          🔍
+        </button>
+      )}
+    </div>
   </div>
 );
 
-// ═══════════════════════════════════════════════════════
-// Save Screw Section
-// ═══════════════════════════════════════════════════════
-
-interface SaveScrewButtonProps {
-  remainingSlots: number;
-  maxScrews: number;
-  onOpenDialog: () => void;
-}
-
-export const SaveScrewButton: React.FC<SaveScrewButtonProps> = ({
-  remainingSlots,
-  maxScrews,
-  onOpenDialog,
-}) => (
-  <div className="space-y-2 border border-blue-600 rounded p-3 bg-blue-900 bg-opacity-20">
-    <div className="flex items-center justify-between">
-      <h3 className="font-bold text-white text-sm">💾 Screw Placement</h3>
-      <span className="text-xs text-gray-400">
-        {remainingSlots} / {maxScrews} slots remaining
-      </span>
-    </div>
-
-    <button
-      onClick={onOpenDialog}
-      disabled={remainingSlots === 0}
-      className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded font-bold text-sm transition disabled:bg-gray-600 disabled:cursor-not-allowed"
-    >
-      🔩 Save Screw Placement
-    </button>
-
-    {remainingSlots === 0 && (
-      <p className="text-xs text-red-400">
-        ⚠️ Maximum screws reached. Delete old screws or oldest will be removed.
-      </p>
-    )}
-
-    <p className="text-xs text-gray-400">
-      💡 Opens screw selection dialog to choose from catalog or create custom screw
-    </p>
-  </div>
-);
+// Keep legacy components for backwards compatibility
+export const ScrewToolbar: React.FC<any> = () => null;
+export const SaveScrewButton: React.FC<any> = () => null;
 
 // ═══════════════════════════════════════════════════════
 // Screw List Components - Table Layout
@@ -282,7 +265,7 @@ export const EmptyScrewList: React.FC = () => (
   <div className="text-center py-12 bg-gray-800 bg-opacity-30 rounded">
     <p className="text-gray-400 text-base mb-2">📭 No screws saved yet</p>
     <p className="text-gray-500 text-sm">
-      Click "Save Screw Placement" above to add your first screw
+      Click "Add New Screw" above to add your first screw
     </p>
   </div>
 );
@@ -428,10 +411,10 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
         {/* Table Header */}
         <thead className="text-xs uppercase bg-gray-800 text-gray-300 border-b border-gray-700">
           <tr>
-            <th scope="col" className="px-4 py-3 font-semibold">Name</th>
-            <th scope="col" className="px-4 py-3 font-semibold text-center">Diameter (mm)</th>
-            <th scope="col" className="px-4 py-3 font-semibold text-center">Length (mm)</th>
-            <th scope="col" className="px-4 py-3 font-semibold text-center">Actions</th>
+            <th scope="col" className="px-4 py-2 font-semibold">Name</th>
+            <th scope="col" className="px-4 py-2 font-semibold text-center">Diameter (mm)</th>
+            <th scope="col" className="px-4 py-2 font-semibold text-center">Length (mm)</th>
+            <th scope="col" className="px-4 py-2 font-semibold text-center">Actions</th>
           </tr>
         </thead>
 
@@ -445,16 +428,16 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
               // Render error row
               return (
                 <tr key={screw.screw_id || index} className="border-b border-gray-700 bg-red-900 bg-opacity-20">
-                  <td className="px-4 py-3 text-red-300" colSpan={3}>
+                  <td className="px-4 py-2 text-red-300" colSpan={3}>
                     ⚠️ Invalid Screw Data: {error.message}
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-2 text-center">
                     <button
                       onClick={() => onDelete(screw)}
-                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition"
+                      className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition"
                       title="Delete Invalid Screw"
                     >
-                      🗑️ Delete
+                      🗑️
                     </button>
                   </td>
                 </tr>
@@ -471,42 +454,27 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                 key={screwId}
                 className="border-b border-gray-700 bg-gray-800 bg-opacity-30 hover:bg-gray-700 hover:bg-opacity-40 transition"
               >
-                {/* Name Column */}
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🔩</span>
-                    <div className="min-w-0">
-                      <p className="font-medium text-white text-sm truncate" title={displayInfo.label}>
-                        {displayInfo.label}
+                {/* Name Column - Clickable */}
+                <td className="px-4 py-2">
+                  <button
+                    onClick={() => onView(screw)}
+                    disabled={isRestoring}
+                    className="text-left w-full hover:text-blue-400 transition disabled:cursor-not-allowed"
+                    title={isRestoring ? 'Loading...' : `Click to view "${displayInfo.label}"`}
+                  >
+                    <p className="font-medium text-white text-sm truncate">
+                      {isRestoring ? '⏳ ' : ''}{displayInfo.label}
+                    </p>
+                    {displayInfo.description && (
+                      <p className="text-xs text-gray-500 truncate" title={displayInfo.description}>
+                        {displayInfo.description}
                       </p>
-                      {displayInfo.description && (
-                        <p className="text-xs text-gray-500 truncate" title={displayInfo.description}>
-                          {displayInfo.description}
-                        </p>
-                      )}
-                      <div className="flex gap-1 mt-1">
-                        {displayInfo.source === 'catalog' && (
-                          <span className="inline-block px-1.5 py-0.5 bg-blue-900 bg-opacity-50 border border-blue-700 rounded text-xs text-blue-300">
-                            📦 Catalog
-                          </span>
-                        )}
-                        {displayInfo.source === 'generated' && (
-                          <span className="inline-block px-1.5 py-0.5 bg-purple-900 bg-opacity-50 border border-purple-700 rounded text-xs text-purple-300">
-                            ⚙️ Custom
-                          </span>
-                        )}
-                        {isApiData && (
-                          <span className="inline-block px-1 py-0.5 bg-green-900 bg-opacity-50 border border-green-700 rounded text-xs text-green-300">
-                            API
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                    )}
+                  </button>
                 </td>
 
-                {/* Radius Column (showing as diameter) */}
-                <td className="px-4 py-3 text-center">
+                {/* Diameter Column */}
+                <td className="px-4 py-2 text-center">
                   {onUpdateDiameter && availableDiameters.length > 0 ? (
                     <ScrewDimensionSelector
                       value={diameter}
@@ -523,7 +491,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                 </td>
 
                 {/* Length Column */}
-                <td className="px-4 py-3 text-center">
+                <td className="px-4 py-2 text-center">
                   {onUpdateLength && availableLengths.length > 0 ? (
                     <ScrewDimensionSelector
                       value={displayInfo.length}
@@ -540,31 +508,23 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                 </td>
 
                 {/* Actions Column */}
-                <td className="px-4 py-3">
+                <td className="px-4 py-2">
                   <div className="flex gap-2 justify-center">
-                    <button
-                      onClick={() => onView(screw)}
-                      disabled={isRestoring}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition disabled:bg-gray-600 disabled:cursor-not-allowed font-medium"
-                      title={`View/Load "${displayInfo.label}"`}
-                    >
-                      {isRestoring ? '⏳' : '👁️ View'}
-                    </button>
                     {showEditButton && (
                       <button
                         onClick={() => onEdit(screw)}
-                        className="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition font-medium"
+                        className="px-2 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition"
                         title={`Edit "${displayInfo.label}"`}
                       >
-                        ✏️ Edit
+                        ✏️
                       </button>
                     )}
                     <button
                       onClick={() => onDelete(screw)}
-                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition font-medium"
+                      className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition"
                       title={`Delete "${displayInfo.label}"`}
                     >
-                      🗑️ Delete
+                      🗑️
                     </button>
                   </div>
                 </td>

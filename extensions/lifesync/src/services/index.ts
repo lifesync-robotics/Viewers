@@ -6,6 +6,7 @@
 
 export { planningBackendService, default as PlanningBackendService } from './planningBackendService';
 export { default as ROISelectionService } from './ROISelectionService/ROISelectionService';
+export { anatomyService, default as AnatomyService } from './anatomyService';
 export type {
   SessionStartRequest,
   SessionStartResponse,
@@ -22,3 +23,12 @@ export type {
   RestoreSessionResponse,
   ListPlansResponse,
 } from './planningBackendService';
+export type {
+  Vector3D,
+  ScrewPlacementInfo,
+  IntersectionAnalysis,
+  ScrewPlacementResponse,
+  AvailableVertebraeResponse,
+  AvailableDatasetsResponse,
+  AnatomyHealthResponse,
+} from './anatomyService';

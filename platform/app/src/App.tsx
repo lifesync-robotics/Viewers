@@ -36,6 +36,8 @@ import appInit from './appInit.js';
 import OpenIdConnectRoutes from './utils/OpenIdConnectRoutes';
 import { ShepherdJourneyProvider } from 'react-shepherd';
 import './App.css';
+// LifeSync Surgical Workflow
+import { WorkflowProvider } from './lifesync/contexts';
 
 let commandsManager: CommandsManager,
   extensionManager: ExtensionManager,
@@ -111,7 +113,10 @@ function App({
     userAuthenticationService,
     uiNotificationService,
     customizationService,
+    surgicalWorkflowService,
   } = servicesManager.services;
+
+  console.log('🚀 [App] Initializing providers with WorkflowProvider');
 
   const providers = [
     [AppConfigProvider, { value: appConfigState }],
@@ -128,7 +133,18 @@ function App({
     [DialogProvider, { service: uiDialogService, dialog: ManagedDialog }],
     [ModalProvider, { service: uiModalService, modal: ModalNext }],
     [ShepherdJourneyProvider],
+    // LifeSync Surgical Workflow Provider (simplified - no redundant contexts)
+    ...(surgicalWorkflowService ? [
+      [WorkflowProvider, { service: surgicalWorkflowService }],
+    ] : []),
   ];
+
+  if (surgicalWorkflowService) {
+    console.log('✅ [App] WorkflowProvider added to providers');
+    console.log('ℹ️ [App] Use existing OHIF services for segmentation/planning (no duplicate contexts)');
+  } else {
+    console.warn('⚠️ [App] WorkflowService not available - workflow features disabled');
+  }
 
   // Loop through and register each of the service providers registered with the ServiceProvidersManager.
   const providersFromManager = Object.entries(serviceProvidersManager.providers);

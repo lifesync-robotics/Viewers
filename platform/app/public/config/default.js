@@ -39,7 +39,70 @@ window.config = {
     //   ]
     // }
     
-  }, // =========================================================================
+  },   // =========================================================================
+  // Mode Configuration - Control which modes are visible
+  modesConfiguration: {
+    '@ohif/mode-overview': {
+      hide: { $set: false },  // Show the Start/Overview mode
+    },
+    '@ohif/mode-longitudinal': {
+      hide: { $set: true },  // Hide Basic Viewer
+    },
+    '@ohif/mode-segmentation': {
+      hide: { $set: true },  // Hide Segmentation mode (displays as "Segmentation")
+    },
+    '@ohif/mode-planner': {
+      hide: { $set: true },  // Hide 3D Surgical Planner mode
+    },
+    '@ohif/mode-planner2d': {
+      hide: { $set: true },  // Hide 2D Surgical Planner mode
+    },
+    '@ohif/mode-navigation': {
+      hide: { $set: true },  // Hide Navigation mode
+    },
+    '@ohif/mode-navigation-3d': {
+      hide: { $set: true },  // Hide 3D Navigation mode
+    },
+    '@ohif/mode-tmtv': {
+      hide: { $set: true },  // Hide Total Metabolic Tumor Volume mode
+    },
+    '@ohif/mode-microscopy': {
+      hide: { $set: true },  // Hide Microscopy mode
+    },
+    '@ohif/mode-preclinical-4d': {
+      hide: { $set: true },  // Hide Preclinical 4D / Dynamic Volume mode (route: "dynamic-volume")
+    },
+    '@ohif/mode-ultrasound-pleura-bline': {
+      hide: { $set: true },  // Hide US Pleura B-line Annotations mode
+    },
+  },
+  // =========================================================================
+  // LifeSync Surgical Workflow Configuration
+  // NOTE: This config is deprecated - workflow is now defined in lifesync/config/workflow-config.yaml
+  // workflow: {
+  //   enabled: true,
+  //   stages: ['overview', 'segmentation', 'planning', 'reporting', 'review'],
+  //   stageRoutes: {
+  //     overview: '/overview',
+  //     segmentation: '/segmentation',
+  //     planning: '/planner',
+  //     reporting: '/reporting',
+  //     review: '/review'
+  //   },
+  //   validation: {
+  //     segmentation: {
+  //       minSegmentations: 1
+  //     },
+  //     planning: {
+  //       minScrews: 2
+  //     }
+  //   },
+  //   persistence: {
+  //     enabled: true,
+  //     storageKey: 'ohif_surgical_workflow_state',
+  //     maxAge: 86400000 // 24 hours in milliseconds
+  //   }
+  // }, // =========================================================================
   showStudyList: true,
   // Disable investigational use dialog banner
   investigationalUseDialog: {

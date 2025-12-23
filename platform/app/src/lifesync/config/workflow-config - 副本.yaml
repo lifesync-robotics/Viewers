@@ -1,0 +1,292 @@
+# Surgical Workflow Configuration
+# This YAML file defines the workflow stages, their dependencies, validation rules, and metadata
+# Separating configuration from implementation allows easy debugging and updates
+
+workflow:
+  name: "Surgical Planning Workflow"
+  version: "1.0.0"
+  description: "Complete surgical planning workflow from initial viewing to final review"
+  
+  # Workflow metadata defaults
+  metadata:
+    defaultSurgeon: "Not Assigned"
+    requiresCaseId: true
+    autoSaveInterval: 30000  # milliseconds
+  
+  # Define all workflow stages
+  stages:
+    - id: "overview"
+      name: "Start"
+      description: "Initial DICOM viewing and case setup using Overview mode"
+      route: "/overview"
+      order: 1
+      
+      # Stage properties
+      properties:
+        isInitial: true      # First stage in workflow
+        isFinal: false       # Not the last stage
+        canSkip: false       # Cannot be skipped
+        requiresCompletion: true  # Must be completed to advance
+      
+      # Validation rules
+      validation:
+        # User-confirmation: user explicitly confirms completion
+        userConfirmation:
+          enabled: true
+          message: "Have you completed the initial review and selected the appropriate series?"
+      
+      # Dependencies (stages that must be completed first)
+      dependencies: []
+      
+      # Data requirements
+      dataSchema:
+        required:
+          - "patient.id"
+          - "study.studyInstanceUID"
+          - "series.seriesInstanceUID"
+        optional:
+          - "patient.name"
+          - "study.studyDescription"
+      
+      # Actions on stage events
+      actions:
+        onEnter: []
+        onExit:
+          - type: "save_stage_data"
+            target: "overview"
+          - type: "validate_next_stage"
+            target: "segmentation"
+    
+    - id: "segmentation"
+      name: "Segmentation"
+      description: "Anatomical structure segmentation"
+      route: "/segmentation"
+      order: 2
+      
+      properties:
+        isInitial: false
+        isFinal: false
+        canSkip: false
+        requiresCompletion: true
+      
+      validation:
+        userConfirmation:
+          enabled: true
+          message: "Have you completed all required segmentations and saved them?"
+      
+      dependencies:
+        - "overview"  # Must complete overview first
+      
+      dataSchema:
+        required:
+          - "seriesInstanceUID"
+          - "sessionId"
+        optional:
+          - "segmentationCount"
+      
+      actions:
+        onEnter:
+          - type: "load_segmentation_data"
+            source: "backend"
+        onExit:
+          - type: "save_segmentation_data"
+            target: "backend"
+          - type: "validate_next_stage"
+            target: "planning"
+    
+    - id: "planning"
+      name: "Surgical Planning"
+      description: "Surgical planning with screw placement"
+      route: "/planner"
+      order: 3
+      
+      properties:
+        isInitial: false
+        isFinal: false
+        canSkip: false
+        requiresCompletion: true
+      
+      validation:
+        userConfirmation:
+          enabled: true
+          message: "Have you completed the surgical plan and verified all screw placements?"
+      
+      dependencies:
+        - "overview"
+        - "segmentation"
+      
+      dataSchema:
+        required:
+          - "sessionId"
+          - "planId"
+        optional:
+          - "screwCount"
+      
+      actions:
+        onEnter:
+          - type: "load_planning_data"
+            source: "backend"
+          - type: "load_segmentation_reference"
+            source: "segmentation"
+        onExit:
+          - type: "save_planning_data"
+            target: "backend"
+          - type: "validate_next_stage"
+            target: "reporting"
+    
+    - id: "reporting"
+      name: "Report Generation"
+      description: "Generate surgical report"
+      route: "/reporting"
+      order: 4
+      
+      properties:
+        isInitial: false
+        isFinal: false
+        canSkip: false
+        requiresCompletion: true
+      
+      validation:
+        userConfirmation:
+          enabled: true
+          message: "Have you reviewed and finalized the surgical report?"
+      
+      dependencies:
+        - "overview"
+        - "segmentation"
+        - "planning"
+      
+      dataSchema:
+        required:
+          - "report.id"
+          - "report.content"
+          - "report.generated"
+        optional: []
+      
+      actions:
+        onEnter:
+          - type: "load_report_template"
+            source: "backend"
+        onExit:
+          - type: "save_report"
+            target: "backend"
+          - type: "validate_next_stage"
+            target: "review"
+    
+    - id: "review"
+      name: "Review & Approval"
+      description: "Final review and approval of the complete workflow"
+      route: "/review"
+      order: 5
+      
+      properties:
+        isInitial: false
+        isFinal: true       # THIS IS THE FINAL STAGE
+        canSkip: false
+        requiresCompletion: true
+      
+      validation:
+        userConfirmation:
+          enabled: true
+          message: "Have you completed the final review? This will lock the workflow."
+        
+        # Final stage specific validation
+        finalStage:
+          canAdvance: false  # Cannot advance beyond this stage
+          reason: "This is the final stage of the workflow"
+          completionAction: "lock_workflow"
+      
+      dependencies:
+        - "overview"
+        - "segmentation"
+        - "planning"
+        - "reporting"
+      
+      dataSchema:
+        required:
+          - "reviewed"
+          - "reviewer"
+        optional:
+          - "comments"
+      
+      actions:
+        onEnter:
+          - type: "load_complete_case_data"
+            source: "backend"
+        onExit:
+          - type: "finalize_workflow"
+            target: "backend"
+          - type: "lock_case"
+            target: "backend"
+          - type: "notify_completion"
+            target: "notification_service"
+
+  # Validation rules definitions
+  # Currently only user confirmation is used for validation
+  # Auto-validation rules can be added here in the future when needed
+  validationRules: {}
+
+  # Navigation rules
+  navigation:
+    allowBackNavigation: true
+    allowForwardNavigation: false  # Only through completion
+    allowDirectNavigation: true    # Can jump to completed stages
+    preserveQueryParams: true
+    
+    # What happens on back navigation
+    backNavigation:
+      markIncomplete: true  # Mark current and future stages as incomplete
+      clearData: false      # Keep the data
+    
+    # What happens on forward navigation
+    forwardNavigation:
+      requireValidation: true
+      requireUserConfirmation: true
+      markPreviousComplete: true
+
+# UI Configuration
+ui:
+  navigator:
+    showStageList: true
+    showNavButtons: true
+    compactMode: false
+    
+    # Stage indicator colors
+    colors:
+      pending: "#4B5563"    # gray-700
+      active: "#2563EB"     # blue-600
+      completed: "#16A34A"  # green-600
+      error: "#DC2626"      # red-600
+    
+    # Confirmation dialogs
+    confirmations:
+      advancement:
+        enabled: true
+        style: "modal"
+      
+      backNavigation:
+        enabled: true
+        style: "inline"
+  
+  # Stage-specific UI configuration
+  stageUI:
+    overview:
+      icon: "🏁"
+      color: "#3B82F6"
+    
+    segmentation:
+      icon: "✂️"
+      color: "#8B5CF6"
+    
+    planning:
+      icon: "🎯"
+      color: "#10B981"
+    
+    reporting:
+      icon: "📄"
+      color: "#F59E0B"
+    
+    review:
+      icon: "✅"
+      color: "#EF4444"
+

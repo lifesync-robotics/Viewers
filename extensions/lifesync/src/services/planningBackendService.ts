@@ -902,6 +902,41 @@ class PlanningBackendService {
       };
     }
   }
+
+  /**
+   * Get vertebral levels
+   * @param seriesId - Optional series ID to get levels for specific dataset
+   */
+  async getVertebralLevels(seriesId?: string): Promise<{ success: boolean; vertebral_levels?: string[]; count?: number; series_id?: string; message?: string; error?: string }> {
+    try {
+      const params = seriesId ? `?seriesId=${encodeURIComponent(seriesId)}` : '';
+      const context = seriesId ? `for series ${seriesId.substring(0, 30)}...` : '(all possible levels)';
+      
+      console.log(`📋 [PlanningBackend] Getting vertebral levels ${context}`);
+
+      const response = await fetch(`${this.baseUrl}/vertebral-levels${params}`, {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log(`✅ [PlanningBackend] Retrieved ${data.count || data.vertebral_levels?.length || 0} vertebral levels`);
+      if (data.vertebral_levels && data.vertebral_levels.length > 0) {
+        console.log(`   Levels: ${data.vertebral_levels.join(', ')}`);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ [PlanningBackend] Error getting vertebral levels:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to get vertebral levels',
+      };
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -12,7 +12,6 @@ import { initToolGroups, toolbarButtons as basicToolbarButtons, cornerstone,
 } from '@ohif/mode-basic';
 import { HangingProtocol } from 'platform/core/src/types';
 import { Enums as cstSegmentationEnums } from '@cornerstonejs/tools';
-import plannerToolbarButtons from './toolbarButtons';
 
 export const tracked = {
   screwManagement: '@ohif/extension-lifesync.panelModule.screw-management',
@@ -62,18 +61,37 @@ export const plannerRoute =
     };
 
 /**
- * Helper function to restore segmentations from segmentation mode
+ * Helper function to restore segmentations from workflow service or sessionStorage
  */
 async function restoreSegmentationsFromSegmentationMode(servicesManager, commandsManager) {
   try {
-    const segmentationStateJson = sessionStorage.getItem('segmentationStateFromSegmentation');
-    if (!segmentationStateJson) {
-      console.log('ℹ️ [Planner Mode] No segmentation state found from segmentation mode');
-      return;
+    console.log('🔍 [Planner Mode] Attempting to restore segmentations...');
+
+    // Try workflow service first (preferred method)
+    const { surgicalWorkflowService } = servicesManager.services;
+    let segmentationState = null;
+
+    if (surgicalWorkflowService) {
+      try {
+        // Check all stages for segmentation data
+        const allStages = surgicalWorkflowService.getState().stages;
+        for (const [stageId, stageData] of Object.entries(allStages)) {
+          const data = stageData as any;
+          if (data.seriesInstanceUID) {
+            console.log(`📊 [Planner Mode] Found segmentation reference in stage ${stageId}:`, {
+              seriesInstanceUID: data.seriesInstanceUID,
+              sessionId: data.sessionId,
+            });
+            // Note: Fetch actual segmentation from backend if needed
+            // segmentationState = await fetchSegmentationFromBackend(data.seriesInstanceUID, data.sessionId);
+            break; // Use first found segmentation
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ [Planner Mode] Error loading from WorkflowService:', error);
+      }
     }
 
-    const segmentationState = JSON.parse(segmentationStateJson);
-    console.log('📊 [Planner Mode] Found segmentation state from segmentation mode:', segmentationState);
 
     // Check if the state is recent (within last 5 minutes)
     const now = Date.now();
@@ -222,13 +240,15 @@ async function restoreSegmentationsFromSegmentationMode(servicesManager, command
 /**
  * Planner-specific mode entry hook
  * Extends the basic mode's onModeEnter to activate Crosshairs tool
- * and add OrientationMarker tool (disabled by default, user can toggle)
  */
 function plannerOnModeEnter(args) {
   const { commandsManager, servicesManager, extensionManager } = args;
-  const { viewportGridService, toolbarService, toolGroupService } = servicesManager.services;
+  const { viewportGridService, toolbarService, toolGroupService, surgicalWorkflowService } = servicesManager.services;
 
-  // Call the base mode's onModeEnter first to initialize tool groups
+  console.log('🚀 [Planner Mode] onModeEnter - Planning stage');
+
+  // Call the base mode's onModeEnter FIRST to initialize tool groups
+  // Base mode will read the current stage (already set by navigation)
   const baseOnModeEnter = basicModeInstance.onModeEnter;
   if (baseOnModeEnter) {
     try {
@@ -239,74 +259,51 @@ function plannerOnModeEnter(args) {
     }
   }
 
+  // NOW set the workflow stage to planning (after base mode initialization)
+  // Workflow integration
+  // NOTE: We DON'T set the stage here - workflow navigation already handles that!
+  // Modes should only READ the current stage, never SET it
+  if (surgicalWorkflowService) {
+    try {
+      const currentStage = surgicalWorkflowService.getCurrentStage();
+      console.log(`✅ [Planner Mode] Current workflow stage: ${currentStage}`);
+
+      // Load planning reference from workflow if available
+      const planningData = surgicalWorkflowService.getStageData(currentStage);
+      if (planningData && planningData.planId) {
+        console.log('📂 [Planner Mode] Planning reference found:', {
+          planId: planningData.planId,
+          sessionId: planningData.sessionId,
+        });
+        // Note: Fetch actual plan from backend if needed
+        // await fetchPlanFromBackend(planningData.planId, planningData.sessionId);
+      }
+
+      // Check dependencies: Get all stages and check if prerequisites are completed
+      const allStages = surgicalWorkflowService.getState().stages;
+      for (const [stageId, stageData] of Object.entries(allStages)) {
+        const data = stageData as any;
+        if (stageId !== currentStage && data.completed) {
+          console.log(`✅ [Planner Mode] Prerequisite stage completed: ${stageId}`);
+        } else if (stageId !== currentStage && !data.completed) {
+          console.warn(`⚠️ [Planner Mode] Prerequisite stage not completed: ${stageId}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ [Planner Mode] Error reading workflow stage:', error);
+    }
+  } else {
+    console.warn('⚠️ [Planner Mode] WorkflowService not available');
+  }
+
   // Restore segmentations from segmentation mode if available
   restoreSegmentationsFromSegmentationMode(servicesManager, commandsManager).catch(error => {
     console.error('❌ [Planner Mode] Error restoring segmentations:', error);
   });
 
-  // Add OrientationMarker tool to tool groups AFTER viewports are ready
-  // This prevents the "Cannot read properties of undefined (reading 'getViewports')" error
-  const addOrientationMarkerWhenReady = () => {
-    try {
-      const utilityModule = extensionManager.getModuleEntry(
-        '@ohif/extension-cornerstone.utilityModule.tools'
-      );
-
-      if (!utilityModule?.exports?.toolNames) {
-        console.warn('⚠️ [Planner Mode] Tool names not available');
-        return;
-      }
-
-      const { toolNames } = utilityModule.exports;
-
-      if (!toolNames.OrientationMarker) {
-        console.warn('⚠️ [Planner Mode] OrientationMarker tool not found');
-        return;
-      }
-
-      // Add to all tool groups - OrientationMarker supports both Stack (2D) and Volume (3D) viewports
-      const toolGroupIds = ['default', 'mpr', 'SRToolGroup', 'volume3d'];
-      const orientationMarkerConfig = {
-        disabled: [{
-          toolName: toolNames.OrientationMarker,
-          configuration: {
-            orientationWidget: {
-              enabled: true,
-              viewportCorner: 'BOTTOM_LEFT', // VTK.js Corners enum: 'BOTTOM_LEFT', 'BOTTOM_RIGHT', 'TOP_LEFT', 'TOP_RIGHT'
-              viewportSize: 0.2,
-              minPixelSize: 100,
-              maxPixelSize: 150,
-            },
-            overlayMarkerType: 2, // 2 = AXIS style (arrows), 1 = CUBE style
-          },
-        }],
-      };
-
-      console.log('🔧 [Planner Mode] Adding OrientationMarker tool (AXIS style, disabled by default, Stack & Volume viewports)...');
-
-      toolGroupIds.forEach(toolGroupId => {
-        try {
-          const toolGroup = toolGroupService.getToolGroup(toolGroupId);
-          if (toolGroup && !toolGroup.hasTool(toolNames.OrientationMarker)) {
-            toolGroupService.addToolsToToolGroup(toolGroupId, orientationMarkerConfig);
-            console.log(`✅ [Planner Mode] OrientationMarker added to ${toolGroupId}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ [Planner Mode] Could not add OrientationMarker to ${toolGroupId}:`, error.message);
-        }
-      });
-    } catch (error) {
-      console.warn('⚠️ [Planner Mode] Error adding OrientationMarker tool:', error);
-    }
-  };
-
   // Register planner-specific toolbar buttons
   try {
-    if (toolbarService && plannerToolbarButtons) {
-      // Register the buttons first
-      toolbarService.register(plannerToolbarButtons);
-      console.log('✅ [Planner Mode] Planner toolbar buttons registered');
-
+    if (toolbarService) {
       // Note: Hotkeys are registered via customization service (ohif.hotkeyBindings)
       // Add custom hotkey using keyboard event listener as fallback
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -340,31 +337,6 @@ function plannerOnModeEnter(args) {
         },
       ]);
       console.log('✅ [Planner Mode] ToggleVolumeVisibility button added to primary toolbar');
-
-      // Update MoreTools section to include orientation marker
-      toolbarService.updateSection('MoreTools', [
-        'Reset',
-        'rotate-right',
-        'flipHorizontal',
-        'ImageSliceSync',
-        'ReferenceLines',
-        'ImageOverlayViewer',
-        'StackScroll',
-        'invert',
-        'Probe',
-        'Cine',
-        'Angle',
-        'CobbAngle',
-        'Magnify',
-        'CalibrationLine',
-        'TagBrowser',
-        'AdvancedMagnify',
-        'UltrasoundDirectionalTool',
-        'WindowLevelRegion',
-        'SegmentLabelTool',
-        'PlannerOrientationMarker',
-      ]);
-      console.log('✅ [Planner Mode] PlannerOrientationMarker button added to MoreTools section');
     }
   } catch (error) {
     console.error('❌ [Planner Mode] Failed to register toolbar buttons:', error);
@@ -379,10 +351,7 @@ function plannerOnModeEnter(args) {
           console.log('📋 [Planner Mode] VIEWPORTS_READY event received');
 
           setTimeout(() => {
-            // First, add OrientationMarker tool (now that viewports/rendering engine exist)
-            addOrientationMarkerWhenReady();
-
-            // Then, activate Crosshairs tool
+            // Activate Crosshairs tool
             try {
               const utilityModule = extensionManager.getModuleEntry(
                 '@ohif/extension-cornerstone.utilityModule.tools'
@@ -418,7 +387,7 @@ function plannerOnModeEnter(args) {
     console.error('❌ [Planner Mode] Failed to subscribe to viewport events:', error);
   }
 
-  console.log('✅ [Planner Mode] Initialization complete - OrientationMarker will be added when viewports are ready');
+  console.log('✅ [Planner Mode] Initialization complete');
 }
 
 /**
@@ -426,6 +395,41 @@ function plannerOnModeEnter(args) {
  */
 function plannerOnModeExit(args) {
   console.log('🧹 [Planner Mode] Starting cleanup...');
+
+  const { servicesManager } = args;
+  const { surgicalWorkflowService } = servicesManager.services;
+
+  // Save planning reference to workflow (backend stores actual screw data)
+  // NOTE: Do NOT set 'completed' here - workflow handles completion status
+  if (surgicalWorkflowService) {
+    try {
+      // Get planning reference (e.g., from backend after save)
+      const planId = sessionStorage.getItem('current_plan_id') || null;
+      const sessionId = sessionStorage.getItem('ohif_session_id') || null;
+      const screwCount = parseInt(sessionStorage.getItem('screw_count') || '0', 10);
+      
+      // Get current stage from workflow service - NO HARDCODING!
+      const currentStage = surgicalWorkflowService.getCurrentStage();
+      const currentStageData = surgicalWorkflowService.getStageData(currentStage);
+      
+      surgicalWorkflowService.updateStageData(currentStage, {
+        // Preserve existing completed status (set by workflow advancement)
+        completed: currentStageData.completed,
+        planId: planId,
+        sessionId: sessionId,
+        screwCount: screwCount, // For display only
+        timestamp: Date.now(),
+      });
+
+      console.log(`✅ [Planner Mode] Planning reference saved for ${currentStage}:`, {
+        planId,
+        screwCount,
+        completed: currentStageData.completed,
+      });
+    } catch (error) {
+      console.error('❌ [Planner Mode] Error saving workflow reference:', error);
+    }
+  }
 
   // Clean up hotkey event listener
   const hotkeyHandler = (window as any).__plannerModeHotkeyHandler;

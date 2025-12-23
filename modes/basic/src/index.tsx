@@ -125,8 +125,35 @@ export function onModeEnter({
   panelService,
   segmentationService,
 }: withAppTypes) {
-  const { measurementService, toolbarService, toolGroupService, customizationService } =
-    servicesManager.services;
+  const {
+    measurementService,
+    toolbarService, 
+    toolGroupService, 
+    customizationService,
+    surgicalWorkflowService 
+  } = servicesManager.services as any;
+
+  console.log('🚀 [BasicMode] onModeEnter');
+
+  // Integrate with workflow service if available
+  // NOTE: We DON'T set the stage here - workflow navigation already handles that!
+  // Modes should only READ the current stage, never SET it
+  if (surgicalWorkflowService) {
+    try {
+      const currentStage = surgicalWorkflowService.getCurrentStage();
+      console.log(`✅ [BasicMode] Current workflow stage: ${currentStage}`);
+
+      // Load workflow data for current stage (if any)
+      const workflowData = surgicalWorkflowService.getStageData(currentStage);
+      if (workflowData && Object.keys(workflowData).length > 2) {
+        console.log('📂 [BasicMode] Loaded workflow data:', workflowData);
+      }
+    } catch (error) {
+      console.error('❌ [BasicMode] Error reading workflow stage:', error);
+    }
+  } else {
+    console.warn('⚠️ [BasicMode] WorkflowService not available');
+  }
 
   measurementService.clearMeasurements();
 
@@ -180,6 +207,8 @@ export function onModeEnter({
 }
 
 export function onModeExit({ servicesManager }: withAppTypes) {
+  console.log('🧹 [BasicMode] onModeExit - Cleaning up');
+
   const {
     toolGroupService,
     syncGroupService,
@@ -187,7 +216,28 @@ export function onModeExit({ servicesManager }: withAppTypes) {
     cornerstoneViewportService,
     uiDialogService,
     uiModalService,
-  } = servicesManager.services;
+    surgicalWorkflowService,
+  } = servicesManager.services as any;
+
+  // Save workflow data before exiting
+  // NOTE: Do NOT set 'completed' here - workflow handles completion status
+  if (surgicalWorkflowService) {
+    try {
+      // Get current stage data to preserve 'completed' status
+      // Get current stage from workflow service - NO HARDCODING!
+      const currentStage = surgicalWorkflowService.getCurrentStage();
+      const currentStageData = surgicalWorkflowService.getStageData(currentStage);
+      
+      surgicalWorkflowService.updateStageData(currentStage, {
+        // Preserve existing completed status (set by workflow advancement)
+        completed: currentStageData.completed,
+        timestamp: Date.now(),
+      });
+      console.log(`✅ [BasicMode] Workflow data saved for ${currentStage} (completed: ${currentStageData.completed})`);
+    } catch (error) {
+      console.error('❌ [BasicMode] Error saving workflow data:', error);
+    }
+  }
 
   this._activatePanelTriggersSubscriptions.forEach(sub => sub.unsubscribe());
   this._activatePanelTriggersSubscriptions.length = 0;
@@ -198,6 +248,8 @@ export function onModeExit({ servicesManager }: withAppTypes) {
   syncGroupService.destroy();
   segmentationService.destroy();
   cornerstoneViewportService.destroy();
+
+  console.log('✅ [BasicMode] onModeExit complete');
 }
 
 export const toolbarSections = {
@@ -280,7 +332,7 @@ export const basicLayout = {
     leftPanels: [ohif.thumbnailList],
     leftPanelResizable: true,
     rightPanels: [ohif.trackingPanel, cornerstone.segmentation, cornerstone.measurements],
-    rightPanelClosed: false,
+    rightPanelClosed: true,
     rightPanelResizable: true,
     viewports: [
       {

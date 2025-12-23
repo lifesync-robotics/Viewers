@@ -1,0 +1,22 @@
+{
+  "name": "@lifesync/workflow-config",
+  "version": "1.0.0",
+  "description": "Configuration-driven workflow management system",
+  "main": "index.ts",
+  "private": true,
+  "keywords": [
+    "workflow",
+    "configuration",
+    "medical",
+    "surgical"
+  ],
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.5",
+    "@types/lodash": "^4.14.195"
+  }
+}
+

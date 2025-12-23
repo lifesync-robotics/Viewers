@@ -1,0 +1,68 @@
+================================================================================
+BUG #1 FIXED: 4×4 Grid Not Activating
+================================================================================
+
+STATUS: ✅ FIXED
+
+PROBLEM:
+- Overview mode was not displaying 4×4 grid on mode enter
+- Only single viewport was shown
+
+ROOT CAUSE:
+- Missing onModeEnter lifecycle hook
+- Hanging protocol was not being registered
+- No custom image load strategy for frame distribution
+
+SOLUTION:
+1. Added onModeEnter() hook to register hanging protocol
+2. Created custom image load strategy for evenly-spaced frames
+3. Added customViewportProps to store grid position
+4. Protocol now automatically applies 4×4 grid
+
+WHAT WAS CHANGED:
+✅ src/index.ts       - Added lifecycle hooks + image load strategy
+✅ src/hangingProtocol.ts  - Added imageLoadStrategy reference
+
+HOW TO TEST:
+============
+
+1. Rebuild the mode:
+   cd Viewers/modes/overview
+   yarn build
+
+2. Restart viewer:
+   cd ../../platform/app
+   yarn dev
+
+3. Load a study and select "Overview 4×4 Grid" mode
+
+EXPECTED RESULT:
+✅ 16 viewports in 4×4 grid
+✅ Each viewport shows different frame
+✅ Frames evenly distributed (first to last)
+✅ Measurement tools work on all viewports
+
+CONSOLE LOGS YOU SHOULD SEE:
+🚀 [Overview Mode] onModeEnter - Activating 4x4 Grid
+✅ [Overview Mode] Custom image load strategy registered
+✅ [Overview Mode] 4x4 hanging protocol registered: overview4x4
+✅ [Overview Mode] Tool groups initialized
+✅ [Overview Mode] Mode initialization complete
+📍 [Overview] Viewport 1: Frame 1/150
+📍 [Overview] Viewport 2: Frame 11/150
+...
+📍 [Overview] Viewport 16: Frame 150/150
+
+FRAME DISTRIBUTION EXAMPLE (150-frame series):
+- Viewport 1:  Frame 0    (first)
+- Viewport 2:  Frame 10
+- Viewport 3:  Frame 20
+- Viewport 4:  Frame 30
+- ...
+- Viewport 15: Frame 140
+- Viewport 16: Frame 150  (last)
+
+================================================================================
+The bug is now fixed! Rebuild and test it out! 🎉
+================================================================================
+

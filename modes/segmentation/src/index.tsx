@@ -2,6 +2,7 @@ import { id } from './id';
 import toolbarButtons from './toolbarButtons';
 import initToolGroups from './initToolGroups';
 import setUpAutoTabSwitchHandler from './utils/setUpAutoTabSwitchHandler';
+import update from 'immutability-helper';
 
 const ohif = {
   layout: '@ohif/extension-default.layoutTemplateModule.viewerLayout',
@@ -28,6 +29,11 @@ const dicomRT = {
   viewport: '@ohif/extension-cornerstone-dicom-rt.viewportModule.dicom-rt',
   sopClassHandler: '@ohif/extension-cornerstone-dicom-rt.sopClassHandlerModule.dicom-rt',
 };
+
+const dicomUpload = {
+  panel: '@ohif/extension-dicom-server-upload.panelModule.dicomServerUpload',
+};
+
 /**
  * Just two dependencies to be able to render a viewport with panels in order
  * to make sure that the mode is working.
@@ -37,11 +43,12 @@ const extensionDependencies = {
   '@ohif/extension-cornerstone': '^3.0.0',
   '@ohif/extension-cornerstone-dicom-seg': '^3.0.0',
   '@ohif/extension-cornerstone-dicom-rt': '^3.0.0',
+  '@ohif/extension-dicom-server-upload': '^3.0.0',
 };
 
 function modeFactory({ modeConfiguration }) {
   const _unsubscriptions = [];
-  return {
+  let mode = {
     /**
      * Mode ID, which should be unique among modes used by the viewer. This ID
      * is used to identify the mode in the viewer's state.
@@ -65,7 +72,35 @@ function modeFactory({ modeConfiguration }) {
         segmentationService,
         viewportGridService,
         panelService,
+        surgicalWorkflowService,
       } = servicesManager.services;
+
+      console.log('🚀 [SegmentationMode] onModeEnter');
+
+      // Integrate with workflow service if available
+      // NOTE: We DON'T set the stage here - workflow navigation already handles that!
+      // Modes should only READ the current stage, never SET it
+      if (surgicalWorkflowService) {
+        try {
+          const currentStage = surgicalWorkflowService.getCurrentStage();
+          console.log(`✅ [SegmentationMode] Current workflow stage: ${currentStage}`);
+
+          // Load segmentation reference from workflow
+          const workflowData = surgicalWorkflowService.getStageData(currentStage);
+          if (workflowData && workflowData.seriesInstanceUID) {
+            console.log('📂 [SegmentationMode] Found segmentation reference:', {
+              seriesInstanceUID: workflowData.seriesInstanceUID,
+              sessionId: workflowData.sessionId,
+            });
+            // Note: Fetch actual segmentation from backend if needed
+            // await fetchSegmentationFromBackend(workflowData.seriesInstanceUID, workflowData.sessionId);
+          }
+        } catch (error) {
+          console.error('❌ [SegmentationMode] Error reading workflow stage:', error);
+        }
+      } else {
+        console.warn('⚠️ [SegmentationMode] WorkflowService not available');
+      }
 
       measurementService.clearMeasurements();
 
@@ -175,6 +210,8 @@ function modeFactory({ modeConfiguration }) {
       _unsubscriptions.push(...unsubscribeAutoTabSwitchEvents);
     },
     onModeExit: ({ servicesManager }: withAppTypes) => {
+      console.log('🧹 [SegmentationMode] onModeExit - Cleaning up');
+
       const {
         toolGroupService,
         syncGroupService,
@@ -182,7 +219,43 @@ function modeFactory({ modeConfiguration }) {
         cornerstoneViewportService,
         uiDialogService,
         uiModalService,
+        surgicalWorkflowService,
       } = servicesManager.services;
+
+      // Save segmentation reference to workflow (IDs only - backend stores the actual data)
+      // NOTE: Do NOT set 'completed' here - workflow handles completion status
+      if (surgicalWorkflowService) {
+        try {
+          const segmentations = segmentationService.getSegmentations();
+          console.log('💾 [SegmentationMode] Saving segmentation reference to workflow:', {
+            count: segmentations.length,
+          });
+
+          // Store only reference IDs - backend handles actual segmentation data
+          const seriesUID = segmentations[0]?.id || null; // Use first segmentation ID as series reference
+          const sessionId = sessionStorage.getItem('ohif_session_id') || null;
+
+          // Get current stage from workflow service - NO HARDCODING!
+          const currentStage = surgicalWorkflowService.getCurrentStage();
+          const currentStageData = surgicalWorkflowService.getStageData(currentStage);
+          
+          surgicalWorkflowService.updateStageData(currentStage, {
+            // Preserve existing completed status (set by workflow advancement)
+            completed: currentStageData.completed,
+            seriesInstanceUID: seriesUID,
+            sessionId: sessionId,
+            segmentationCount: segmentations.length, // For display only
+            timestamp: Date.now(),
+          });
+
+          console.log('✅ [SegmentationMode] Workflow reference saved (completed:', currentStageData.completed, ')');
+
+          // Note: Backend API should save actual segmentation data
+          // Call backend API here if needed: await saveSegmentationToBackend(seriesUID, sessionId);
+        } catch (error) {
+          console.error('❌ [SegmentationMode] Error saving workflow reference:', error);
+        }
+      }
 
       _unsubscriptions.forEach(unsubscribe => unsubscribe());
       _unsubscriptions.length = 0;
@@ -193,6 +266,8 @@ function modeFactory({ modeConfiguration }) {
       syncGroupService.destroy();
       segmentationService.destroy();
       cornerstoneViewportService.destroy();
+
+      console.log('✅ [SegmentationMode] onModeExit complete');
     },
     /** */
     validationTags: {
@@ -241,6 +316,7 @@ function modeFactory({ modeConfiguration }) {
               rightPanels: [
                 cornerstone.contourSegmentationPanel,
                 cornerstone.labelMapSegmentationPanel,
+                dicomUpload.panel,
               ],
               rightPanelResizable: true,
               // leftPanelClosed: true,
@@ -272,6 +348,13 @@ function modeFactory({ modeConfiguration }) {
     /** SopClassHandlers used by the mode */
     sopClassHandlers: [ohif.sopClassHandler, segmentation.sopClassHandler, dicomRT.sopClassHandler],
   };
+  
+  // Apply mode configuration (e.g., hide property from app config)
+  if (modeConfiguration) {
+    mode = update(mode, modeConfiguration);
+  }
+  
+  return mode;
 }
 
 const mode = {

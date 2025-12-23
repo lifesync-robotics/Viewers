@@ -2,6 +2,7 @@ import { id } from './id';
 import initWorkflowSteps from './initWorkflowSteps';
 import initToolGroups from './initToolGroups';
 import toolbarButtons from './toolbarButtons';
+import update from 'immutability-helper';
 
 const extensionDependencies = {
   '@ohif/extension-default': '3.7.0-beta.76',
@@ -30,7 +31,7 @@ const cornerstone = {
 };
 
 function modeFactory({ modeConfiguration }) {
-  return {
+  let mode = {
     id,
     routeName: 'dynamic-volume',
     displayName: 'Preclinical 4D',
@@ -199,6 +200,13 @@ function modeFactory({ modeConfiguration }) {
     // come first to remove video transfer syntax before ohif uses images
     sopClassHandlers: [ohif.chartSopClassHandler, ohif.defaultSopClassHandler],
   };
+  
+  // Apply mode configuration (e.g., hide property from app config)
+  if (modeConfiguration) {
+    mode = update(mode, modeConfiguration);
+  }
+  
+  return mode;
 }
 
 const mode = {
