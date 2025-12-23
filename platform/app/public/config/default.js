@@ -75,6 +75,9 @@ window.config = {
     '@ohif/mode-ultrasound-pleura-bline': {
       hide: { $set: true },  // Hide US Pleura B-line Annotations mode
     },
+    '@ohif/mode-registration': {
+      hide: { $set: true },  // Hide Registration mode
+    },
   },
   // =========================================================================
   // LifeSync Surgical Workflow Configuration

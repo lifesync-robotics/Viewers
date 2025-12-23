@@ -59,9 +59,41 @@ export interface WorkflowProviderProps {
  * Wraps the application to provide workflow state and methods
  */
 export function WorkflowProvider({ children, service }: WorkflowProviderProps) {
-  console.log('🚀 [WorkflowProvider] Initializing provider...');
+  const mountId = React.useRef(Math.random().toString(36).substr(2, 9));
+  
+  console.log(`🚀 [WorkflowProvider-${mountId.current}] Initializing provider...`);
 
   const [workflowState, setWorkflowState] = useState<WorkflowState>(service.getState());
+
+  // Subscribe to workflow events
+  useEffect(() => {
+    console.log(`🔔 [WorkflowProvider-${mountId.current}] Setting up event subscriptions`);
+
+    const unsubscribers: Array<() => void> = [];
+
+    // Log current listener count BEFORE subscribing
+    const listenersBefore = (service as any)._listeners.get(WORKFLOW_EVENTS.STAGE_CHANGED)?.size || 0;
+    console.log(`📊 [WorkflowProvider-${mountId.current}] Listeners BEFORE: ${listenersBefore}`);
+
+    // ... existing subscription code ...
+
+    // Log current listener count AFTER subscribing
+    const listenersAfter = (service as any)._listeners.get(WORKFLOW_EVENTS.STAGE_CHANGED)?.size || 0;
+    console.log(`📊 [WorkflowProvider-${mountId.current}] Listeners AFTER: ${listenersAfter}`);
+
+    // Cleanup subscriptions
+    return () => {
+      console.log(`🧹 [WorkflowProvider-${mountId.current}] Cleaning up event subscriptions`);
+      
+      const listenersBeforeCleanup = (service as any)._listeners.get(WORKFLOW_EVENTS.STAGE_CHANGED)?.size || 0;
+      console.log(`📊 [WorkflowProvider-${mountId.current}] Listeners BEFORE cleanup: ${listenersBeforeCleanup}`);
+      
+      unsubscribers.forEach(unsub => unsub());
+      
+      const listenersAfterCleanup = (service as any)._listeners.get(WORKFLOW_EVENTS.STAGE_CHANGED)?.size || 0;
+      console.log(`📊 [WorkflowProvider-${mountId.current}] Listeners AFTER cleanup: ${listenersAfterCleanup}`);
+    };
+  }, [service]);
 
   // Subscribe to workflow events
   useEffect(() => {
