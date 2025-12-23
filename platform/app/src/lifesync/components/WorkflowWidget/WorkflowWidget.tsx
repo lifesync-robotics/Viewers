@@ -3,7 +3,7 @@
  * Icon-only workflow navigation for toolbar integration
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useWorkflow } from '../../contexts/WorkflowContext';
 import { STAGE_ORDER, STAGE_LABELS } from '../../types';
@@ -23,6 +23,10 @@ export function WorkflowWidget({ className = '' }: WorkflowWidgetProps) {
     advanceStage,
     workflowService,
   } = useWorkflow();
+
+  // 🔧 FIX: Prevent rapid/duplicate clicks to avoid navigation getting stuck
+  const isHandlingClick = useRef(false);
+  const lastClickTime = useRef(0);
 
   // Get status icon for a stage
   const getStatusIcon = (stage: string) => {
@@ -74,6 +78,23 @@ export function WorkflowWidget({ className = '' }: WorkflowWidgetProps) {
 
   // Handle stage click
   const handleStageClick = useCallback(async (stage: string) => {
+    const now = Date.now();
+    
+    // 🔧 FIX: Debounce clicks - ignore clicks within 500ms
+    if (now - lastClickTime.current < 500) {
+      console.warn('⚠️ [WorkflowWidget] Click debounced (too fast)');
+      return;
+    }
+    
+    // 🔧 FIX: Prevent concurrent handling
+    if (isHandlingClick.current) {
+      console.warn('⚠️ [WorkflowWidget] Click ignored (already handling)');
+      return;
+    }
+    
+    isHandlingClick.current = true;
+    lastClickTime.current = now;
+    
     console.log(`🎯 [WorkflowWidget] Stage clicked: ${stage}`);
 
     const stageIndex = STAGE_ORDER.indexOf(stage as any);
@@ -81,7 +102,53 @@ export function WorkflowWidget({ className = '' }: WorkflowWidgetProps) {
     const isNextStage = stageIndex === currentIndex + 1;
     const stageData = workflowState.stages[stage];
 
-    // Case 1: Clicking next stage (advancement) - requires confirmation
+    // Case 1: Navigate to any completed stage (forward or back, no confirmation needed)
+    if (stageData.completed && stage !== currentStage) {
+      console.log(`📍 [WorkflowWidget] Navigating to completed stage: ${stage}`);
+      
+      try {
+        // 🔍 Validate current stage before exiting (config-driven validation)
+        console.log(`🔍 [WorkflowWidget] Validating current stage (${currentStage}) before exit`);
+        workflowService.validateAllStages();
+        
+        // Update workflow state
+        workflowService.setCurrentStage(stage as any);
+
+        // Navigate to the stage route
+        const route = workflowService.getStageRoute(stage as any);
+        
+        // Get study instance UIDs from current URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const studyUIDs = urlParams.get('StudyInstanceUIDs');
+        
+        // Construct full URL with query params
+        const fullUrl = studyUIDs ? `${route}?StudyInstanceUIDs=${studyUIDs}` : route;
+        
+        console.log(`🧭 [WorkflowWidget] Navigating to: ${fullUrl}`);
+        
+        // Use React Router history to navigate
+        const { history } = await import('../../../utils/history');
+        if (history.navigate) {
+          history.navigate(fullUrl);
+          console.log('✅ [WorkflowWidget] Navigation successful');
+          // Reset flag after navigation starts (with delay to allow navigation to complete)
+          setTimeout(() => {
+            isHandlingClick.current = false;
+          }, 500);
+        } else {
+          console.warn('⚠️ [WorkflowWidget] history.navigate not available, using fallback');
+          window.location.href = fullUrl;
+          // Window will reload, so flag will reset naturally
+        }
+      } catch (error) {
+        console.error('❌ [WorkflowWidget] Error during navigation:', error);
+        // Reset flag on error
+        isHandlingClick.current = false;
+      }
+      return;
+    }
+
+    // Case 2: Advance to next uncompleted stage (requires confirmation)
     if (isNextStage && !stageData.completed) {
       console.log('⏭️ [WorkflowWidget] Attempting to advance to next stage');
 
@@ -93,10 +160,16 @@ export function WorkflowWidget({ className = '' }: WorkflowWidgetProps) {
 
       if (!confirmed) {
         console.log('ℹ️ [WorkflowWidget] User cancelled advancement');
+        // Reset flag on cancellation
+        isHandlingClick.current = false;
         return;
       }
 
       console.log('✅ [WorkflowWidget] User confirmed advancement');
+
+      // 🔍 Validate all stages before advancing (config-driven validation)
+      console.log(`🔍 [WorkflowWidget] Validating current stage (${currentStage}) before advancement`);
+      workflowService.validateAllStages();
 
       // Call advance function to properly mark current stage as completed
       try {
@@ -105,6 +178,8 @@ export function WorkflowWidget({ className = '' }: WorkflowWidgetProps) {
         if (!result.success) {
           console.error('❌ [WorkflowWidget] Failed to advance:', result.error);
           alert(`Failed to advance: ${result.error}`);
+          // Reset flag on error
+          isHandlingClick.current = false;
           return;
         }
 
@@ -128,56 +203,40 @@ export function WorkflowWidget({ className = '' }: WorkflowWidgetProps) {
           if (history.navigate) {
             history.navigate(fullUrl);
             console.log('✅ [WorkflowWidget] Navigation successful');
+            // Reset flag after navigation starts (with delay to allow navigation to complete)
+            setTimeout(() => {
+              isHandlingClick.current = false;
+            }, 500);
           } else {
             console.warn('⚠️ [WorkflowWidget] history.navigate not available, using fallback');
             window.location.href = fullUrl;
+            // Window will reload, so flag will reset naturally
           }
+        } else {
+          // No next stage, reset flag
+          isHandlingClick.current = false;
         }
       } catch (error) {
         console.error('❌ [WorkflowWidget] Error during advancement:', error);
         alert(`Failed to advance: ${error.message}`);
+        // Reset flag on error
+        isHandlingClick.current = false;
       }
       return;
     }
 
-    // Case 2: Don't allow navigation to future stages (beyond next)
-    if (stageIndex > currentIndex + 1) {
-      console.warn('⚠️ [WorkflowWidget] Cannot navigate to future stage');
-      alert('Please complete current stage before advancing');
+    // Case 3: Block navigation to uncompleted future stages
+    if (stageIndex > currentIndex && !stageData.completed && !isNextStage) {
+      console.warn('⚠️ [WorkflowWidget] Cannot navigate to uncompleted future stage');
+      alert('Please complete stages in order');
+      // Reset flag
+      isHandlingClick.current = false;
       return;
     }
 
-    // Case 3: Navigate back to a completed stage (no confirmation needed)
-    if (stage !== currentStage && stageIndex <= currentIndex) {
-      try {
-        // Update workflow state
-        workflowService.setCurrentStage(stage as any);
-
-        // Navigate to the stage route
-        const route = workflowService.getStageRoute(stage as any);
-        
-        // Get study instance UIDs from current URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const studyUIDs = urlParams.get('StudyInstanceUIDs');
-        
-        // Construct full URL with query params
-        const fullUrl = studyUIDs ? `${route}?StudyInstanceUIDs=${studyUIDs}` : route;
-        
-        console.log(`🧭 [WorkflowWidget] Navigating to: ${fullUrl}`);
-        
-        // Use React Router history to navigate
-        const { history } = await import('../../../utils/history');
-        if (history.navigate) {
-          history.navigate(fullUrl);
-          console.log('✅ [WorkflowWidget] Navigation successful');
-        } else {
-          console.warn('⚠️ [WorkflowWidget] history.navigate not available, using fallback');
-          window.location.href = fullUrl;
-        }
-      } catch (error) {
-        console.error('❌ [WorkflowWidget] Error during navigation:', error);
-      }
-    }
+    // Case 4: All other cases (same stage clicked, etc.) - reset flag
+    console.log('ℹ️ [WorkflowWidget] No navigation action needed');
+    isHandlingClick.current = false;
   }, [currentStage, advanceStage, workflowState, workflowService]);
 
   // Get tooltip text

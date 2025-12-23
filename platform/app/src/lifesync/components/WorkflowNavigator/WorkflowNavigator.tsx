@@ -197,6 +197,10 @@ export function WorkflowNavigator({
     }
 
     if (stage !== currentStage) {
+      // 🔍 Validate current stage before exiting (config-driven validation)
+      console.log(`🔍 [WorkflowNavigator] Validating current stage (${currentStage}) before navigation`);
+      workflowService.validateAllStages();
+      
       // Use command manager to navigate (handles both state update AND route navigation)
       try {
         const result = commandsManager.runCommand('navigateToStage', {

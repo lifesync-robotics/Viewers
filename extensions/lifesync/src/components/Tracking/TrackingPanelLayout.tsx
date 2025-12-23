@@ -138,8 +138,15 @@ const TrackingPanelLayout: React.FC<TrackingPanelLayoutProps> = ({
   const [matricesApplied, setMatricesApplied] = React.useState(true); // Mark as applied since it's managed by service
 
   // Derive matrices from TrackingService for display
-  const prToDicomMatrix = trackingService ? trackingService.getPrToDicomMatrix() : identityMatrix;
-  const markerToTooltipMatrix = trackingService ? trackingService.getMarkerToTooltipMatrix() : identityMatrix;
+  // 🔧 FIX: Memoize to prevent infinite loop - only recompute when trackingService changes
+  const prToDicomMatrix = React.useMemo(
+    () => (trackingService ? trackingService.getPrToDicomMatrix() : identityMatrix),
+    [trackingService]
+  );
+  const markerToTooltipMatrix = React.useMemo(
+    () => (trackingService ? trackingService.getMarkerToTooltipMatrix() : identityMatrix),
+    [trackingService]
+  );
 
   // Local editable state for matrix inputs (separate from service state)
   const [editablePrToDicomMatrix, setEditablePrToDicomMatrix] = React.useState<number[][]>(
