@@ -216,6 +216,7 @@ function ViewerViewportGrid(props: withAppTypes) {
         }
 
         if (event && (appConfig?.activateViewportBeforeInteraction ?? true)) {
+          // 检查事件是否可取消（scroll 和 wheel 事件是 passive 的，不能调用 preventDefault）
           if (event.cancelable !== false) {
             event.preventDefault();
             event.stopPropagation();

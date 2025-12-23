@@ -80,22 +80,25 @@
       "packageName": "@ohif/mode-longitudinal"
     },
     {
+      "packageName": "@ohif/mode-segmentation"
+    },
+    {
+      "packageName": "@ohif/mode-planner2d"
+    },
+    {
+      "packageName": "@ohif/mode-planner"
+    },
+    {
+      "packageName": "@ohif/mode-registration"
+    },
+    {
       "packageName": "@ohif/mode-navigation"
     },
     {
       "packageName": "@ohif/mode-navigation-3d"
     },
     {
-      "packageName": "@ohif/mode-planner"
-    },
-    {
-      "packageName": "@ohif/mode-planner2d"
-    },
-    {
       "packageName": "@ohif/mode-basic"
-    },
-    {
-      "packageName": "@ohif/mode-segmentation"
     },
     {
       "packageName": "@ohif/mode-tmtv"

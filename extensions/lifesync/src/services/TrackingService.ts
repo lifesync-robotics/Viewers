@@ -50,48 +50,53 @@ class TrackingService extends PubSubService {
   private lastConnectionMode: string | null = null;
   private selectedToolId: string | null = null; // Selected tool for visualization
   private coordinateSystem: 'tracker' | 'patient_reference' = 'patient_reference'; // Coordinate system for navigation
-  
-  
 
   // Registration transformation matrix (4x4 row-major)
   // Direct transformation: PR space → DICOM space
-  // 
+  //
   // Transformation pipeline (applied right-to-left):
   //   tooltip_DICOM = prToDicomMatrix × markerToPrMatrix × markerToTooltipMatrix
   // Where:
   //   markerToPrMatrix = marker position in PR space (from NDI tracker)
   //   markerToTooltipMatrix = calibration offset (marker → tooltip)
   //   prToDicomMatrix = registration (PR → DICOM)
-  // 
-  // Hardcoded for development - obtained from registration procedure
-  // private prToDicomMatrix: number[][] = [
-  //   [-0.9967, -0.0487, 0.0647, -17.2],
-  //   [0.00471, 0.7623, 0.6403, 187.5],
-  //   [-0.0811, 0.6454, -0.7593, 62.0],
+  //
+  // PR to DICOM transformation matrix (obtained from registration)
+  // This matrix should be loaded from backend using loadRegistrationMatrix(seriesInstanceUID, caseId)
+  // or set via setPrToDicomMatrix() by RegistrationService after registration is computed.
+  //
+  // IMPORTANT: Do NOT hardcode default value here. Always try to load from API first.
+  // If API returns no data, then use identity matrix (represents "not registered" state).
+  //
+  // Workflow:
+  // 1. Initialize: Start with identity matrix as fallback (will be updated when API is called)
+  // 2. When seriesInstanceUID and caseId are available: Call loadRegistrationMatrix() to fetch from API
+  // 3. If API returns data: Use the matrix from backend
+  // 4. If API returns no data: Keep identity matrix (represents "not registered")
+  // 5. After registration computation: Matrix is automatically updated via setPrToDicomMatrix()
+  //
+  // OLD hardcoded values (deprecated - now obtained from backend):
+  // [
+  //   [-0.9814, -0.0938, 0.1673, -20.46],
+  //   [0.0522, 0.7083, 0.7039, 159.9],
+  //   [-0.1846, 0.6996, -0.69, 219.2],
   //   [0.0000, 0.0000, 0.0000, 1.0000]
-  // ]; // PR space to DICOM image space (from registration)
-  private prToDicomMatrix: number[][] = [
-  [-0.987, -0.0495, 0.1475, -23.63],
-    [0.053, 0.7803, 0.6229, 168.7],
-    [-0.146, 0.6233, -0.768, 146.4],
-    [0.0000, 0.0000, 0.0000, 1.0000]
-  ]; // PR space to DICOM image space (from registration)
-  
+  // ]
+  private prToDicomMatrix: number[][] | null = null; // Will be set by loadRegistrationMatrix() or setPrToDicomMatrix()
 
-  
   // Instrument calibration matrix (marker array → stylus tooltip)
   // Hardcoded from DR-VR06-A32.cal file
   // This represents the transformation from the NDI marker array to the stylus tooltip
   // Translation: [-17.08mm, +0.10mm, -157.82mm] (tooltip is ~157.8mm away from markers)
   private markerToTooltipMatrix: number[][] = [
     [-1, 0, 0, -17.08],
-    [0, 1, 0, 0.10],
+    [0, 1, 0, 0.1],
     [0, 0, -1, -157.82],
-    [0, 0, 0, 1]
+    [0, 0, 0, 1],
   ]; // From DR-VR06-A32.cal
-  
+
   private applyPr2DicomTransform: boolean = true; // Enable/disable transformation
-  
+
   // Debug info for transformation pipeline
   private lastDebugInfo: {
     markerToPrMatrix?: number[][];
@@ -157,7 +162,10 @@ class TrackingService extends PubSubService {
    * Step 3: Call REST API to get WebSocket URL
    * Step 4: Connect to WebSocket for streaming data
    */
-  public async connect(mode?: 'simulation' | 'hardware', apiUrl: string = this.apiUrl): Promise<void> {
+  public async connect(
+    mode?: 'simulation' | 'hardware',
+    apiUrl: string = this.apiUrl
+  ): Promise<void> {
     if (this.ws) {
       console.warn('⚠️ Already connected to tracking server');
       return;
@@ -182,7 +190,7 @@ class TrackingService extends PubSubService {
           console.log('📊 Current tracking status:', {
             active: statusData.status?.active,
             mode: statusData.status?.mode,
-            python_connected: statusData.status?.python_connected
+            python_connected: statusData.status?.python_connected,
           });
 
           if (statusData.success && statusData.status?.active) {
@@ -191,9 +199,13 @@ class TrackingService extends PubSubService {
 
             // If mode is different or we want to force reconnect, disconnect first
             if (mode && mode !== currentMode) {
-              console.log(`🔄 Mode change requested: ${currentMode} → ${mode}, disconnecting first...`);
+              console.log(
+                `🔄 Mode change requested: ${currentMode} → ${mode}, disconnecting first...`
+              );
             } else {
-              console.log(`🔄 Tracking already active in ${currentMode} mode, disconnecting for clean reconnect...`);
+              console.log(
+                `🔄 Tracking already active in ${currentMode} mode, disconnecting for clean reconnect...`
+              );
             }
 
             // Disconnect the existing connection
@@ -201,7 +213,7 @@ class TrackingService extends PubSubService {
               const disconnectResponse = await fetch(`${apiUrl}/api/tracking/disconnect`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                credentials: 'include'
+                credentials: 'include',
               });
 
               if (disconnectResponse.ok) {
@@ -247,8 +259,8 @@ class TrackingService extends PubSubService {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include', // Include cookies for OAuth2 authentication
         body: JSON.stringify({
-          mode: trackingMode
-        })
+          mode: trackingMode,
+        }),
       });
 
       // If already connected, disconnect first and retry
@@ -261,7 +273,7 @@ class TrackingService extends PubSubService {
           await fetch(`${apiUrl}/api/tracking/disconnect`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include'
+            credentials: 'include',
           });
 
           // Wait a bit for cleanup
@@ -273,8 +285,8 @@ class TrackingService extends PubSubService {
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
             body: JSON.stringify({
-              mode: trackingMode
-            })
+              mode: trackingMode,
+            }),
           });
         }
       }
@@ -300,7 +312,6 @@ class TrackingService extends PubSubService {
 
       // Step 4: Connect to WebSocket
       this._connectWebSocket(data.websocket_url);
-
     } catch (error) {
       console.error('❌ Failed to connect to tracking API:', error);
 
@@ -309,7 +320,8 @@ class TrackingService extends PubSubService {
       if (uiNotificationService) {
         uiNotificationService.show({
           title: '❌ Tracking Connection Failed',
-          message: 'Unable to connect to tracking system. System will use simulation mode if available.',
+          message:
+            'Unable to connect to tracking system. System will use simulation mode if available.',
           type: 'error',
           duration: 6000,
         });
@@ -348,9 +360,10 @@ class TrackingService extends PubSubService {
         if (uiNotificationService) {
           // Check if we have mode information from the connection
           const connectionMode = this.lastConnectionMode || 'unknown';
-          const modeMessage = connectionMode === 'hardware'
-            ? 'Successfully connected to NDI hardware tracker. Receiving real tracking data.'
-            : 'Successfully connected to tracking system in simulation mode.';
+          const modeMessage =
+            connectionMode === 'hardware'
+              ? 'Successfully connected to NDI hardware tracker. Receiving real tracking data.'
+              : 'Successfully connected to tracking system in simulation mode.';
 
           uiNotificationService.show({
             title: '🎯 Tracking Connected',
@@ -379,7 +392,7 @@ class TrackingService extends PubSubService {
               hasData: !!message.data,
               hasTools: !!message.tools,
               dataHasTools: !!(message.data && message.data.tools),
-              keys: Object.keys(message)
+              keys: Object.keys(message),
             });
           }
 
@@ -595,7 +608,7 @@ class TrackingService extends PubSubService {
           severity,
           category,
           message: alertMessage,
-          timestamp: message.timestamp
+          timestamp: message.timestamp,
         });
         break;
 
@@ -669,7 +682,9 @@ class TrackingService extends PubSubService {
     if (!primaryTool) {
       for (const [toolId, toolData] of Object.entries(tools)) {
         const tool = toolData as any;
-        if (tool.is_patient_reference) continue;
+        if (tool.is_patient_reference) {
+          continue;
+        }
 
         primaryTool = tool;
         primaryToolId = toolId;
@@ -719,7 +734,9 @@ class TrackingService extends PubSubService {
           matrixKey = availableMatrixKeys[0];
           matrix = coords[matrixKey];
           if (this.statsData.framesReceived < 3) {
-            console.warn(`⚠️ Expected matrix key '${`rM${primaryToolId}`}' not found, using '${matrixKey}' instead`);
+            console.warn(
+              `⚠️ Expected matrix key '${`rM${primaryToolId}`}' not found, using '${matrixKey}' instead`
+            );
           }
         }
       }
@@ -736,7 +753,11 @@ class TrackingService extends PubSubService {
         hasPosition: !!position,
         position: position,
         hasMatrix: !!matrix,
-        matrixType: matrix ? (Array.isArray(matrix) ? `Array[${matrix.length}]` : typeof matrix) : 'null'
+        matrixType: matrix
+          ? Array.isArray(matrix)
+            ? `Array[${matrix.length}]`
+            : typeof matrix
+          : 'null',
       });
     }
 
@@ -764,7 +785,9 @@ class TrackingService extends PubSubService {
       }
     } else if (this.applyPr2DicomTransform && matrix && !isUsingPrRelativeCoords) {
       if (this.statsData.framesReceived < 3) {
-        console.warn('⚠️ [TrackingService] pr2dicom enabled but using tracker coordinates - skipping transform');
+        console.warn(
+          '⚠️ [TrackingService] pr2dicom enabled but using tracker coordinates - skipping transform'
+        );
       }
     }
 
@@ -776,12 +799,15 @@ class TrackingService extends PubSubService {
     const toolsWithTooltipMatrices = { ...tools };
 
     Object.entries(tools).forEach(([toolId, toolData]: [string, any]) => {
-      if (toolData.is_patient_reference) return; // Skip patient reference
+      if (toolData.is_patient_reference) {
+        return;
+      } // Skip patient reference
 
       // Get marker position matrix in PR space
       const toolMatrixKey = `rM${toolId}`;
-      const markerToPrMatrix = toolData.coordinates?.register?.[toolMatrixKey] ||
-                               toolData.coordinates?.patient_reference?.[toolMatrixKey];
+      const markerToPrMatrix =
+        toolData.coordinates?.register?.[toolMatrixKey] ||
+        toolData.coordinates?.patient_reference?.[toolMatrixKey];
 
       if (markerToPrMatrix) {
         // Step 1: Calculate tooltip matrix in PR space
@@ -790,7 +816,7 @@ class TrackingService extends PubSubService {
 
         // Step 2: Calculate DICOM matrix for 3D model rendering
         // dicomMatrix = prToDicomMatrix × tooltipMatrix
-        const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
+        const dicomMatrix = this._multiplyMatrix4x4(this.getPrToDicomMatrix(), tooltipMatrix);
 
         // Store matrices in tool data
         if (!toolsWithTooltipMatrices[toolId].coordinates) {
@@ -804,7 +830,13 @@ class TrackingService extends PubSubService {
         }
 
         // Store tooltip matrix (PR-relative space) as tM{toolId}
-        toolsWithTooltipMatrices[toolId].coordinates.patient_reference[`tM${toolId}`] = tooltipMatrix;
+        toolsWithTooltipMatrices[toolId].coordinates.patient_reference[`tM${toolId}`] =
+          tooltipMatrix;
+
+        // Store tooltip position in mm
+        const tooltipPosition = this._extractPositionFromMatrix(tooltipMatrix);
+        toolsWithTooltipMatrices[toolId].coordinates.patient_reference.tooltip_position_mm =
+          tooltipPosition as [number, number, number];
 
         // Store DICOM matrix (DICOM image space) as dM{toolId}
         toolsWithTooltipMatrices[toolId].coordinates.dicom[`dM${toolId}`] = dicomMatrix;
@@ -877,7 +909,9 @@ class TrackingService extends PubSubService {
    */
   public showModeNotification(): void {
     const uiNotificationService = this.servicesManager?.services?.uiNotificationService;
-    if (!uiNotificationService) return;
+    if (!uiNotificationService) {
+      return;
+    }
 
     // Check current status
     fetch(`${this.apiUrl}/api/tracking/status`)
@@ -887,12 +921,13 @@ class TrackingService extends PubSubService {
           const mode = data.status.mode;
           const isActive = data.status.active;
 
-          const modeMessage = mode === 'hardware'
-            ? 'Connected to NDI hardware tracker - receiving real data'
-            : 'Using simulation mode - hardware tracker not available';
+          const modeMessage =
+            mode === 'hardware'
+              ? 'Connected to NDI hardware tracker - receiving real data'
+              : 'Using simulation mode - hardware tracker not available';
 
-          const modeType = (mode === 'hardware' && isActive) ? 'success' :
-                          (!isActive) ? 'warning' : 'info';
+          const modeType =
+            mode === 'hardware' && isActive ? 'success' : !isActive ? 'warning' : 'info';
 
           uiNotificationService.show({
             title: `🔌 Tracking Status: ${mode.toUpperCase()}`,
@@ -938,7 +973,10 @@ class TrackingService extends PubSubService {
    * @param matrixName - Descriptive name for logging
    * @returns Object with identity checks
    */
-  private _checkMatrixIdentity(matrix: number[] | number[][], matrixName: string): {
+  private _checkMatrixIdentity(
+    matrix: number[] | number[][],
+    matrixName: string
+  ): {
     isIdentityRotation: boolean;
     isZeroTranslation: boolean;
     translation: number[];
@@ -951,7 +989,12 @@ class TrackingService extends PubSubService {
     if (Array.isArray(matrix) && matrix.length === 4 && Array.isArray(matrix[0])) {
       // 4x4 matrix
       mat2D = matrix as number[][];
-    } else if (Array.isArray(matrix) && matrix.length === 3 && Array.isArray(matrix[0]) && matrix[0].length === 3) {
+    } else if (
+      Array.isArray(matrix) &&
+      matrix.length === 3 &&
+      Array.isArray(matrix[0]) &&
+      matrix[0].length === 3
+    ) {
       // 3x3 matrix (rotation only)
       mat2D = matrix as number[][];
       is3x3Matrix = true;
@@ -962,7 +1005,7 @@ class TrackingService extends PubSubService {
         [flat[0], flat[1], flat[2], flat[3]],
         [flat[4], flat[5], flat[6], flat[7]],
         [flat[8], flat[9], flat[10], flat[11]],
-        [flat[12], flat[13], flat[14], flat[15]]
+        [flat[12], flat[13], flat[14], flat[15]],
       ];
     } else {
       console.warn(`⚠️ [${matrixName}] Invalid matrix format for identity check`);
@@ -970,7 +1013,11 @@ class TrackingService extends PubSubService {
         isIdentityRotation: false,
         isZeroTranslation: false,
         translation: [0, 0, 0],
-        rotation: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        rotation: [
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1],
+        ],
       };
     }
 
@@ -988,20 +1035,28 @@ class TrackingService extends PubSubService {
       rotation = [
         [mat2D[0][0], mat2D[0][1], mat2D[0][2]],
         [mat2D[1][0], mat2D[1][1], mat2D[1][2]],
-        [mat2D[2][0], mat2D[2][1], mat2D[2][2]]
+        [mat2D[2][0], mat2D[2][1], mat2D[2][2]],
       ];
     }
 
     // Check for identity rotation (within tolerance)
     const tol = 0.001;
     const isIdentityRotation =
-      Math.abs(rotation[0][0] - 1) < tol && Math.abs(rotation[0][1]) < tol && Math.abs(rotation[0][2]) < tol &&
-      Math.abs(rotation[1][0]) < tol && Math.abs(rotation[1][1] - 1) < tol && Math.abs(rotation[1][2]) < tol &&
-      Math.abs(rotation[2][0]) < tol && Math.abs(rotation[2][1]) < tol && Math.abs(rotation[2][2] - 1) < tol;
+      Math.abs(rotation[0][0] - 1) < tol &&
+      Math.abs(rotation[0][1]) < tol &&
+      Math.abs(rotation[0][2]) < tol &&
+      Math.abs(rotation[1][0]) < tol &&
+      Math.abs(rotation[1][1] - 1) < tol &&
+      Math.abs(rotation[1][2]) < tol &&
+      Math.abs(rotation[2][0]) < tol &&
+      Math.abs(rotation[2][1]) < tol &&
+      Math.abs(rotation[2][2] - 1) < tol;
 
     // Check for zero translation (within tolerance)
     const isZeroTranslation =
-      Math.abs(translation[0]) < tol && Math.abs(translation[1]) < tol && Math.abs(translation[2]) < tol;
+      Math.abs(translation[0]) < tol &&
+      Math.abs(translation[1]) < tol &&
+      Math.abs(translation[2]) < tol;
 
     // Create unique key for this matrix type
     const matrixKey = matrixName;
@@ -1067,7 +1122,7 @@ class TrackingService extends PubSubService {
       isIdentityRotation,
       isZeroTranslation,
       translation,
-      rotation
+      rotation,
     };
   }
 
@@ -1080,7 +1135,7 @@ class TrackingService extends PubSubService {
       [0, 0, 0, 0],
       [0, 0, 0, 0],
       [0, 0, 0, 0],
-      [0, 0, 0, 0]
+      [0, 0, 0, 0],
     ];
 
     for (let i = 0; i < 4; i++) {
@@ -1125,7 +1180,7 @@ class TrackingService extends PubSubService {
           [1, 0, 0, 0],
           [0, 1, 0, 0],
           [0, 0, 1, 0],
-          [0, 0, 0, 1]
+          [0, 0, 0, 1],
         ];
       }
 
@@ -1156,7 +1211,7 @@ class TrackingService extends PubSubService {
       [0, 0, 0, 0],
       [0, 0, 0, 0],
       [0, 0, 0, 0],
-      [0, 0, 0, 0]
+      [0, 0, 0, 0],
     ];
     for (let i = 0; i < 4; i++) {
       for (let j = 0; j < 4; j++) {
@@ -1176,14 +1231,14 @@ class TrackingService extends PubSubService {
         [1, 0, 0, 0],
         [0, 1, 0, 0],
         [0, 0, 1, 0],
-        [0, 0, 0, 1]
+        [0, 0, 0, 1],
       ];
     }
     return [
       [flat[0], flat[1], flat[2], flat[3]],
       [flat[4], flat[5], flat[6], flat[7]],
       [flat[8], flat[9], flat[10], flat[11]],
-      [flat[12], flat[13], flat[14], flat[15]]
+      [flat[12], flat[13], flat[14], flat[15]],
     ];
   }
 
@@ -1192,10 +1247,22 @@ class TrackingService extends PubSubService {
    */
   private _matrix4x4ToFlat(matrix: number[][]): number[] {
     return [
-      matrix[0][0], matrix[0][1], matrix[0][2], matrix[0][3],
-      matrix[1][0], matrix[1][1], matrix[1][2], matrix[1][3],
-      matrix[2][0], matrix[2][1], matrix[2][2], matrix[2][3],
-      matrix[3][0], matrix[3][1], matrix[3][2], matrix[3][3]
+      matrix[0][0],
+      matrix[0][1],
+      matrix[0][2],
+      matrix[0][3],
+      matrix[1][0],
+      matrix[1][1],
+      matrix[1][2],
+      matrix[1][3],
+      matrix[2][0],
+      matrix[2][1],
+      matrix[2][2],
+      matrix[2][3],
+      matrix[3][0],
+      matrix[3][1],
+      matrix[3][2],
+      matrix[3][3],
     ];
   }
 
@@ -1209,7 +1276,9 @@ class TrackingService extends PubSubService {
    * @returns Transformed 4x4 matrix in DICOM space (same format as input)
    */
   private _applyPr2DicomTransform(markerToPrMatrix: number[][] | number[]): number[][] | number[] {
-    if (!markerToPrMatrix) return markerToPrMatrix;
+    if (!markerToPrMatrix) {
+      return markerToPrMatrix;
+    }
 
     // Detect if input is flat array or 2D array
     const isFlat = !Array.isArray(markerToPrMatrix[0]);
@@ -1223,9 +1292,12 @@ class TrackingService extends PubSubService {
     }
 
     // DIAGNOSTIC: Check input matrices for identity
-    this._checkMatrixIdentity(markerMatrix4x4, "Input Matrix (markerToPrMatrix)");
-    this._checkMatrixIdentity(this.markerToTooltipMatrix, "Calibration Matrix (markerToTooltipMatrix)");
-    this._checkMatrixIdentity(this.prToDicomMatrix, "Registration Matrix (prToDicomMatrix)");
+    this._checkMatrixIdentity(markerMatrix4x4, 'Input Matrix (markerToPrMatrix)');
+    this._checkMatrixIdentity(
+      this.markerToTooltipMatrix,
+      'Calibration Matrix (markerToTooltipMatrix)'
+    );
+    this._checkMatrixIdentity(this.getPrToDicomMatrix(), 'Registration Matrix (prToDicomMatrix)');
 
     // Step 1: Transform from marker array to stylus tooltip
     // tooltipMatrix = markerToPrMatrix × markerToTooltipMatrix
@@ -1233,14 +1305,14 @@ class TrackingService extends PubSubService {
     const tooltipMatrix = this._multiplyMatrix4x4(markerMatrix4x4, this.markerToTooltipMatrix);
 
     // DIAGNOSTIC: Check intermediate result
-    this._checkMatrixIdentity(tooltipMatrix, "Intermediate Matrix (tooltipMatrix)");
+    this._checkMatrixIdentity(tooltipMatrix, 'Intermediate Matrix (tooltipMatrix)');
 
     // Step 2: Transform from PR-relative tooltip to DICOM space
     // dicomMatrix = prToDicomMatrix × tooltipMatrix
-    const dicomMatrix = this._multiplyMatrix4x4(this.prToDicomMatrix, tooltipMatrix);
+    const dicomMatrix = this._multiplyMatrix4x4(this.getPrToDicomMatrix(), tooltipMatrix);
 
     // DIAGNOSTIC: Check final result
-    this._checkMatrixIdentity(dicomMatrix, "Final DICOM Matrix (output result)");
+    this._checkMatrixIdentity(dicomMatrix, 'Final DICOM Matrix (output result)');
 
     // Store debug info (deep copy to avoid reference issues)
     this.lastDebugInfo = {
@@ -1248,7 +1320,7 @@ class TrackingService extends PubSubService {
       tooltipMatrix: tooltipMatrix.map(row => [...row]),
       dicomMatrix: dicomMatrix.map(row => [...row]),
       markerToTooltipMatrix: this.markerToTooltipMatrix.map(row => [...row]),
-      prToDicomMatrix: this.prToDicomMatrix.map(row => [...row])
+      prToDicomMatrix: this.getPrToDicomMatrix().map(row => [...row]),
     };
 
     // Return in same format as input
@@ -1264,7 +1336,9 @@ class TrackingService extends PubSubService {
    * @returns [x, y, z] position in mm
    */
   private _extractPositionFromMatrix(matrix: number[][] | number[]): number[] {
-    if (!matrix) return [0, 0, 0];
+    if (!matrix) {
+      return [0, 0, 0];
+    }
 
     // Handle flat array
     if (!Array.isArray(matrix[0])) {
@@ -1286,7 +1360,7 @@ class TrackingService extends PubSubService {
     this.prToDicomMatrix = matrix;
 
     // DIAGNOSTIC: Check the matrix being set
-    this._checkMatrixIdentity(matrix, "PR to DICOM Matrix (being set)");
+    this._checkMatrixIdentity(matrix, 'PR to DICOM Matrix (being set)');
 
     console.log('🔄 PR to DICOM matrix updated');
   }
@@ -1294,9 +1368,95 @@ class TrackingService extends PubSubService {
   /**
    * Get the PR to DICOM registration matrix
    * @returns 4x4 transformation matrix (row-major)
+   * Returns identity matrix if not yet loaded from API (represents "not registered" state)
    */
   public getPrToDicomMatrix(): number[][] {
+    // If matrix is not loaded yet, return identity matrix (represents "not registered")
+    if (this.prToDicomMatrix === null) {
+      return [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1],
+      ];
+    }
     return this.prToDicomMatrix;
+  }
+
+  /**
+   * Load registration matrix from backend for a specific series and case
+   * This should be called when DICOM is loaded or when registration is computed
+   * @param seriesInstanceUID - DICOM Series Instance UID
+   * @param caseId - Case ID (required)
+   * @returns true if matrix was loaded successfully, false otherwise
+   */
+  public async loadRegistrationMatrix(
+    seriesInstanceUID: string,
+    caseId: number | string
+  ): Promise<boolean> {
+    try {
+      const registrationService = this.servicesManager?.services?.registrationService;
+      if (!registrationService) {
+        console.warn('⚠️ RegistrationService not available, cannot load registration matrix');
+        return false;
+      }
+
+      // Get registration matrix from backend
+      const registrationData = await registrationService.getRegistrationMatrix(
+        seriesInstanceUID,
+        caseId
+      );
+
+      if (registrationData && registrationData.prMd) {
+        // Convert to 4x4 matrix if needed
+        let prMdMatrix: number[][];
+        if (Array.isArray(registrationData.prMd[0])) {
+          prMdMatrix = registrationData.prMd;
+        } else {
+          // Convert flat array to 4x4 matrix
+          const flat = registrationData.prMd as number[];
+          prMdMatrix = [
+            [flat[0], flat[1], flat[2], flat[3]],
+            [flat[4], flat[5], flat[6], flat[7]],
+            [flat[8], flat[9], flat[10], flat[11]],
+            [flat[12], flat[13], flat[14], flat[15]],
+          ];
+        }
+
+        this.setPrToDicomMatrix(prMdMatrix);
+        console.log('✅ Registration matrix loaded from backend:', {
+          seriesInstanceUID,
+          caseId,
+          registration_id: registrationData.registration_id,
+          quality: registrationData.quality_metrics.quality,
+        });
+        return true;
+      } else {
+        // No registration data found in database - this means not registered yet
+        // Set to identity matrix explicitly to represent "not registered" state
+        const identityMatrix: number[][] = [
+          [1, 0, 0, 0],
+          [0, 1, 0, 0],
+          [0, 0, 1, 0],
+          [0, 0, 0, 1],
+        ];
+        this.setPrToDicomMatrix(identityMatrix);
+        console.log(
+          'ℹ️ No registration matrix found for series:',
+          seriesInstanceUID,
+          'case:',
+          caseId,
+          '- using identity matrix (not registered)'
+        );
+        return false;
+      }
+    } catch (error: any) {
+      console.log(
+        'ℹ️ Failed to load registration matrix (may not be registered yet):',
+        error.message
+      );
+      return false;
+    }
   }
 
   /**
@@ -1308,7 +1468,7 @@ class TrackingService extends PubSubService {
     this.markerToTooltipMatrix = matrix;
 
     // DIAGNOSTIC: Check the matrix being set
-    this._checkMatrixIdentity(matrix, "Marker-to-Tooltip Matrix (being set)");
+    this._checkMatrixIdentity(matrix, 'Marker-to-Tooltip Matrix (being set)');
 
     console.log('🔄 Marker-to-Tooltip calibration matrix updated');
   }
@@ -1335,7 +1495,10 @@ class TrackingService extends PubSubService {
 
       const matrix: number[][] = [];
       for (const line of lines) {
-        const values = line.trim().split(/\s+/).map(v => parseFloat(v));
+        const values = line
+          .trim()
+          .split(/\s+/)
+          .map(v => parseFloat(v));
         if (values.length !== 4) {
           throw new Error(`Expected 4 values per line, got ${values.length}`);
         }
@@ -1346,7 +1509,7 @@ class TrackingService extends PubSubService {
       console.log('✅ Calibration matrix loaded from .cal file:', matrix);
 
       // DIAGNOSTIC: Check loaded matrix (this will be done by setMarkerToTooltipMatrix, but let's be explicit)
-      this._checkMatrixIdentity(matrix, "Calibration Matrix (loaded from .cal file)");
+      this._checkMatrixIdentity(matrix, 'Calibration Matrix (loaded from .cal file)');
     } catch (error) {
       console.error('❌ Failed to load calibration from .cal file:', error);
       throw error;
@@ -1403,8 +1566,8 @@ class TrackingService extends PubSubService {
   } {
     return {
       ...this.lastDebugInfo,
-      currentPrToDicom: this.prToDicomMatrix,
-      currentMarkerToTooltip: this.markerToTooltipMatrix
+      currentPrToDicom: this.getPrToDicomMatrix(),
+      currentMarkerToTooltip: this.markerToTooltipMatrix,
     };
   }
 }

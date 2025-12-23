@@ -32,6 +32,7 @@ export default function RegistrationPanel() {
     servicesManager.services;
 
   const [caseId, setCaseId] = useState<string>('');
+  const [seriesInstanceUID, setSeriesInstanceUID] = useState<string | null>(null);
   const [apiUrl, setApiUrl] = useState<string>('http://localhost:3001');
 
   const [state, setState] = useState<RegistrationState>({
@@ -47,15 +48,19 @@ export default function RegistrationPanel() {
     method: 'manual_point_based',
   });
 
-  // Get current Study ID on mount
+  // Get current Study ID and Series UID on mount
   useEffect(() => {
     const activeDisplaySets = displaySetService?.getActiveDisplaySets() || [];
     if (activeDisplaySets.length > 0) {
       const studyInstanceUID = activeDisplaySets[0]?.StudyInstanceUID;
+      const seriesUID = activeDisplaySets[0]?.SeriesInstanceUID;
       if (studyInstanceUID) {
         const extractedCaseId = `CASE_${studyInstanceUID.slice(-8)}`;
         setCaseId(extractedCaseId);
         setState(prev => ({ ...prev, caseId: extractedCaseId }));
+      }
+      if (seriesUID) {
+        setSeriesInstanceUID(seriesUID);
       }
     }
   }, [displaySetService]);
@@ -81,7 +86,7 @@ export default function RegistrationPanel() {
       registrationService.subscribe('event::registration_session_started', data => {
         setState(prev => ({
           ...prev,
-          sessionId: data.registration_id,
+          sessionId: data.registration_id,  // 使用 registration_id
           status: 'collecting',
           fiducials: data.fiducials || [],
           currentIndex: 0,
@@ -244,12 +249,15 @@ export default function RegistrationPanel() {
   };
 
   const handleSaveRegistration = async () => {
-    if (!state.sessionId) return;
+    if (!state.sessionId || !seriesInstanceUID) {
+      alert('❌ Missing session ID or series UID');
+      return;
+    }
 
     try {
-      await registrationService.saveRegistration(caseId, state.sessionId, true);
+      await registrationService.saveRegistration(seriesInstanceUID, state.sessionId, true);
       alert('✅ Registration saved successfully');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save registration:', error);
       alert(`Failed to save registration: ${error.message}`);
     }
@@ -528,8 +536,3 @@ export default function RegistrationPanel() {
     </div>
   );
 }
-
-
-
-
-

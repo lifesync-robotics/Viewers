@@ -9,6 +9,9 @@ export interface Fiducial {
   dicom_position_mm: [number, number, number];
   dicom_voxel_coords?: [number, number, number];
   tracker_position_mm?: [number, number, number];
+  tracker_matrix?: number[][]; // 4x4 transformation matrix in PR space (from NDI tracker)
+  patient_reference_position?: [number, number, number]; // Patient Reference position in tracker space
+  projected_dicom_position_mm?: [number, number, number]; // 投影后的DICOM位置（用于验证）
   quality_score?: number;
   stability_mm?: number;
   status: 'pending' | 'captured' | 'validated';
@@ -32,11 +35,18 @@ export interface FiducialTemplate {
 }
 
 export interface RegistrationSession {
-  session_id: string;
+  registration_id: string;
   series_instance_uid: string;
   case_id?: string;
   method: 'MANUAL_POINT_BASED' | 'PHANTOM_AUTO' | 'ICP_SURFACE';
-  status: 'idle' | 'loading_template' | 'collecting_points' | 'computing' | 'completed' | 'failed' | 'validating';
+  status:
+    | 'idle'
+    | 'loading_template'
+    | 'collecting_points'
+    | 'computing'
+    | 'completed'
+    | 'failed'
+    | 'validating';
   points_collected: number;
   points_with_tracker: number;
   created_at: number;
@@ -46,8 +56,9 @@ export interface RegistrationSession {
 }
 
 export interface RegistrationResult {
-  session_id: string;
-  transformation_matrix: number[]; // 4x4 matrix (16 elements)
+  registration_id: string;
+  transformation_matrix: number[]; // 4x4 matrix (16 elements) - dMpr
+  prMd_matrix?: number[]; // PR → DICOM 矩阵 (16 elements)
   quality_metrics: {
     fre_mm: number;
     fre_std_mm: number;
