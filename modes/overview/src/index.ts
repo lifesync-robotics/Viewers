@@ -132,7 +132,7 @@ export const modeInstance = {
   displayName: 'Start',
   routes: [overviewRoute],
   extensions: extensionDependencies,
-  hangingProtocol: 'default', // Use default hanging protocol for now
+  hangingProtocol: ['@ohif/frameView'], // Frame view for active series
   sopClassHandlers: [ohif.sopClassHandler],
   onModeEnter: overviewOnModeEnter,
   onModeExit: overviewOnModeExit,

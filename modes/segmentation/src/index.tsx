@@ -115,6 +115,7 @@ function modeFactory({ modeConfiguration }) {
         'Zoom',
         'TrackballRotate',
         'Capture',
+        'ModelUpload',
         'Layout',
         'Crosshairs',
         'MoreTools',
@@ -344,7 +345,9 @@ function modeFactory({ modeConfiguration }) {
     /** HangingProtocol used by the mode */
     // Commented out to just use the most applicable registered hanging protocol
     // The example is used for a grid layout to specify that as a preferred layout
-    hangingProtocol: ['@ohif/mnGrid'],
+    hangingProtocol: ['fourUpMesh'], // 3D Four Mesh: 2x2 grid with 3D volume + MPR views
+    // hangingProtocol: ['@ohif/frameView'], // Frame view for active series (kept for future reference)
+    // hangingProtocol: ['@ohif/mnGrid'], // Customized grid (kept for future reference)
     /** SopClassHandlers used by the mode */
     sopClassHandlers: [ohif.sopClassHandler, segmentation.sopClassHandler, dicomRT.sopClassHandler],
   };

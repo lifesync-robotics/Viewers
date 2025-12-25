@@ -687,22 +687,22 @@ const toolbarButtons: Button[] = [
       evaluate: 'evaluate.action',
     },
   },
-  {
-    id: 'RealTimeNavigation',
-    uiType: 'ohif.toolButton',
-    props: {
-      icon: 'Navigation',
-      label: i18n.t('Buttons:Real-time Navigation (Linear)'),
-      tooltip: i18n.t('Buttons:Enable linear axial navigation (up/down through slices)'),
-      commands: [
-        {
-          commandName: 'toggleNavigation',
-          commandOptions: { mode: 'linear' },
-        }
-      ],
-      evaluate: 'evaluate.action',
-    },
-  },
+  // {
+  //   id: 'RealTimeNavigation',
+  //   uiType: 'ohif.toolButton',
+  //   props: {
+  //     icon: 'Navigation',
+  //     label: i18n.t('Buttons:Real-time Navigation (Linear)'),
+  //     tooltip: i18n.t('Buttons:Enable linear axial navigation (up/down through slices)'),
+  //     commands: [
+  //       {
+  //         commandName: 'toggleNavigation',
+  //         commandOptions: { mode: 'linear' },
+  //       }
+  //     ],
+  //     evaluate: 'evaluate.action',
+  //   },
+  // },
   {
     id: 'SetNavigationCenter',
     uiType: 'ohif.toolButton',
