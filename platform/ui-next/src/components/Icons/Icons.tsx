@@ -160,6 +160,7 @@ import Close from './Sources/Close';
 import Pause from './Sources/Pause';
 import Play from './Sources/Play';
 import ViewportWindowLevel from './Sources/ViewportWindowLevel';
+import ScrewEditor from './Sources/ScrewEditor';
 import Search from './Sources/Search';
 import Clear from './Sources/Clear';
 import {
@@ -587,6 +588,7 @@ export const Icons = {
     );
   },
   ViewportWindowLevel,
+  ScrewEditor,
   Search,
   Clear,
   LayoutCommon2x3,

@@ -14,6 +14,7 @@ import { getRenderingEngine } from '@cornerstonejs/core';
 import { crosshairsHandler } from '../../utils/crosshairsHandler';
 import { getScrewColor } from '../../utils/screwColorScheme';
 import { planningBackendService, anatomyService } from '../../services';
+import { useScrewOperations } from '../../hooks';
 import PlanSelectionDialog from './PlanSelectionDialog';
 import ScrewSelectionDialog from './ScrewSelectionDialog';
 import {
@@ -99,6 +100,13 @@ export default function ScrewManagementPanel({ servicesManager }) {
   const [screws, setScrews] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [caseId, setCaseId] = useState(urlCaseId);
+
+  // Use shared screw operations hook for consistent functionality
+  const screwOps = useScrewOperations({
+    servicesManager,
+    sessionId,
+    onScrewsUpdate: setScrews
+  });
   const [studyInstanceUID, setStudyInstanceUID] = useState(null);
   const [seriesInstanceUID, setSeriesInstanceUID] = useState(null);
   const [surgeon, setSurgeon] = useState('OHIF User');
@@ -328,6 +336,45 @@ export default function ScrewManagementPanel({ servicesManager }) {
       loadScrews(sessionId);
     }
   }, [sessionId]);
+
+  // Subscribe to model state changes for auto-refresh (Bug 4 fix)
+  useEffect(() => {
+    if (!modelStateService) return;
+
+    console.log('[ScrewManagement] Setting up model change subscriptions');
+
+    // Subscribe to model changes
+    const addSubscription = modelStateService.subscribe(
+      modelStateService.EVENTS.MODEL_ADDED,
+      () => {
+        console.log('[ScrewManagement] Model added - refreshing screws');
+        if (sessionId) loadScrews(sessionId);
+      }
+    );
+
+    const removeSubscription = modelStateService.subscribe(
+      modelStateService.EVENTS.MODEL_REMOVED,
+      () => {
+        console.log('[ScrewManagement] Model removed - refreshing screws');
+        if (sessionId) loadScrews(sessionId);
+      }
+    );
+
+    const updateSubscription = modelStateService.subscribe(
+      modelStateService.EVENTS.MODEL_UPDATED,
+      () => {
+        console.log('[ScrewManagement] Model updated - refreshing screws');
+        if (sessionId) loadScrews(sessionId);
+      }
+    );
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      if (addSubscription?.unsubscribe) addSubscription.unsubscribe();
+      if (removeSubscription?.unsubscribe) removeSubscription.unsubscribe();
+      if (updateSubscription?.unsubscribe) updateSubscription.unsubscribe();
+    };
+  }, [sessionId, modelStateService]);
 
   // Monitor for valid series ID detection after initial mount
   // This helps when DICOM loads after component mount
@@ -650,302 +697,26 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
   /**
    * Load and display a 3D screw model using the planning API
+   * Now uses shared hook for consistency
    */
   const loadScrewModel = async (radius, length, transform, screwLabel = null, screwId = null) => {
-    try {
-      console.log('═══════════════════════════════════════════════════════');
-      console.log('📦 [loadScrewModel] CALLED');
-      console.log(`   radius: ${radius}, length: ${length}`);
-      console.log(`   screwLabel: ${screwLabel}`);
-      console.log(`   screwId: ${screwId} (type: ${typeof screwId})`);
-      console.log(`   screwId is null/undefined: ${screwId === null || screwId === undefined}`);
-      console.log('═══════════════════════════════════════════════════════');
-      console.log(`🔍 transform:`, transform);
-      console.log(`🔍 transform.length:`, transform?.length);
-
-      // Determine color based on screw label
-      const screwColor = screwLabel ? getScrewColor(screwLabel) : [1.0, 0.84, 0.0];
-      console.log(`🎨 Using color [${screwColor}] for screw "${screwLabel || 'default'}"`);
-
-      // Query model from planning API using backend service
-      const queryResponse = await planningBackendService.queryModel(radius, length);
-
-      if (!queryResponse.success || !queryResponse.model) {
-        throw new Error('Model query failed');
-      }
-
-      const modelInfo = queryResponse.model;
-      console.log(`📦 Model found: ${modelInfo.model_id} (${modelInfo.source})`);
-
-      // Ensure plane cutters are initialized and enabled
-      if (planeCutterService) {
-        if (!planeCutterService.getIsEnabled()) {
-          console.log('🔪 [ScrewManagement] Auto-enabling plane cutters for 2D views...');
-          try {
-            await planeCutterService.initialize();
-            planeCutterService.enable();
-            console.log('✅ [ScrewManagement] Plane cutters enabled - screws will appear in 2D MPR views');
-          } catch (error) {
-            console.warn('⚠️ [ScrewManagement] Could not enable plane cutters:', error);
-          }
-        }
-      }
-
-      // Get model OBJ file URL using backend service
-      const modelUrl = planningBackendService.getModelUrl(modelInfo.model_id);
-
-      // Load model using modelStateService
-      // Use screwId as modelId (unique identifier) and screwLabel as modelName (human-readable)
-      console.log('═══════════════════════════════════════════════════════');
-      console.log('📦 [loadScrewModel] Loading model with:');
-      console.log(`   modelId: ${screwId || 'null'}`);
-      console.log(`   modelName: "${screwLabel}"`);
-      console.log(`   dimensions: R=${radius}mm L=${length}mm`);
-      console.log('═══════════════════════════════════════════════════════');
-
-      const loadedModel = await modelStateService.loadModelFromServer(modelUrl, {
-        viewportId: getCurrentViewportId(),
-        color: screwColor,  // Color based on screw name/label
-        opacity: 0.9,
-        modelId: screwId,      // Unique ID from database (if available)
-        modelName: screwLabel, // Human-readable label (e.g., "L3-R1", "L2L")
-        // Store screw dimensions for transform compensation during save
-        screwRadius: radius,
-        screwLength: length
-      });
-
-      console.log('✅ [loadScrewModel] Model loaded, checking metadata:');
-      if (loadedModel) {
-        console.log(`   Loaded model ID: ${loadedModel.metadata.id}`);
-        console.log(`   Loaded model NAME: "${loadedModel.metadata.name}"`);
-        console.log(`   Expected name: "${screwLabel}"`);
-        console.log(`   Names match: ${loadedModel.metadata.name === screwLabel}`);
-      }
-
-      // Apply transform if provided
-      if (transform && transform.length === 16) {
-        console.log('🔧 Applying transform to loaded model...');
-        console.log(`   Transform type: ${transform.constructor.name}`);
-        console.log(`   Translation BEFORE setModelTransform: (${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)})`);
-
-        // CRITICAL: Store original transform values to verify they're not modified
-        const originalTransformValues = {
-          x: transform[3],
-          y: transform[7],
-          z: transform[11]
-        };
-
-        // Use the returned model directly instead of searching for the latest one
-        if (loadedModel) {
-          const actualModelId = loadedModel.metadata.id;
-          console.log(`   Loaded model ID: ${actualModelId}`);
-
-          // Pass length parameter for logging (offset not applied in simplified logic)
-          await modelStateService.setModelTransform(
-            actualModelId,
-            transform,
-            length  // Pass length for logging/debugging purposes
-          );
-
-          // Verify transform was not modified by setModelTransform
-          console.log(`   Translation AFTER setModelTransform: (${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)})`);
-          if (Math.abs(transform[3] - originalTransformValues.x) > 0.001 ||
-              Math.abs(transform[7] - originalTransformValues.y) > 0.001 ||
-              Math.abs(transform[11] - originalTransformValues.z) > 0.001) {
-            console.error(`   ❌ ERROR: Transform was modified by setModelTransform!`);
-            console.error(`      Original: [${originalTransformValues.x}, ${originalTransformValues.y}, ${originalTransformValues.z}]`);
-            console.error(`      Current: [${transform[3]}, ${transform[7]}, ${transform[11]}]`);
-          } else {
-            console.log(`   ✅ Transform preserved correctly after setModelTransform`);
-          }
-
-          console.log(`✅ Applied transform to model: ${actualModelId} (length: ${length}mm, no offset in simplified logic)`);
-        } else {
-          console.error('❌ Model loading returned null!');
-        }
-      } else {
-        console.warn(`⚠️ No valid transform to apply (length: ${transform?.length || 0})`);
-      }
-
-    } catch (error) {
-      console.error('❌ Failed to load screw model:', error);
-
-      // Fallback: Try to load using old method
-      try {
-        console.log('⚠️ Falling back to old model loading method...');
-        await viewportStateService.queryAndLoadModel(radius, length, transform);
-      } catch (fallbackError) {
-        console.error('❌ Fallback model loading also failed:', fallbackError);
-        throw error; // Re-throw original error
-      }
-    }
+    return screwOps.loadScrewModel(radius, length, transform, screwLabel, screwId);
   };
 
   /**
    * Load and display cap model using the planning API
-   * @param transform - Transform matrix at MODEL ORIGIN position (simplified logic)
-   * @param length - Screw length in mm
-   * @param screwLabel - Label for the screw (used for naming the cap)
-   * @param screwId - Database ID for the screw
+   * Now uses shared hook for consistency
    */
   const loadCapModel = async (transform, length, screwLabel = null, screwId = null) => {
-    try {
-      // CRITICAL: Store original transform values IMMEDIATELY to detect any modifications
-      const originalTransformValues = {
-        x: transform[3],
-        y: transform[7],
-        z: transform[11],
-        type: transform.constructor.name,
-        isArray: Array.isArray(transform),
-        isFloat32Array: transform instanceof Float32Array
-      };
-
-      console.log('═══════════════════════════════════════════════════════');
-      console.log(`🎩 [loadCapModel] Loading cap for: "${screwLabel}" (length: ${length}mm)`);
-      console.log(`   Transform input (MODEL ORIGIN position):`);
-      console.log(`   Transform type: ${transform.constructor.name}`);
-      console.log(`   Transform length: ${transform.length}`);
-      console.log(`   Translation: [${transform[3]}, ${transform[7]}, ${transform[11]}]`);
-      console.log(`   Translation (formatted): [${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)}]`);
-      console.log(`   Coronal direction (Y-axis): [${transform[1]}, ${transform[5]}, ${transform[9]}]`);
-      console.log(`   🔒 Original transform stored: [${originalTransformValues.x}, ${originalTransformValues.y}, ${originalTransformValues.z}]`);
-      console.log('═══════════════════════════════════════════════════════');
-
-      // Use the same color as the screw body
-      const capColor = screwLabel ? getScrewColor(screwLabel) : [1.0, 0.84, 0.0];
-      console.log(`🎨 Using color [${capColor}] for cap "${screwLabel || 'default'}"`);
-
-      // Query cap model (returns fixed information)
-      const queryResponse = await planningBackendService.queryCapModel();
-
-      if (!queryResponse.success || !queryResponse.model) {
-        throw new Error('Cap model query failed');
-      }
-
-      const modelInfo = queryResponse.model;
-      console.log(`📦 Cap model: ${modelInfo.filename}`);
-
-      // Get cap model OBJ file URL
-      const modelUrl = planningBackendService.getCapModelUrl();
-
-      // Load model
-      await modelStateService.loadModelFromServer(modelUrl, {
-        viewportId: getCurrentViewportId(),
-        color: capColor,
-        opacity: 0.9,
-        modelId: screwId ? `${screwId}-cap` : null,
-        modelName: screwLabel ? `${screwLabel}-Cap` : 'Screw Cap'
-      });
-
-      // Apply transform matrix (cap needs to be placed at the top of the screw)
-      if (transform && transform.length === 16 && length && length > 0) {
-        console.log('🔧 [loadCapModel] Calculating cap position...');
-        console.log(`   Input transform (MODEL ORIGIN): [${transform[3].toFixed(2)}, ${transform[7].toFixed(2)}, ${transform[11].toFixed(2)}]`);
-
-        // Extract coronal direction (Y-axis, column 1 in row-major)
-        const coronalX = transform[1];  // Row 0, Col 1
-        const coronalY = transform[5];  // Row 1, Col 1
-        const coronalZ = transform[9];  // Row 2, Col 1
-
-        // Cap dimensions
-        const capHeight = 15.0;         // Cap height in mm
-        const capCenterOffset = 2.5;    // Additional offset to position cap properly
-
-        // ⚠️ SIMPLIFIED LOGIC: transform parameter is MODEL ORIGIN position
-        //
-        // Screw geometry in local space (origin at center):
-        //   - Tip (-Y): modelOrigin - length/2
-        //   - Center: modelOrigin
-        //   - Cap (+Y): modelOrigin + length/2
-        //
-        // Cap model should be placed at:
-        //   modelOrigin + length/2 (to reach screw cap) + capHeight/2 (cap model center) + offset
-
-        const capOffset = (length / 2) + (capHeight / 2) + capCenterOffset;
-
-        console.log(`📏 Screw length: ${length}mm`);
-        console.log(`📏 Cap height: ${capHeight}mm`);
-        console.log(`📏 Cap offset from MODEL ORIGIN: +${capOffset}mm along coronal direction`);
-        console.log(`📐 Coronal direction: [${coronalX.toFixed(3)}, ${coronalY.toFixed(3)}, ${coronalZ.toFixed(3)}]`);
-
-        // Create cap transform by offsetting from MODEL ORIGIN
-        // CRITICAL: Create a deep copy to prevent modifying the original transform
-        let capTransform: number[];
-        if (transform instanceof Float32Array) {
-          capTransform = Array.from(transform);
-        } else {
-          capTransform = [...transform];
-        }
-
-        // Verify the copy is independent
-        console.log(`   🔍 DEBUG: Before modification:`);
-        console.log(`      Original transform[7] = ${transform[7]}`);
-        console.log(`      capTransform[7] = ${capTransform[7]}`);
-
-        // Apply offset to cap transform
-        capTransform[3] = transform[3] + (coronalX * capOffset);
-        capTransform[7] = transform[7] + (coronalY * capOffset);
-        capTransform[11] = transform[11] + (coronalZ * capOffset);
-
-        // Verify the original transform was not modified
-        console.log(`   🔍 DEBUG: After modification:`);
-        console.log(`      Original transform[7] = ${transform[7]} (should be unchanged)`);
-        console.log(`      capTransform[7] = ${capTransform[7]} (should be ${transform[7]} + ${coronalY * capOffset})`);
-
-        if (Math.abs(transform[7] - (capTransform[7] - coronalY * capOffset)) > 0.001) {
-          console.error(`   ❌ ERROR: Original transform was modified!`);
-          console.error(`      Expected original: ${capTransform[7] - coronalY * capOffset}`);
-          console.error(`      Actual original: ${transform[7]}`);
-        } else {
-          console.log(`   ✅ Original transform preserved correctly`);
-        }
-
-        console.log(`   Cap transform (offset from model origin): [${capTransform[3].toFixed(2)}, ${capTransform[7].toFixed(2)}, ${capTransform[11].toFixed(2)}]`);
-        console.log(`   Offset vector: [${(coronalX * capOffset).toFixed(2)}, ${(coronalY * capOffset).toFixed(2)}, ${(coronalZ * capOffset).toFixed(2)}]`);
-
-        const loadedModels = modelStateService.getAllModels();
-        const latestModel = loadedModels[loadedModels.length - 1];
-
-        if (latestModel) {
-          // Apply offset transform (don't pass length parameter, as OBJ model won't auto-offset)
-          await modelStateService.setModelTransform(
-            latestModel.metadata.id,
-            capTransform
-            // Note: OBJ model doesn't apply length offset in setModelTransform, so manual calculation is needed
-          );
-          console.log(`✅ Applied transform to cap model: ${latestModel.metadata.id} with offset: ${capOffset}mm`);
-        } else {
-          console.error('❌ No cap model found to apply transform to!');
-        }
-      } else {
-        console.warn(`⚠️ No valid transform or length to apply to cap (transform length: ${transform?.length || 0}, length: ${length})`);
-      }
-
-    } catch (error) {
-      console.error('❌ Failed to load cap model:', error);
-      console.warn('⚠️ Continuing without cap model visualization');
-    }
+    return screwOps.loadCapModel(transform, length, screwLabel, screwId);
   };
 
   /**
    * Get the current 3D viewport ID
+   * Now uses shared hook for consistency
    */
   const getCurrentViewportId = () => {
-    try {
-      const renderingEngine = getRenderingEngine('OHIFCornerstoneRenderingEngine');
-      if (!renderingEngine) return 'volume3d-viewport';
-
-      const viewports = renderingEngine.getViewports();
-      for (const vp of viewports) {
-        if (vp.type === 'volume3d' || (vp.type as string) === 'VOLUME_3D') {
-          return vp.id;
-        }
-      }
-    } catch (error) {
-      console.error('Error getting viewport ID:', error);
-    }
-
-    return 'volume3d-viewport'; // Default fallback
+    return screwOps.getCurrentViewportId();
   };
 
   /**
@@ -2410,84 +2181,18 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
   /**
    * Delete screw models (body and cap) by screw ID
-   * Note: Cap is NOT deleted when updating dimensions - it's universal and position should be preserved
+   * Now uses shared hook for consistency
    */
   const deleteScrewModels = async (screwId: string, screwLabel: string, deleteCap: boolean = true) => {
-    const allModels = modelStateService.getAllModels();
-    let modelsRemoved = 0;
-
-    // Delete body model
-    const bodyModel = allModels.find(
-      m => m.metadata.id === screwId || m.metadata.name === screwLabel
-    );
-    if (bodyModel) {
-      console.log(`🗑️ Removing body model: ${bodyModel.metadata.id} (${bodyModel.metadata.name})`);
-      modelStateService.removeModel(bodyModel.metadata.id);
-      modelsRemoved++;
-    }
-
-    // Delete cap model only if explicitly requested (not during dimension updates)
-    if (deleteCap) {
-      const capModelId = `${screwId}-cap`;
-      const capModelName = `${screwLabel}-Cap`;
-      const capModel = allModels.find(
-        m => m.metadata.id === capModelId || m.metadata.name === capModelName
-      );
-      if (capModel) {
-        console.log(`🗑️ Removing cap model: ${capModel.metadata.id} (${capModel.metadata.name})`);
-        modelStateService.removeModel(capModel.metadata.id);
-        modelsRemoved++;
-      }
-    } else {
-      console.log(`ℹ️ Preserving cap model for screw ${screwId} (cap is universal)`);
-    }
-
-    console.log(`✅ Removed ${modelsRemoved} model(s) for screw ${screwId}`);
-    return modelsRemoved;
+    return screwOps.deleteScrewModels(screwId, screwLabel, deleteCap);
   };
 
   /**
    * Calculate screw transform from cap position
-   * This is used when updating screw dimensions - the cap position is fixed,
-   * and we calculate the new screw position based on the new length
+   * Now uses shared hook for consistency
    */
-  const calculateScrewTransformFromCap = (
-    capTransform: number[],
-    newLength: number
-  ): number[] => {
-    // Extract coronal direction (Y-axis, column 1 in row-major)
-    const coronalX = capTransform[1];
-    const coronalY = capTransform[5];
-    const coronalZ = capTransform[9];
-
-    // Cap dimensions (same as in loadCapModel)
-    const capHeight = 15.0;
-    const capCenterOffset = 2.5;
-
-    // Calculate the offset that was used to position the cap
-    // capOffset = (oldLength / 2) + (capHeight / 2) + capCenterOffset
-    // We need to reverse this: screw position = cap position - capOffset
-    // But since we're using new length, we calculate:
-    // newCapOffset = (newLength / 2) + (capHeight / 2) + capCenterOffset
-    const newCapOffset = (newLength / 2) + (capHeight / 2) + capCenterOffset;
-
-    // Create screw transform by offsetting backwards from cap position
-    const screwTransform = capTransform instanceof Float32Array 
-      ? Array.from(capTransform) 
-      : [...capTransform];
-
-    // Reverse the offset: move backwards along coronal direction
-    screwTransform[3] = capTransform[3] - (coronalX * newCapOffset);
-    screwTransform[7] = capTransform[7] - (coronalY * newCapOffset);
-    screwTransform[11] = capTransform[11] - (coronalZ * newCapOffset);
-
-    console.log(`📐 Calculated screw transform from cap:`);
-    console.log(`   Cap position: [${capTransform[3].toFixed(2)}, ${capTransform[7].toFixed(2)}, ${capTransform[11].toFixed(2)}]`);
-    console.log(`   New length: ${newLength}mm`);
-    console.log(`   Cap offset: ${newCapOffset}mm`);
-    console.log(`   Screw position: [${screwTransform[3].toFixed(2)}, ${screwTransform[7].toFixed(2)}, ${screwTransform[11].toFixed(2)}]`);
-
-    return screwTransform;
+  const calculateScrewTransformFromCap = (capTransform: number[], newLength: number): number[] => {
+    return screwOps.calculateScrewTransformFromCap(capTransform, newLength);
   };
 
   /**
@@ -2507,6 +2212,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
   /**
    * Update screw dimensions (radius and/or length)
+   * Now uses shared hook for consistency
    */
   const updateScrewDimensions = async (
     screwData: any,
@@ -2523,177 +2229,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
     setUpdatingScrewId(screwId);
 
     try {
-      const displayInfo = getScrewDisplayInfo(screwData);
-      const updatedRadius = newRadius !== undefined ? newRadius : displayInfo.radius;
-      const updatedLength = newLength !== undefined ? newLength : displayInfo.length;
-
-      console.log('═══════════════════════════════════════════════════════');
-      console.log(`🔄 [UpdateScrew] Updating screw ${screwId}:`);
-      console.log(`   Label: ${displayInfo.label}`);
-      console.log(`   Old: R=${displayInfo.radius}mm, L=${displayInfo.length}mm`);
-      console.log(`   New: R=${updatedRadius}mm, L=${updatedLength}mm`);
-      console.log('═══════════════════════════════════════════════════════');
-
-      // Step 1: Get cap model and its transform (cap position is the reference)
-      const allModels = modelStateService.getAllModels();
-      const capModelId = `${screwId}-cap`;
-      const capModelName = `${displayInfo.label}-Cap`;
-      const capModel = allModels.find(
-        m => m.metadata.id === capModelId || m.metadata.name === capModelName
-      );
-
-      let newScrewTransform: number[] | null = null;
-
-      if (capModel) {
-        // ✅ Cap exists - use cap position as reference
-        console.log(`✅ Found cap model - using cap position as reference`);
-        const capTransform = modelStateService.getScrewTransform(capModel.metadata.id);
-        
-        if (capTransform && capTransform.length === 16) {
-          // Calculate new screw transform from cap position
-          newScrewTransform = calculateScrewTransformFromCap(capTransform, updatedLength);
-          console.log(`✅ Calculated new screw transform from cap position`);
-        } else {
-          console.warn('⚠️ Could not get cap transform, falling back to screw transform');
-        }
-      }
-
-      // Fallback: Get transform from existing screw model if cap not found
-      if (!newScrewTransform) {
-        const existingModel = allModels.find(
-          m => m.metadata.id === screwId || m.metadata.name === displayInfo.label
-        );
-
-        if (!existingModel) {
-          throw new Error('Cannot find 3D model or cap model for this screw');
-        }
-
-        const currentTransform = modelStateService.getScrewTransform(existingModel.metadata.id);
-        if (!currentTransform || currentTransform.length !== 16) {
-          throw new Error('Cannot get transform matrix for screw');
-        }
-
-        newScrewTransform = currentTransform instanceof Float32Array 
-          ? Array.from(currentTransform) 
-          : [...currentTransform];
-        console.log(`⚠️ Using existing screw transform (cap not found or invalid)`);
-      }
-
-      // Step 2: Delete only the body model (preserve cap)
-      await deleteScrewModels(screwId, displayInfo.label, false); // false = don't delete cap
-
-      // Step 3: Update backend data
+      await screwOps.updateScrewDimensions(screwData, newRadius, newLength);
+      
+      // Reload screws to refresh UI immediately (Bug 3 fix)
       if (sessionId) {
-        console.log('📤 Updating screw in backend...');
-        const updateResponse = await planningBackendService.updateScrew(
-          screwId,
-          sessionId,
-          {
-            radius: updatedRadius,
-            length: updatedLength,
-            // Update transform matrix if length changed
-            transformMatrix: newScrewTransform
-          }
-        );
-
-        if (!updateResponse.success) {
-          throw new Error(updateResponse.error || 'Backend update failed');
-        }
-        console.log('✅ Screw updated in backend');
-        
-        // ✅ IMPORTANT: Reload the updated screw from backend to ensure state sync
-        // This prevents the issue where panel reopen shows old data
-        try {
-          const getScrewResponse = await planningBackendService.getScrew(screwId, sessionId);
-          if (getScrewResponse.success && getScrewResponse.screw) {
-            // Update only this specific screw in state with backend data
-            setScrews(prevScrews =>
-              prevScrews.map(screw => {
-                const id = screw.screw_id || screw.id;
-                if (id === screwId) {
-                  // Merge backend response with our updates to ensure all fields are correct
-                  return {
-                    ...screw,
-                    ...getScrewResponse.screw,
-                    radius: updatedRadius, // Explicitly set to ensure correctness
-                    length: updatedLength,
-                    transform_matrix: newScrewTransform
-                  };
-                }
-                return screw;
-              })
-            );
-            console.log('✅ Frontend state synced with backend data');
-          } else {
-            console.warn('⚠️ Could not reload screw from backend, using frontend state');
-            // Fallback to frontend state update
-            setScrews(prevScrews =>
-              prevScrews.map(screw => {
-                const id = screw.screw_id || screw.id;
-                if (id === screwId) {
-                  return {
-                    ...screw,
-                    radius: updatedRadius,
-                    length: updatedLength,
-                    transform_matrix: newScrewTransform
-                  };
-                }
-                return screw;
-              })
-            );
-          }
-        } catch (reloadError) {
-          console.warn('⚠️ Error reloading screw from backend:', reloadError);
-          // Fallback to frontend state update
-          setScrews(prevScrews =>
-            prevScrews.map(screw => {
-              const id = screw.screw_id || screw.id;
-              if (id === screwId) {
-                return {
-                  ...screw,
-                  radius: updatedRadius,
-                  length: updatedLength,
-                  transform_matrix: newScrewTransform
-                };
-              }
-              return screw;
-            })
-          );
-        }
-      } else {
-        // No sessionId - only update frontend state
-        setScrews(prevScrews =>
-          prevScrews.map(screw => {
-            const id = screw.screw_id || screw.id;
-            if (id === screwId) {
-              return {
-                ...screw,
-                radius: updatedRadius,
-                length: updatedLength,
-                transform_matrix: newScrewTransform
-              };
-            }
-            return screw;
-          })
-        );
+        await loadScrews(sessionId);
       }
-
-      // Step 5: Reload 3D body model with new dimensions and position
-      console.log('📦 Reloading 3D body model with new dimensions...');
-      await loadScrewModel(
-        updatedRadius,
-        updatedLength,
-        newScrewTransform,
-        displayInfo.label,
-        screwId
-      );
-
-      // Step 6: Cap is already in place, no need to reload it
-      console.log(`✅ Cap model preserved at original position`);
-
+      
       console.log(`✅ Successfully updated screw ${screwId}`);
-      console.log('═══════════════════════════════════════════════════════');
-
     } catch (error) {
       console.error('❌ Failed to update screw dimensions:', error);
       alert(`Failed to update screw dimensions: ${error.message}\n\nPlease check the console for details.`);
@@ -3402,6 +2945,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log(`   Target Point: [${response.leftScrew.targetPoint.x.toFixed(2)}, ${response.leftScrew.targetPoint.y.toFixed(2)}, ${response.leftScrew.targetPoint.z.toFixed(2)}] mm`);
         console.log(`   Trajectory:   [${response.leftScrew.trajectoryVector.x.toFixed(3)}, ${response.leftScrew.trajectoryVector.y.toFixed(3)}, ${response.leftScrew.trajectoryVector.z.toFixed(3)}] (normalized)`);
         console.log(`   Length:       ${response.leftScrew.lengthMm.toFixed(1)} mm`);
+        if (response.leftScrew.diameterMm != null && response.leftScrew.radiusMm != null) {
+          console.log(`   Diameter:     ${response.leftScrew.diameterMm.toFixed(2)} mm (from PopulationGuru)`);
+          console.log(`   Radius:       ${response.leftScrew.radiusMm.toFixed(2)} mm (from PopulationGuru)`);
+        }
         console.log(`   Sagittal:     ${response.leftScrew.sagittalAngleDeg.toFixed(1)}°`);
         console.log(`   Transverse:   ${response.leftScrew.transverseAngleDeg.toFixed(1)}°`);
         console.log('');
@@ -3416,6 +2963,10 @@ export default function ScrewManagementPanel({ servicesManager }) {
         console.log(`   Target Point: [${response.rightScrew.targetPoint.x.toFixed(2)}, ${response.rightScrew.targetPoint.y.toFixed(2)}, ${response.rightScrew.targetPoint.z.toFixed(2)}] mm`);
         console.log(`   Trajectory:   [${response.rightScrew.trajectoryVector.x.toFixed(3)}, ${response.rightScrew.trajectoryVector.y.toFixed(3)}, ${response.rightScrew.trajectoryVector.z.toFixed(3)}] (normalized)`);
         console.log(`   Length:       ${response.rightScrew.lengthMm.toFixed(1)} mm`);
+        if (response.rightScrew.diameterMm != null && response.rightScrew.radiusMm != null) {
+          console.log(`   Diameter:     ${response.rightScrew.diameterMm.toFixed(2)} mm (from PopulationGuru)`);
+          console.log(`   Radius:       ${response.rightScrew.radiusMm.toFixed(2)} mm (from PopulationGuru)`);
+        }
         console.log(`   Sagittal:     ${response.rightScrew.sagittalAngleDeg.toFixed(1)}°`);
         console.log(`   Transverse:   ${response.rightScrew.transverseAngleDeg.toFixed(1)}°`);
         console.log('');
@@ -3451,7 +3002,7 @@ export default function ScrewManagementPanel({ servicesManager }) {
       console.log(`🤖 [AutoScrew] AUTOMATICALLY PLACING SCREWS`);
       console.log(`${'='.repeat(80)}`);
       
-      const DEFAULT_RADIUS = 3.5; // mm - default screw radius
+      const DEFAULT_RADIUS = 3.5; // mm - fallback radius if not provided by PopulationGuru
       let placedScrews = [];
       
       // Place left screw if available
@@ -3464,14 +3015,21 @@ export default function ScrewManagementPanel({ servicesManager }) {
             response.leftScrew.entryPoint.z
           ];
           
+          // Use radius from PopulationGuru if available, otherwise use default
+          const leftRadius = response.leftScrew.radiusMm != null ? response.leftScrew.radiusMm : DEFAULT_RADIUS;
+          const radiusSource = response.leftScrew.radiusMm != null ? 'PopulationGuru' : 'default';
+          
           console.log(`\n🔩 Placing LEFT screw: ${leftLabel}`);
           console.log(`   Position: [${leftPosition[0].toFixed(2)}, ${leftPosition[1].toFixed(2)}, ${leftPosition[2].toFixed(2)}] mm`);
           console.log(`   Length: ${response.leftScrew.lengthMm.toFixed(1)} mm`);
-          console.log(`   Radius: ${DEFAULT_RADIUS} mm (default)`);
+          console.log(`   Radius: ${leftRadius.toFixed(2)} mm (${radiusSource})`);
+          if (response.leftScrew.diameterMm != null) {
+            console.log(`   Diameter: ${response.leftScrew.diameterMm.toFixed(2)} mm (${radiusSource})`);
+          }
           
           await saveScrew({
             name: leftLabel,
-            radius: DEFAULT_RADIUS,
+            radius: leftRadius,
             length: response.leftScrew.lengthMm,
             source: 'custom',
             position: leftPosition
@@ -3494,14 +3052,21 @@ export default function ScrewManagementPanel({ servicesManager }) {
             response.rightScrew.entryPoint.z
           ];
           
+          // Use radius from PopulationGuru if available, otherwise use default
+          const rightRadius = response.rightScrew.radiusMm != null ? response.rightScrew.radiusMm : DEFAULT_RADIUS;
+          const radiusSource = response.rightScrew.radiusMm != null ? 'PopulationGuru' : 'default';
+          
           console.log(`\n🔩 Placing RIGHT screw: ${rightLabel}`);
           console.log(`   Position: [${rightPosition[0].toFixed(2)}, ${rightPosition[1].toFixed(2)}, ${rightPosition[2].toFixed(2)}] mm`);
           console.log(`   Length: ${response.rightScrew.lengthMm.toFixed(1)} mm`);
-          console.log(`   Radius: ${DEFAULT_RADIUS} mm (default)`);
+          console.log(`   Radius: ${rightRadius.toFixed(2)} mm (${radiusSource})`);
+          if (response.rightScrew.diameterMm != null) {
+            console.log(`   Diameter: ${response.rightScrew.diameterMm.toFixed(2)} mm (${radiusSource})`);
+          }
           
           await saveScrew({
             name: rightLabel,
-            radius: DEFAULT_RADIUS,
+            radius: rightRadius,
             length: response.rightScrew.lengthMm,
             source: 'custom',
             position: rightPosition
@@ -3524,14 +3089,14 @@ export default function ScrewManagementPanel({ servicesManager }) {
         ? `\n\n⚠️ WARNING: Spinal cord intersection detected!\nIoU: ${response.intersectionAnalysis.iou.toFixed(4)}`
         : '';
       
-      alert(
-        `✅ Auto Screw Placement Complete!\n\n` +
-        `Vertebra: ${response.vertebraLabel}\n` +
-        `Screws Placed: ${placedScrews.join(', ')}\n` +
-        `Default Radius: ${DEFAULT_RADIUS} mm` +
-        warningText +
-        `\n\n📋 Check console for detailed information.`
-      );
+      // alert(
+      //   `✅ Auto Screw Placement Complete!\n\n` +
+      //   `Vertebra: ${response.vertebraLabel}\n` +
+      //   `Screws Placed: ${placedScrews.join(', ')}\n` +
+      //   `Default Radius: ${DEFAULT_RADIUS} mm` +
+      //   warningText +
+      //   `\n\n📋 Check console for detailed information.`
+      // );
       
     } catch (error) {
       console.error('❌ [AutoScrew] Error:', error);

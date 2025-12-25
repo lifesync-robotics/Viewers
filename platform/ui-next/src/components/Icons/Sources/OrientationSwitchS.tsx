@@ -3,12 +3,12 @@ import type { IconProps } from '../types';
 
 export const OrientationSwitchS = (props: IconProps) => (
   <svg
-    {...props}
-    width="24"
-    height="24"
+    width="24px"
+    height="24px"
     viewBox="0 0 24 24"
-    fill="none"
     xmlns="http://www.w3.org/2000/svg"
+    style={{ width: '24px', height: '24px', minWidth: '24px', flex: 'none' }}
+    {...props}
   >
     <path
       d="M7.57766 17.4182L9.4655 19.8288L6.80457 21.4557"

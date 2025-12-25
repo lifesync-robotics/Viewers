@@ -271,7 +271,7 @@ export const EmptyScrewList: React.FC = () => (
 );
 
 // ═══════════════════════════════════════════════════════
-// Screw Dimension Selector Component
+// Screw Dimension Selector Component (Dropdown)
 // ═══════════════════════════════════════════════════════
 
 interface ScrewDimensionSelectorProps {
@@ -361,6 +361,83 @@ export const ScrewDimensionSelector: React.FC<ScrewDimensionSelectorProps> = ({
 };
 
 // ═══════════════════════════════════════════════════════
+// Screw Dimension Slider Component (Horizontal Slider)
+// ═══════════════════════════════════════════════════════
+
+interface ScrewDimensionSliderProps {
+  value: string | number;
+  options: number[];
+  onChange: (newValue: number) => void;
+  label: 'diameter' | 'length';
+  isUpdating?: boolean;
+}
+
+export const ScrewDimensionSlider: React.FC<ScrewDimensionSliderProps> = ({
+  value,
+  options,
+  onChange,
+  label,
+  isUpdating = false,
+}) => {
+  const numericValue = typeof value === 'number' ? value : parseFloat(value);
+  
+  // Sort options to ensure correct slider behavior
+  const sortedOptions = [...options].sort((a, b) => a - b);
+  const minValue = sortedOptions[0] || 0;
+  const maxValue = sortedOptions[sortedOptions.length - 1] || 100;
+  
+  // Find closest option index for current value
+  const currentIndex = sortedOptions.findIndex(opt => Math.abs(opt - numericValue) < 0.01);
+  
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const index = parseInt(e.target.value, 10);
+    const selectedValue = sortedOptions[index];
+    if (selectedValue !== undefined) {
+      onChange(selectedValue);
+    }
+  };
+
+  const displayValue = numericValue.toFixed(1);
+  const icon = label === 'diameter' ? '⌀' : '↕';
+  const bgColor = label === 'diameter' ? 'bg-blue-900' : 'bg-green-900';
+  const borderColor = label === 'diameter' ? 'border-blue-700' : 'border-green-700';
+  const textColor = label === 'diameter' ? 'text-blue-200' : 'text-green-200';
+  const trackColor = label === 'diameter' ? 'accent-blue-500' : 'accent-green-500';
+
+  return (
+    <div className="flex flex-col gap-1 min-w-[140px]">
+      {/* Value Display */}
+      <div className={`inline-flex items-center justify-center gap-1 px-2 py-1 ${bgColor} bg-opacity-50 ${borderColor} border rounded text-sm ${textColor} font-semibold`}>
+        <span>{isUpdating ? '⏳' : icon}</span>
+        <span>{displayValue}</span>
+      </div>
+      
+      {/* Slider */}
+      <input
+        type="range"
+        min={0}
+        max={sortedOptions.length - 1}
+        step={1}
+        value={currentIndex >= 0 ? currentIndex : 0}
+        onChange={handleSliderChange}
+        disabled={isUpdating}
+        className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer ${trackColor} disabled:opacity-50 disabled:cursor-not-allowed`}
+        style={{
+          background: `linear-gradient(to right, ${label === 'diameter' ? '#3b82f6' : '#10b981'} 0%, ${label === 'diameter' ? '#1e40af' : '#047857'} 100%)`
+        }}
+        title={`${label === 'diameter' ? 'Diameter' : 'Length'}: ${displayValue}mm`}
+      />
+      
+      {/* Min/Max Labels */}
+      <div className="flex justify-between text-xs text-gray-500">
+        <span>{minValue.toFixed(1)}</span>
+        <span>{maxValue.toFixed(1)}</span>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
 // Screw Table Component - CRUD Style Layout
 // ═══════════════════════════════════════════════════════
 
@@ -389,6 +466,8 @@ interface ScrewTableProps {
   availableDiameters?: number[];
   availableLengths?: number[];
   updatingScrewId?: string | null;
+  showDescription?: boolean; // default is true - shows dimension text under screw name
+  useSliders?: boolean; // default is false - use sliders instead of dropdowns for dimensions
 }
 
 export const ScrewTable: React.FC<ScrewTableProps> = ({
@@ -404,6 +483,8 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
   availableDiameters = [],
   availableLengths = [],
   updatingScrewId = null,
+  showDescription = true,
+  useSliders = false,
 }) => {
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-700">
@@ -465,7 +546,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                     <p className="font-medium text-white text-sm truncate">
                       {isRestoring ? '⏳ ' : ''}{displayInfo.label}
                     </p>
-                    {displayInfo.description && (
+                    {showDescription && displayInfo.description && (
                       <p className="text-xs text-gray-500 truncate" title={displayInfo.description}>
                         {displayInfo.description}
                       </p>
@@ -476,13 +557,23 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                 {/* Diameter Column */}
                 <td className="px-4 py-2 text-center">
                   {onUpdateDiameter && availableDiameters.length > 0 ? (
-                    <ScrewDimensionSelector
-                      value={diameter}
-                      options={availableDiameters}
-                      onChange={(newDiameter) => onUpdateDiameter(screw, newDiameter)}
-                      label="diameter"
-                      isUpdating={isUpdating}
-                    />
+                    useSliders ? (
+                      <ScrewDimensionSlider
+                        value={diameter}
+                        options={availableDiameters}
+                        onChange={(newDiameter) => onUpdateDiameter(screw, newDiameter)}
+                        label="diameter"
+                        isUpdating={isUpdating}
+                      />
+                    ) : (
+                      <ScrewDimensionSelector
+                        value={diameter}
+                        options={availableDiameters}
+                        onChange={(newDiameter) => onUpdateDiameter(screw, newDiameter)}
+                        label="diameter"
+                        isUpdating={isUpdating}
+                      />
+                    )
                   ) : (
                     <span className="inline-block px-2 py-1 bg-blue-900 bg-opacity-50 border border-blue-700 rounded text-sm text-blue-200 font-semibold">
                       ⌀ {diameter.toFixed(1)}
@@ -493,13 +584,23 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                 {/* Length Column */}
                 <td className="px-4 py-2 text-center">
                   {onUpdateLength && availableLengths.length > 0 ? (
-                    <ScrewDimensionSelector
-                      value={displayInfo.length}
-                      options={availableLengths}
-                      onChange={(newLength) => onUpdateLength(screw, newLength)}
-                      label="length"
-                      isUpdating={isUpdating}
-                    />
+                    useSliders ? (
+                      <ScrewDimensionSlider
+                        value={displayInfo.length}
+                        options={availableLengths}
+                        onChange={(newLength) => onUpdateLength(screw, newLength)}
+                        label="length"
+                        isUpdating={isUpdating}
+                      />
+                    ) : (
+                      <ScrewDimensionSelector
+                        value={displayInfo.length}
+                        options={availableLengths}
+                        onChange={(newLength) => onUpdateLength(screw, newLength)}
+                        label="length"
+                        isUpdating={isUpdating}
+                      />
+                    )
                   ) : (
                     <span className="inline-block px-2 py-1 bg-green-900 bg-opacity-50 border border-green-700 rounded text-sm text-green-200 font-semibold">
                       ↕ {displayInfo.length.toFixed(1)}

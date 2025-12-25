@@ -52,7 +52,7 @@ window.config = {
       hide: { $set: true },  // Hide Segmentation mode (displays as "Segmentation")
     },
     '@ohif/mode-planner': {
-      hide: { $set: true },  // Hide 3D Surgical Planner mode
+      hide: { $set: false },  // Hide 3D Surgical Planner mode
     },
     '@ohif/mode-planner2d': {
       hide: { $set: true },  // Hide 2D Surgical Planner mode

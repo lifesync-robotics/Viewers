@@ -335,11 +335,84 @@ function plannerOnModeEnter(args) {
             evaluate: 'evaluate.action',
           },
         },
+        // ScrewEditor Menu - viewport action button
+        {
+          id: 'screwEditorMenu',
+          uiType: 'ohif.screwEditorMenu',
+          props: {
+            icon: 'ScrewEditor',
+            label: 'Screw Editor',
+            tooltip: 'Edit pedicle screw specifications',
+            evaluate: {
+              name: 'evaluate.screwEditorMenu',
+              hideWhenDisabled: true, // Hide button completely when disabled (not just gray it out)
+            },
+          },
+        },
       ]);
       console.log('✅ [Planner Mode] ToggleVolumeVisibility button added to primary toolbar');
+
+      // Add ScrewEditor to viewport action menu (bottom right corner)
+      if (toolbarService.sections?.viewportActionMenu?.bottomRight) {
+        toolbarService.updateSection(
+          toolbarService.sections.viewportActionMenu.bottomRight,
+          ['screwEditorMenu']
+        );
+        console.log('✅ [Planner Mode] ScrewEditor added to viewport action menu');
+      }
     }
   } catch (error) {
     console.error('❌ [Planner Mode] Failed to register toolbar buttons:', error);
+  }
+
+  // Subscribe to model state changes to refresh ScrewEditor button visibility
+  try {
+    const { modelStateService } = servicesManager.services;
+    if (modelStateService && toolbarService) {
+      console.log('📡 [Planner Mode] Setting up model state subscriptions for toolbar refresh');
+      
+      let debounceTimer = null;
+      
+      const refreshToolbar = () => {
+        // Debounce: Clear existing timer and set new one
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+        }
+        
+        debounceTimer = setTimeout(() => {
+          // Only refresh axial viewport toolbar (where ScrewEditor button appears)
+          const { viewports } = viewportGridService.getState();
+          if (viewports && viewports.size > 0) {
+            viewports.forEach((viewport, viewportId) => {
+              const viewportIdLower = viewportId.toLowerCase();
+              // Only refresh axial viewport to avoid unnecessary re-evaluations
+              if (viewportIdLower.includes('axial')) {
+                toolbarService.refreshToolbarState({ viewportId });
+              }
+            });
+          }
+          debounceTimer = null;
+        }, 300); // 300ms debounce delay
+      };
+
+      // Subscribe to model events
+      const modelAddedSub = modelStateService.subscribe(
+        modelStateService.EVENTS.MODEL_ADDED,
+        refreshToolbar
+      );
+      
+      const modelRemovedSub = modelStateService.subscribe(
+        modelStateService.EVENTS.MODEL_REMOVED,
+        refreshToolbar
+      );
+
+      // Store subscriptions and timer for cleanup
+      this._modelStateSubscriptions = [modelAddedSub, modelRemovedSub];
+      this._debounceTimer = debounceTimer;
+      console.log('✅ [Planner Mode] Model state subscriptions active (debounced)');
+    }
+  } catch (error) {
+    console.error('❌ [Planner Mode] Failed to subscribe to model state:', error);
   }
 
   // Subscribe to VIEWPORTS_READY event to add tools and activate Crosshairs
@@ -371,6 +444,22 @@ function plannerOnModeEnter(args) {
             } catch (error) {
               console.warn('⚠️ [Planner Mode] Error activating Crosshairs:', error);
             }
+
+            // Refresh toolbar after viewports are ready to update ScrewEditor button
+            try {
+              const { viewports } = viewportGridService.getState();
+              if (viewports && viewports.size > 0 && toolbarService) {
+                // Only refresh axial viewport toolbar
+                viewports.forEach((viewport, viewportId) => {
+                  const viewportIdLower = viewportId.toLowerCase();
+                  if (viewportIdLower.includes('axial')) {
+                    toolbarService.refreshToolbarState({ viewportId });
+                  }
+                });
+              }
+            } catch (error) {
+              console.warn('⚠️ [Planner Mode] Error refreshing toolbar:', error);
+            }
           }, 100);
 
           try {
@@ -398,6 +487,26 @@ function plannerOnModeExit(args) {
 
   const { servicesManager } = args;
   const { surgicalWorkflowService } = servicesManager.services;
+
+  // Cleanup debounce timer
+  if (this._debounceTimer) {
+    clearTimeout(this._debounceTimer);
+    this._debounceTimer = null;
+  }
+
+  // Cleanup model state subscriptions
+  if (this._modelStateSubscriptions) {
+    try {
+      this._modelStateSubscriptions.forEach(sub => {
+        if (sub && sub.unsubscribe) {
+          sub.unsubscribe();
+        }
+      });
+      console.log('✅ [Planner Mode] Model state subscriptions cleaned up');
+    } catch (error) {
+      console.warn('⚠️ [Planner Mode] Error cleaning up model subscriptions:', error);
+    }
+  }
 
   // Save planning reference to workflow (backend stores actual screw data)
   // NOTE: Do NOT set 'completed' here - workflow handles completion status
@@ -468,11 +577,13 @@ export const modeInstance = {
     routes: [
       plannerRoute
     ],
-    hangingProtocol: 'fourUpMesh',
+    hangingProtocol: 'primaryAxialWith3D',
     extensions: extensionDependencies,
     onModeEnter: plannerOnModeEnter,
     onModeExit: plannerOnModeExit,
     _viewportReadySubscription: null,
+    _modelStateSubscriptions: null,
+    _debounceTimer: null,
   };
 
 // Combine basic toolbar buttons with planner-specific buttons

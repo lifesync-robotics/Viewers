@@ -105,6 +105,7 @@ export const primaryAxialWith3D = {
         // Viewport 0: Axial (Primary - Large)
         {
           viewportOptions: {
+            viewportId: 'mpr-axial',
             toolGroupId: 'mpr',
             viewportType: 'volume',
             orientation: 'axial',
@@ -146,6 +147,7 @@ export const primaryAxialWith3D = {
         // Viewport 2: Sagittal (Small - Middle Right)
         {
           viewportOptions: {
+            viewportId: 'mpr-sagittal',
             toolGroupId: 'mpr',
             viewportType: 'volume',
             orientation: 'sagittal',
@@ -163,6 +165,7 @@ export const primaryAxialWith3D = {
         // Viewport 3: Coronal (Small - Bottom Right)
         {
           viewportOptions: {
+            viewportId: 'mpr-coronal',
             toolGroupId: 'mpr',
             viewportType: 'volume',
             orientation: 'coronal',

@@ -8,6 +8,8 @@ import {
   ohif,
   dicomsr,
   dicomvideo,
+  basicLayout,
+  basicRoute,
   extensionDependencies as basicDependencies,
   mode as basicMode,
   modeInstance as basicModeInstance,
@@ -93,12 +95,16 @@ function overviewOnModeExit(args) {
   console.log('✅ [Overview Mode] Cleanup complete');
 }
 
-// 4x4 Grid layout with measurement tracking
-export const overviewLayout = {
+// Overview layout with measurement tracking
+// Similar to basicLayout but with measurement tracking panels
+export const overviewInstance = {
+  ...basicLayout,
   id: ohif.layout,
   props: {
+    ...basicLayout.props,
     leftPanels: [tracked.thumbnailList],
     leftPanelResizable: true,
+    leftPanelClosed: false, // Explicitly ensure left panel is open
     rightPanels: [tracked.measurements],
     rightPanelResizable: true,
     rightPanelClosed: true,
@@ -111,11 +117,12 @@ export const overviewLayout = {
   },
 };
 
+// Use the same pattern as navigation and planning modes
+// This automatically uses structuredCloneWithFunctions from basicRoute
 export const overviewRoute = {
+  ...basicRoute,
   path: 'overview',
-  layoutTemplate: ({ location, servicesManager }) => {
-    return overviewLayout;
-  },
+  layoutInstance: overviewInstance,
 };
 
 export const modeInstance = {

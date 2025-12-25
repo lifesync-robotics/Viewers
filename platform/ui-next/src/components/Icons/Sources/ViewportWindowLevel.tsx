@@ -8,13 +8,13 @@ export const ViewportWindowLevel = (props: IconProps) => (
     viewBox="0 0 24 24"
     version="1.1"
     xmlns="http://www.w3.org/2000/svg"
+    style={{ width: '24px', height: '24px', minWidth: '24px', flex: 'none' }}
     {...props}
   >
     <g
       id="Icons"
       stroke="none"
       strokeWidth="1"
-      fill="none"
       fillRule="evenodd"
     >
       <g
@@ -25,14 +25,6 @@ export const ViewportWindowLevel = (props: IconProps) => (
           id="viewport-window-level"
           transform="translate(184, 87)"
         >
-          <rect
-            id="Rectangle"
-            opacity="0.5"
-            x="0"
-            y="0"
-            width="24"
-            height="24"
-          ></rect>
           <g
             id="Group"
             transform="translate(4, 4)"

@@ -162,7 +162,7 @@ export default function ModeRoute({
     return () => {
       layoutTemplateData.current = null;
     };
-  }, [studyInstanceUIDs, ExtensionDependenciesLoaded]);
+  }, [studyInstanceUIDs, ExtensionDependenciesLoaded, location]);
 
   useEffect(() => {
     if (!layoutTemplateData.current || !ExtensionDependenciesLoaded || !studyInstanceUIDs?.length) {

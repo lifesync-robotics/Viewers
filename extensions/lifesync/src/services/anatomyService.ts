@@ -23,6 +23,8 @@ export interface ScrewPlacementInfo {
   targetPoint: Vector3D;
   trajectoryVector: Vector3D;
   lengthMm: number;
+  diameterMm: number | null; // Screw diameter from PopulationGuru (may be null)
+  radiusMm: number | null; // Screw radius from PopulationGuru (may be null)
   sagittalAngleDeg: number;
   transverseAngleDeg: number;
 }
