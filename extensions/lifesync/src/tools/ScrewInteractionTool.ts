@@ -12,7 +12,6 @@
 import {
   BaseTool,
   Enums as csToolsEnums,
-  getToolGroup,
   ToolGroupManager,
 } from '@cornerstonejs/tools';
 import {
@@ -39,6 +38,9 @@ interface ScrewInteractionState {
   dragStartWorld: [number, number, number] | null;
   lastWorldPosition: [number, number, number] | null;
   originalTransform: number[] | null;
+  originalPosition: [number, number, number] | null; // Original screw position at start of drag
+  cumulativeTranslation: [number, number, number]; // Total translation from original position
+  cumulativeRotationAngle: number; // Total rotation angle from original orientation (degrees)
   viewportPlaneNormal: [number, number, number] | null;
   viewportId: string | null;
   element: HTMLElement | null;
@@ -52,6 +54,21 @@ class ScrewInteractionTool extends BaseTool {
   private planningBackendService: any;
   private sessionId: string | null = null;
   private debug: boolean = true;
+  
+  // Safety limits - constrain movement during each edit session (mouse down to mouse up)
+  private readonly MAX_TRANSLATION_MM = 30.0;  // ±20mm translation limit per edit
+  private readonly MAX_ROTATION_DEG = 20.0;    // ±10° rotation limit per edit
+  
+  // Visual warning overlay
+  private warningOverlay: HTMLDivElement | null = null;
+  private warningTimeout: any = null;
+  private isWarningVisible: boolean = false; // Prevent rapid re-creation during drag
+  
+  // Crosshairs state management - store original state to restore after interaction
+  private crosshairsOriginalState: Map<string, boolean> = new Map(); // toolGroupId -> was crosshairs active
+  
+  // Viewport camera change monitoring - detect external camera updates during drag
+  private cameraModifiedListener: ((evt: any) => void) | null = null;
 
   constructor(
     toolProps = {},
@@ -119,6 +136,9 @@ class ScrewInteractionTool extends BaseTool {
       dragStartWorld: null,
       lastWorldPosition: null,
       originalTransform: null,
+      originalPosition: null,
+      cumulativeTranslation: [0, 0, 0],
+      cumulativeRotationAngle: 0,
       viewportPlaneNormal: null,
       viewportId: null,
       element: null,
@@ -141,6 +161,32 @@ class ScrewInteractionTool extends BaseTool {
     console.log('   Tool is now ACTIVE and listening for mouse events');
     console.log('   ModelStateService available:', !!this.modelStateService);
     this._log('Tool activated');
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL: Disable Crosshairs to prevent viewport camera conflicts
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Issue: When crosshairs are centered on a screw, editing that screw causes
+    // crosshairs to update viewport cameras in real-time, fighting against our
+    // freeze logic. This is why some screws (with crosshairs) don't freeze correctly
+    // while others (without crosshairs) do.
+    //
+    // Solution: Disable crosshairs when ScrewInteractionTool is active
+    this.crosshairsOriginalState.clear();
+    const allToolGroups = ToolGroupManager.getAllToolGroups();
+    
+    for (const toolGroup of allToolGroups) {
+      try {
+        const crosshairsTool = toolGroup.getToolInstance('Crosshairs');
+        if (crosshairsTool) {
+          const beforeOptions = toolGroup.getToolOptions('Crosshairs');
+          const wasActive = beforeOptions?.mode === 'Active';
+          this.crosshairsOriginalState.set(toolGroup.id, wasActive);
+          toolGroup.setToolDisabled('Crosshairs');
+        }
+      } catch (error) {
+        // Crosshairs not in this tool group, continue
+      }
+    }
   }
 
   /**
@@ -148,10 +194,34 @@ class ScrewInteractionTool extends BaseTool {
    */
   onSetToolDisabled(): void {
     this._log('Tool disabled');
+    
+    // Clean up interaction state
     if (this.state.selectedScrewId) {
       this._highlightScrew(this.state.selectedScrewId, false);
     }
+    this._removeWarningOverlay();
     this.state = this._getInitialState();
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Restore Crosshairs to original state
+    // ═══════════════════════════════════════════════════════════════════════════
+    const allToolGroups = ToolGroupManager.getAllToolGroups();
+    
+    for (const toolGroup of allToolGroups) {
+      try {
+        const crosshairsTool = toolGroup.getToolInstance('Crosshairs');
+        if (crosshairsTool) {
+          const wasActive = this.crosshairsOriginalState.get(toolGroup.id);
+          if (wasActive) {
+            toolGroup.setToolActive('Crosshairs');
+          }
+        }
+      } catch (error) {
+        // Crosshairs not in this tool group, continue
+      }
+    }
+    
+    this.crosshairsOriginalState.clear();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -202,13 +272,7 @@ class ScrewInteractionTool extends BaseTool {
       return false;
     }
 
-    // Point is inside a screw! Log confirmation and allow drag
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('🎯 CHECK INSIDE A SCREW - INTERACTION ENABLED');
-    console.log(`   Screw: ${pickResult.screwLabel}`);
-    console.log(`   Part: ${pickResult.part}`);
-    console.log(`   Mode: ${pickResult.interactionMode.toUpperCase()}`);
-    console.log('═══════════════════════════════════════════════════════');
+    // Point is inside a screw! Allow drag
 
     // Found a screw - start interaction
     this._log(`✅ Selected screw: ${pickResult.screwLabel} (${pickResult.part}) - Mode: ${pickResult.interactionMode}`);
@@ -216,8 +280,18 @@ class ScrewInteractionTool extends BaseTool {
     // Get viewport plane normal for constraining movement
     const planeNormal = this._getViewportPlaneNormal(element);
 
-    // Store original transform for potential undo
+    // Store original transform for potential undo and limit checking
     const originalTransform = this.modelStateService.getScrewTransform(pickResult.modelId);
+    
+    // Extract original position from transform matrix (translation is at indices 3, 7, 11)
+    const originalPosition: [number, number, number] = originalTransform ? [
+      originalTransform[3],
+      originalTransform[7],
+      originalTransform[11]
+    ] : [worldPoint[0], worldPoint[1], worldPoint[2]];
+
+    console.log(`📍 [ScrewInteractionTool] Original position: [${originalPosition.map(v => v.toFixed(2)).join(', ')}]`);
+    console.log(`🎯 [ScrewInteractionTool] Safety limits: Translation ±${this.MAX_TRANSLATION_MM}mm, Rotation ±${this.MAX_ROTATION_DEG}°`);
 
     // Update state
     this.state = {
@@ -229,6 +303,9 @@ class ScrewInteractionTool extends BaseTool {
       dragStartWorld: [worldPoint[0], worldPoint[1], worldPoint[2]],
       lastWorldPosition: [worldPoint[0], worldPoint[1], worldPoint[2]],
       originalTransform,
+      originalPosition,
+      cumulativeTranslation: [0, 0, 0],
+      cumulativeRotationAngle: 0,
       viewportPlaneNormal: planeNormal,
       viewportId: this._getViewportId(element),
       element,
@@ -239,12 +316,27 @@ class ScrewInteractionTool extends BaseTool {
 
     // Get the viewport ID where the click occurred (to exclude it from updates)
     const clickedViewportId = this._getViewportId(element);
+    
+    if (!clickedViewportId) {
+      console.error(`❌ Failed to get viewport ID from element - all viewports may update incorrectly`);
+    }
+    
+    // Install global camera change monitor to catch external updates
+    this._installCameraMonitor(clickedViewportId);
 
-    // Update viewport cameras to align with screw orientation (like clicking "View")
-    // METHOD A: Synchronous update - immediate and reliable
-    // IMPORTANT: Exclude the viewport where the click occurred to avoid disrupting the interaction
-    this._updateViewportCamerasFromScrew(pickResult.modelId, clickedViewportId);
-
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NO viewport camera updates on mouse down
+    // ═══════════════════════════════════════════════════════════════════════════
+    // The entire interaction from mouse down → drag → mouse up is ONE edit session
+    // Viewport cameras remain FROZEN throughout the entire edit
+    // Updates happen ONLY on mouse release (in mouseUpCallback)
+    // 
+    // Timeline:
+    //   Mouse down: Start edit, freeze all cameras ❄️
+    //   Drag: Continue edit, cameras still frozen ❄️
+    //   Stop dragging (mouse still down): Still editing, cameras frozen ❄️
+    //   Mouse up: End edit, update OTHER viewports ✅
+    
     // Return true to indicate we handled the event
     return true;
   };
@@ -252,9 +344,9 @@ class ScrewInteractionTool extends BaseTool {
   /**
    * Called on mouse drag - required by BaseTool
    *
-   * IMPORTANT: This function does NOT update viewport cameras during drag.
-   * Viewport cameras are only updated on mouseDown (click) and mouseUp (release).
-   * This ensures smooth dragging without viewport jumping.
+   * IMPORTANT: Updates OTHER viewport cameras during drag (crosshairs behavior)
+   * - Edited viewport: Camera stays stationary
+   * - Other viewports: Camera updates to track screw position/orientation
    */
   mouseDragCallback = (evt: any): void => {
     if (!this.state.isDragging || !this.state.selectedScrewId) {
@@ -278,7 +370,7 @@ class ScrewInteractionTool extends BaseTool {
 
     // Constrain movement to viewport plane
     // NOTE: We use the viewportPlaneNormal from when drag started (stored in state)
-    // This ensures consistent dragging behavior and prevents viewport camera updates
+    // This ensures consistent dragging behavior
     let constrainedDelta = worldDelta;
     if (this.state.viewportPlaneNormal && this.modelStateService.projectDeltaOntoPlane) {
       constrainedDelta = this.modelStateService.projectDeltaOntoPlane(
@@ -308,26 +400,143 @@ class ScrewInteractionTool extends BaseTool {
       console.log(`🔄 [ScrewInteractionTool] ${this.state.interactionMode?.toUpperCase() || 'DRAG'} screw: ${this.state.selectedScrewId?.substring(0, 8)}... delta: [${constrainedDelta[0].toFixed(2)}, ${constrainedDelta[1].toFixed(2)}, ${constrainedDelta[2].toFixed(2)}]`);
     }
 
-    // Apply transformation based on interaction mode
-    // NOTE: Only updates the screw model transform, does NOT update viewport cameras
+    // Apply transformation based on interaction mode with safety limits
     if (this.state.interactionMode === 'rotate') {
-      // Rotate the screw around its origin
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ROTATION MODE - Apply rotation with angle limit
+      // ═══════════════════════════════════════════════════════════════════════════
       if (this.modelStateService.rotateScrew && this.state.viewportPlaneNormal) {
+        // Estimate rotation angle from delta magnitude
+        // This is approximate - actual angle depends on rotation radius
+        const rotationEstimate = deltaMagnitude * 2.0; // Approximate degrees per mm of cursor movement
+        
+        // Check if adding this delta would exceed rotation limit
+        const newCumulativeRotation = this.state.cumulativeRotationAngle + rotationEstimate;
+        
+        if (Math.abs(newCumulativeRotation) > this.MAX_ROTATION_DEG) {
+          // Limit reached - show warning (throttled)
+          if (this._dragLogCounter % 20 === 0) {
+            console.warn(`⚠️ [ScrewInteractionTool] Rotation limit reached: ±${this.MAX_ROTATION_DEG}° (current: ${newCumulativeRotation.toFixed(1)}°)`);
+          }
+          // Show visual warning on viewport
+          this._showWarningOverlay(`Rotation Limit: ±${this.MAX_ROTATION_DEG}°`, 'rotation');
+          // Clamp the delta to stay within limits
+          const remainingRotation = this.MAX_ROTATION_DEG - Math.abs(this.state.cumulativeRotationAngle);
+          if (remainingRotation > 0) {
+            const scaleFactor = remainingRotation / rotationEstimate;
+            constrainedDelta = [
+              constrainedDelta[0] * scaleFactor,
+              constrainedDelta[1] * scaleFactor,
+              constrainedDelta[2] * scaleFactor
+            ];
+          } else {
+            // No more rotation allowed
+            return;
+          }
+        }
+        
+        // Apply rotation
         this.modelStateService.rotateScrew(
           this.state.selectedScrewId,
           constrainedDelta,
           this.state.viewportPlaneNormal
         );
+        
+        // Update cumulative rotation
+        this.state.cumulativeRotationAngle = newCumulativeRotation;
       }
     } else {
-      // Translate the screw (default)
-      if (this.modelStateService.translateScrew) {
+      // ═══════════════════════════════════════════════════════════════════════════
+      // TRANSLATION MODE - Apply translation with distance limit
+      // ═══════════════════════════════════════════════════════════════════════════
+      if (this.modelStateService.translateScrew && this.state.originalPosition) {
+        // Calculate what the new cumulative translation would be
+        const newCumulativeTranslation: [number, number, number] = [
+          this.state.cumulativeTranslation[0] + constrainedDelta[0],
+          this.state.cumulativeTranslation[1] + constrainedDelta[1],
+          this.state.cumulativeTranslation[2] + constrainedDelta[2]
+        ];
+        
+        // Calculate total distance from original position
+        const totalDistance = Math.sqrt(
+          newCumulativeTranslation[0] ** 2 +
+          newCumulativeTranslation[1] ** 2 +
+          newCumulativeTranslation[2] ** 2
+        );
+        
+        // Check if translation exceeds limit
+        if (totalDistance > this.MAX_TRANSLATION_MM) {
+          // Limit reached - show warning (throttled)
+          if (this._dragLogCounter % 20 === 0) {
+            console.warn(`⚠️ [ScrewInteractionTool] Translation limit reached: ±${this.MAX_TRANSLATION_MM}mm (current: ${totalDistance.toFixed(1)}mm)`);
+          }
+          // Show visual warning on viewport
+          this._showWarningOverlay(`Translation Limit: ±${this.MAX_TRANSLATION_MM}mm`, 'translation');
+          
+          // Scale down the delta to stay within limit
+          // Calculate how much we can still move
+          const currentDistance = Math.sqrt(
+            this.state.cumulativeTranslation[0] ** 2 +
+            this.state.cumulativeTranslation[1] ** 2 +
+            this.state.cumulativeTranslation[2] ** 2
+          );
+          
+          const remainingDistance = this.MAX_TRANSLATION_MM - currentDistance;
+          
+          if (remainingDistance <= 0) {
+            // No more movement allowed
+            return;
+          }
+          
+          // Scale delta to use remaining distance
+          const deltaDistance = Math.sqrt(
+            constrainedDelta[0] ** 2 +
+            constrainedDelta[1] ** 2 +
+            constrainedDelta[2] ** 2
+          );
+          
+          const scaleFactor = remainingDistance / deltaDistance;
+          constrainedDelta = [
+            constrainedDelta[0] * scaleFactor,
+            constrainedDelta[1] * scaleFactor,
+            constrainedDelta[2] * scaleFactor
+          ];
+          
+          // Recalculate new cumulative translation with scaled delta
+          newCumulativeTranslation[0] = this.state.cumulativeTranslation[0] + constrainedDelta[0];
+          newCumulativeTranslation[1] = this.state.cumulativeTranslation[1] + constrainedDelta[1];
+          newCumulativeTranslation[2] = this.state.cumulativeTranslation[2] + constrainedDelta[2];
+        }
+        
+        // Apply translation
         this.modelStateService.translateScrew(this.state.selectedScrewId, constrainedDelta);
+        
+        // Update cumulative translation
+        this.state.cumulativeTranslation = newCumulativeTranslation;
+        
+        // Log cumulative translation (throttled)
+        if (this._dragLogCounter % 20 === 0) {
+          const currentDistance = Math.sqrt(
+            this.state.cumulativeTranslation[0] ** 2 +
+            this.state.cumulativeTranslation[1] ** 2 +
+            this.state.cumulativeTranslation[2] ** 2
+          );
+          console.log(`📏 [ScrewInteractionTool] Cumulative translation: ${currentDistance.toFixed(1)}mm / ${this.MAX_TRANSLATION_MM}mm`);
+        }
       }
     }
 
-    // NOTE: Viewport cameras are NOT updated here during drag.
-    // They are only updated on mouseDown (click) and mouseUp (release).
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SIMPLIFIED WORKFLOW: No viewport camera updates during drag
+    // ═══════════════════════════════════════════════════════════════════════════
+    // All viewport cameras remain frozen during drag operation
+    // Cameras will be updated only on mouse release (in mouseUpCallback)
+    // This prevents ANY viewport from moving while user is actively editing
+    // Benefits:
+    //   - Simpler logic (no selective updates)
+    //   - Better performance (no camera calculations during drag)
+    //   - More predictable behavior (everything frozen until commit)
+    //   - Clearer user intent (explicit "apply" moment on mouse release)
   };
 
   private _dragLogCounter: number = 0;
@@ -348,6 +557,19 @@ class ScrewInteractionTool extends BaseTool {
     }
 
     this._log(`Drag completed for screw: ${this.state.selectedScrewLabel}`);
+    
+    // Log final movement statistics
+    if (this.state.interactionMode === 'rotate') {
+      const finalRotation = Math.abs(this.state.cumulativeRotationAngle);
+      console.log(`📊 [ScrewInteractionTool] Final rotation: ${finalRotation.toFixed(1)}° / ${this.MAX_ROTATION_DEG}° (${((finalRotation / this.MAX_ROTATION_DEG) * 100).toFixed(0)}% of limit)`);
+    } else {
+      const finalDistance = Math.sqrt(
+        this.state.cumulativeTranslation[0] ** 2 +
+        this.state.cumulativeTranslation[1] ** 2 +
+        this.state.cumulativeTranslation[2] ** 2
+      );
+      console.log(`📊 [ScrewInteractionTool] Final translation: ${finalDistance.toFixed(1)}mm / ${this.MAX_TRANSLATION_MM}mm (${((finalDistance / this.MAX_TRANSLATION_MM) * 100).toFixed(0)}% of limit)`);
+    }
 
     // Save the updated transform to backend session
     console.log('   📤 Calling _saveTransformToBackend...');
@@ -362,11 +584,36 @@ class ScrewInteractionTool extends BaseTool {
       console.error('   ❌ _saveTransformToBackend failed:', err);
     });
 
-    // Update viewport cameras again (like clicking "View") after drag completes
-    this._updateViewportCamerasFromScrew(this.state.selectedScrewId);
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NOW update viewport cameras after drag completes (simplified workflow)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // During drag: ALL viewports remained frozen (no camera updates)
+    // On mouse release: Update OTHER viewports to reflect new screw position
+    // IMPORTANT: Edited viewport stays stationary at its original camera position
+    // This is the ONLY camera update during the entire interaction (simpler logic)
+
+    
+    let editedViewportId = this.state.viewportId;
+    
+    // Defensive: If viewport ID wasn't captured on mouse down, try to get it now
+    if (!editedViewportId && this.state.element) {
+      editedViewportId = this._getViewportId(this.state.element);
+    }
+    
+    if (!editedViewportId) {
+      console.error(`❌ No viewport ID available - skipping viewport camera updates`);
+    } else {
+      this._updateViewportCamerasFromScrew(this.state.selectedScrewId, editedViewportId);
+    }
 
     // Remove highlight
     this._highlightScrew(this.state.selectedScrewId, false);
+
+    // Remove warning overlay if present
+    this._removeWarningOverlay();
+    
+    // Remove camera change monitor
+    this._removeCameraMonitor();
 
     // Reset state
     this.state = this._getInitialState();
@@ -479,7 +726,7 @@ class ScrewInteractionTool extends BaseTool {
 
   private _getViewportPlaneNormal(element: HTMLElement): [number, number, number] {
     try {
-      const enabledElement = getEnabledElement(element);
+      const enabledElement = getEnabledElement(element as HTMLDivElement);
       if (!enabledElement) return [0, 0, 1];
 
       const viewport = enabledElement.viewport;
@@ -498,7 +745,7 @@ class ScrewInteractionTool extends BaseTool {
 
   private _getViewportId(element: HTMLElement): string | null {
     try {
-      const enabledElement = getEnabledElement(element);
+      const enabledElement = getEnabledElement(element as HTMLDivElement);
       if (enabledElement) {
         return enabledElement.viewportId;
       }
@@ -612,14 +859,19 @@ class ScrewInteractionTool extends BaseTool {
         return;
       }
 
+      if (!excludeViewportId) {
+        console.warn(`⚠️ No viewport to exclude - all viewports will be updated`);
+      }
+
       // Update each MPR viewport camera
       for (const viewport of viewports) {
         try {
           // Skip the viewport where user clicked (if specified)
+          // Use exact string comparison
           if (excludeViewportId && viewport.id === excludeViewportId) {
-            console.log(`⏭️ [${viewport.id}] Skipping viewport update - user clicked on this viewport`);
             continue;
           }
+
 
           const viewportId = viewport.id.toLowerCase();
           const camera = viewport.getCamera();
@@ -721,7 +973,9 @@ class ScrewInteractionTool extends BaseTool {
 
       // STEP 3: Force rendering engine to render all viewports
       if (renderingEngine) {
-        renderingEngine.renderViewports(renderingEngine.getViewportIds());
+        // Get viewport IDs from viewport objects
+        const viewportIds = viewports.map(vp => vp.id);
+        renderingEngine.renderViewports(viewportIds);
         console.log('✅ Forced rendering engine to render all viewports');
         console.log(`✅ [ScrewInteractionTool] Viewport update completed - camera: ✓, crosshairs: ${crosshairsUpdated ? '✓' : '✗'}`);
       }
@@ -741,6 +995,127 @@ class ScrewInteractionTool extends BaseTool {
       label: this.state.selectedScrewLabel || '',
       part: this.state.selectedPart || 'body',
     };
+  }
+
+  /**
+   * Show visual warning overlay on screen (simple, non-intrusive)
+   * IMPORTANT: Uses fixed positioning attached to document.body to avoid interfering with viewport
+   * Throttled: Only shows once per warning session to prevent constant DOM manipulation
+   */
+  private _showWarningOverlay(message: string, type: 'translation' | 'rotation'): void {
+    // Don't show if warning is already visible (prevents constant DOM manipulation during drag)
+    if (this.isWarningVisible) {
+      return;
+    }
+
+    // Remove existing overlay
+    this._removeWarningOverlay();
+
+    // Create simple text overlay
+    const overlay = document.createElement('div');
+    const icon = type === 'translation' ? '📏' : '🔄';
+    
+    // Use fixed position at top-center of screen - doesn't interfere with viewport at all
+    overlay.style.cssText = `
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 152, 0, 0.95);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      z-index: 99999;
+      pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      border: 2px solid rgba(255, 193, 7, 0.9);
+      text-align: center;
+      animation: slideDown 0.3s ease-out;
+    `;
+    
+    overlay.innerHTML = `${icon} ⚠️ ${message}`;
+
+    // Add animation keyframes only once
+    if (!document.getElementById('screw-warning-styles')) {
+      const style = document.createElement('style');
+      style.id = 'screw-warning-styles';
+      style.textContent = `
+        @keyframes slideDown {
+          0% { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+          100% { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Attach directly to document.body - doesn't touch viewport container at all
+    document.body.appendChild(overlay);
+    
+    this.warningOverlay = overlay;
+    this.isWarningVisible = true; // Mark as visible to prevent re-creation
+
+    console.log(`⚠️ [ScrewInteractionTool] Warning displayed: ${message}`);
+
+    // Auto-remove after 2 seconds
+    if (this.warningTimeout) {
+      clearTimeout(this.warningTimeout);
+    }
+    this.warningTimeout = setTimeout(() => {
+      this._removeWarningOverlay();
+    }, 2000);
+  }
+
+  /**
+   * Remove warning overlay
+   */
+  private _removeWarningOverlay(): void {
+    if (this.warningOverlay) {
+      try {
+        this.warningOverlay.remove();
+      } catch (e) {
+        // Ignore errors
+      }
+      this.warningOverlay = null;
+    }
+    if (this.warningTimeout) {
+      clearTimeout(this.warningTimeout);
+      this.warningTimeout = null;
+    }
+    this.isWarningVisible = false; // Reset flag to allow future warnings
+  }
+
+  /**
+   * Install global camera change monitor to detect external viewport camera updates
+   * This helps debug cases where something ELSE is updating viewport cameras during our drag
+   */
+  private _installCameraMonitor(editedViewportId: string | null): void {
+    // Remove any existing listener first
+    this._removeCameraMonitor();
+    
+    // Create listener that logs ALL camera modifications
+    this.cameraModifiedListener = (evt: any) => {
+      const { viewportId, camera } = evt.detail || {};
+      
+      // Log ALL camera changes
+      if (viewportId === editedViewportId) {
+        console.warn(`🚨 External camera update on edited viewport ${viewportId} - this should not happen during drag`);
+      }
+    };
+    
+    // Listen to Cornerstone CAMERA_MODIFIED event globally
+    eventTarget.addEventListener(csEvents.CAMERA_MODIFIED, this.cameraModifiedListener);
+  }
+
+  /**
+   * Remove global camera change monitor
+   */
+  private _removeCameraMonitor(): void {
+    if (this.cameraModifiedListener) {
+      eventTarget.removeEventListener(csEvents.CAMERA_MODIFIED, this.cameraModifiedListener);
+      this.cameraModifiedListener = null;
+    }
   }
 }
 

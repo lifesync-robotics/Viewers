@@ -9,6 +9,11 @@
  * - Loading cap models
  * - Transform calculations
  * 
+ * Event-Driven Architecture:
+ * - Distinguishes between different sources of updates (slider drag, commit, viewport, etc.)
+ * - Prevents unwanted side effects like camera movement during slider drag
+ * - Optimizes performance by skipping model reloads during in-progress edits
+ * 
  * Used by:
  * - ScrewManagementPanel
  * - ScrewEditorActionMenu
@@ -19,6 +24,7 @@ import { useCallback } from 'react';
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { planningBackendService } from '../services';
 import { getScrewColor } from '../utils/screwColorScheme';
+import { ScrewUpdateEventType, getScrewUpdateOptions, type ScrewDimensionUpdateEvent } from '../types/screwEvents';
 
 interface ScrewOperationsHookProps {
   servicesManager: any;
@@ -290,12 +296,18 @@ export function useScrewOperations({
 
   /**
    * Update screw dimensions (radius and/or length)
-   * Handles backend sync and 3D model reloading
+   * Handles backend sync and 3D model reloading based on event type
+   * 
+   * @param screwData - Screw data object
+   * @param newRadius - New radius (if updating diameter)
+   * @param newLength - New length (if updating length)
+   * @param eventType - Type of event triggering update (default: PROGRAMMATIC)
    */
   const updateScrewDimensions = useCallback(async (
     screwData: any,
     newRadius?: number,
-    newLength?: number
+    newLength?: number,
+    eventType: ScrewUpdateEventType = ScrewUpdateEventType.PROGRAMMATIC
   ) => {
     const screwId = screwData.screw_id || screwData.id;
     if (!screwId) {
@@ -309,6 +321,11 @@ export function useScrewOperations({
     }
 
     try {
+      // Get update options based on event type
+      const updateOptions = getScrewUpdateOptions(eventType);
+      
+      console.log(`🔄 [ScrewOps] Update triggered by ${eventType}:`, updateOptions);
+      
       // Get display info
       const radius = parseFloat(screwData.radius);
       const length = parseFloat(screwData.length);
@@ -318,8 +335,34 @@ export function useScrewOperations({
       const updatedLength = newLength !== undefined ? newLength : length;
 
       console.log(`🔄 [ScrewOps] Updating screw ${screwId}: R=${updatedRadius}mm, L=${updatedLength}mm`);
+      
+      // For SLIDER_DRAG events, only update local state - no model reload or backend sync
+      if (eventType === ScrewUpdateEventType.SLIDER_DRAG) {
+        console.log('📌 [ScrewOps] SLIDER_DRAG: Updating state only (no model reload/backend sync)');
+        
+        // Update frontend state only
+        if (onScrewsUpdate) {
+          onScrewsUpdate(prevScrews =>
+            prevScrews.map(s => {
+              const id = s.screw_id || s.id;
+              if (id === screwId) {
+                return {
+                  ...s,
+                  radius: updatedRadius,
+                  length: updatedLength,
+                };
+              }
+              return s;
+            })
+          );
+        }
+        
+        // Return early - no model operations
+        return { screwId, updatedRadius, updatedLength, skipped: true };
+      }
 
       // Step 1: Get cap model and its transform (cap position is the reference)
+      // Only recalculate transform if needed
       const allModels = modelStateService.getAllModels();
       const capModelId = `${screwId}-cap`;
       const capModelName = `${label}-Cap`;
@@ -329,15 +372,19 @@ export function useScrewOperations({
 
       let newScrewTransform: number[] | null = null;
 
-      if (capModel) {
-        console.log('[ScrewOps] Found cap model - using cap position as reference');
-        const capTransform = modelStateService.getScrewTransform(capModel.metadata.id);
-        
-        if (capTransform && capTransform.length === 16) {
-          newScrewTransform = calculateScrewTransformFromCap(capTransform, updatedLength);
-        } else {
-          console.warn('[ScrewOps] Could not get cap transform, falling back to screw transform');
+      if (updateOptions.recalculateTransform) {
+        if (capModel) {
+          console.log('[ScrewOps] Found cap model - using cap position as reference');
+          const capTransform = modelStateService.getScrewTransform(capModel.metadata.id);
+          
+          if (capTransform && capTransform.length === 16) {
+            newScrewTransform = calculateScrewTransformFromCap(capTransform, updatedLength);
+          } else {
+            console.warn('[ScrewOps] Could not get cap transform, falling back to screw transform');
+          }
         }
+      } else {
+        console.log('[ScrewOps] Skipping transform recalculation (not needed for this event type)');
       }
 
       // Fallback: Get transform from existing screw model if cap not found
@@ -361,11 +408,15 @@ export function useScrewOperations({
         console.log('[ScrewOps] Using existing screw transform');
       }
 
-      // Step 2: Delete only the body model (preserve cap)
-      await deleteScrewModels(screwId, label, false);
+      // Step 2: Delete only the body model (preserve cap) - only if reloading model
+      if (updateOptions.reloadModel) {
+        await deleteScrewModels(screwId, label, false);
+      } else {
+        console.log('[ScrewOps] Skipping model deletion (not reloading for this event type)');
+      }
 
-      // Step 3: Update backend data
-      if (sessionId && planningBackendService?.updateScrew) {
+      // Step 3: Update backend data - only if syncBackend is enabled
+      if (updateOptions.syncBackend && sessionId && planningBackendService?.updateScrew) {
         console.log('[ScrewOps] Updating screw in backend...');
         const updateResponse = await planningBackendService.updateScrew(
           screwId,
@@ -442,17 +493,22 @@ export function useScrewOperations({
         );
       }
 
-      // Step 4: Reload 3D body model with new dimensions and position
-      await loadScrewModel(
-        updatedRadius,
-        updatedLength,
-        newScrewTransform,
-        label,
-        screwId
-      );
+      // Step 4: Reload 3D body model with new dimensions and position - only if reloadModel is enabled
+      if (updateOptions.reloadModel && newScrewTransform) {
+        await loadScrewModel(
+          updatedRadius,
+          updatedLength,
+          newScrewTransform,
+          label,
+          screwId
+        );
+        console.log(`✅ [ScrewOps] Model reloaded with new dimensions`);
+      } else {
+        console.log('[ScrewOps] Skipping model reload (not needed for this event type)');
+      }
 
-      console.log(`✅ [ScrewOps] Successfully updated screw ${screwId}`);
-      return { screwId, updatedRadius, updatedLength, newScrewTransform };
+      console.log(`✅ [ScrewOps] Successfully updated screw ${screwId} (event: ${eventType})`);
+      return { screwId, updatedRadius, updatedLength, newScrewTransform, eventType };
 
     } catch (error) {
       console.error('[ScrewOps] Failed to update screw dimensions:', error);

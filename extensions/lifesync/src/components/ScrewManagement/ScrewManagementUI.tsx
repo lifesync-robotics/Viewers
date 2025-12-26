@@ -368,6 +368,10 @@ interface ScrewDimensionSliderProps {
   value: string | number;
   options: number[];
   onChange: (newValue: number) => void;
+  /** Called when user is actively dragging (in-progress) */
+  onDrag?: (newValue: number) => void;
+  /** Called when user releases slider (committed) */
+  onCommit?: (newValue: number) => void;
   label: 'diameter' | 'length';
   isUpdating?: boolean;
 }
@@ -376,6 +380,8 @@ export const ScrewDimensionSlider: React.FC<ScrewDimensionSliderProps> = ({
   value,
   options,
   onChange,
+  onDrag,
+  onCommit,
   label,
   isUpdating = false,
 }) => {
@@ -389,11 +395,42 @@ export const ScrewDimensionSlider: React.FC<ScrewDimensionSliderProps> = ({
   // Find closest option index for current value
   const currentIndex = sortedOptions.findIndex(opt => Math.abs(opt - numericValue) < 0.01);
   
+  // Track if user is actively dragging
+  const [isDragging, setIsDragging] = React.useState(false);
+  
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const index = parseInt(e.target.value, 10);
     const selectedValue = sortedOptions[index];
     if (selectedValue !== undefined) {
-      onChange(selectedValue);
+      // If we have separate drag/commit handlers, use them
+      if (onDrag && isDragging) {
+        onDrag(selectedValue);
+      } else {
+        // Fallback to onChange for backward compatibility
+        onChange(selectedValue);
+      }
+    }
+  };
+  
+  const handleMouseDown = () => {
+    setIsDragging(true);
+  };
+  
+  const handleMouseUp = (e: React.MouseEvent<HTMLInputElement>) => {
+    setIsDragging(false);
+    const index = parseInt((e.target as HTMLInputElement).value, 10);
+    const selectedValue = sortedOptions[index];
+    if (selectedValue !== undefined && onCommit) {
+      onCommit(selectedValue);
+    }
+  };
+  
+  const handleTouchEnd = (e: React.TouchEvent<HTMLInputElement>) => {
+    setIsDragging(false);
+    const index = parseInt((e.target as HTMLInputElement).value, 10);
+    const selectedValue = sortedOptions[index];
+    if (selectedValue !== undefined && onCommit) {
+      onCommit(selectedValue);
     }
   };
 
@@ -408,7 +445,7 @@ export const ScrewDimensionSlider: React.FC<ScrewDimensionSliderProps> = ({
     <div className="flex flex-col gap-1 min-w-[140px]">
       {/* Value Display */}
       <div className={`inline-flex items-center justify-center gap-1 px-2 py-1 ${bgColor} bg-opacity-50 ${borderColor} border rounded text-sm ${textColor} font-semibold`}>
-        <span>{isUpdating ? '⏳' : icon}</span>
+        <span>{isUpdating ? '⏳' : (isDragging ? '🔄' : icon)}</span>
         <span>{displayValue}</span>
       </div>
       
@@ -420,12 +457,16 @@ export const ScrewDimensionSlider: React.FC<ScrewDimensionSliderProps> = ({
         step={1}
         value={currentIndex >= 0 ? currentIndex : 0}
         onChange={handleSliderChange}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onTouchStart={handleMouseDown}
+        onTouchEnd={handleTouchEnd}
         disabled={isUpdating}
         className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer ${trackColor} disabled:opacity-50 disabled:cursor-not-allowed`}
         style={{
           background: `linear-gradient(to right, ${label === 'diameter' ? '#3b82f6' : '#10b981'} 0%, ${label === 'diameter' ? '#1e40af' : '#047857'} 100%)`
         }}
-        title={`${label === 'diameter' ? 'Diameter' : 'Length'}: ${displayValue}mm`}
+        title={`${label === 'diameter' ? 'Diameter' : 'Length'}: ${displayValue}mm${isDragging ? ' (dragging...)' : ''}`}
       />
       
       {/* Min/Max Labels */}
@@ -463,6 +504,8 @@ interface ScrewTableProps {
   showEditButton: boolean; // default is true
   onUpdateDiameter?: (screw: any, newDiameter: number) => void;
   onUpdateLength?: (screw: any, newLength: number) => void;
+  onDragDiameter?: (screw: any, newDiameter: number) => void; // Called during slider drag
+  onDragLength?: (screw: any, newLength: number) => void; // Called during slider drag
   availableDiameters?: number[];
   availableLengths?: number[];
   updatingScrewId?: string | null;
@@ -480,16 +523,22 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
   showEditButton = false,
   onUpdateDiameter,
   onUpdateLength,
+  onDragDiameter,
+  onDragLength,
   availableDiameters = [],
   availableLengths = [],
   updatingScrewId = null,
   showDescription = true,
   useSliders = false,
 }) => {
+  // Table is hidden - commented out to preserve code for future use
+  return null;
+  
+  /* COMMENTED OUT - Original table implementation
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-700">
       <table className="w-full text-sm text-left">
-        {/* Table Header */}
+        {/* Table Header *\/}
         <thead className="text-xs uppercase bg-gray-800 text-gray-300 border-b border-gray-700">
           <tr>
             <th scope="col" className="px-4 py-2 font-semibold">Name</th>
@@ -499,7 +548,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
           </tr>
         </thead>
 
-        {/* Table Body */}
+        {/* Table Body *\/}
         <tbody>
           {screws.map((screw, index) => {
             let displayInfo;
@@ -535,7 +584,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                 key={screwId}
                 className="border-b border-gray-700 bg-gray-800 bg-opacity-30 hover:bg-gray-700 hover:bg-opacity-40 transition"
               >
-                {/* Name Column - Clickable */}
+                {/* Name Column - Clickable *\/}
                 <td className="px-4 py-2">
                   <button
                     onClick={() => onView(screw)}
@@ -554,7 +603,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                   </button>
                 </td>
 
-                {/* Diameter Column */}
+                {/* Diameter Column *\/}
                 <td className="px-4 py-2 text-center">
                   {onUpdateDiameter && availableDiameters.length > 0 ? (
                     useSliders ? (
@@ -562,6 +611,8 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                         value={diameter}
                         options={availableDiameters}
                         onChange={(newDiameter) => onUpdateDiameter(screw, newDiameter)}
+                        onDrag={onDragDiameter ? (newDiameter) => onDragDiameter(screw, newDiameter) : undefined}
+                        onCommit={(newDiameter) => onUpdateDiameter(screw, newDiameter)}
                         label="diameter"
                         isUpdating={isUpdating}
                       />
@@ -581,7 +632,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                   )}
                 </td>
 
-                {/* Length Column */}
+                {/* Length Column *\/}
                 <td className="px-4 py-2 text-center">
                   {onUpdateLength && availableLengths.length > 0 ? (
                     useSliders ? (
@@ -589,6 +640,8 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                         value={displayInfo.length}
                         options={availableLengths}
                         onChange={(newLength) => onUpdateLength(screw, newLength)}
+                        onDrag={onDragLength ? (newLength) => onDragLength(screw, newLength) : undefined}
+                        onCommit={(newLength) => onUpdateLength(screw, newLength)}
                         label="length"
                         isUpdating={isUpdating}
                       />
@@ -608,7 +661,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
                   )}
                 </td>
 
-                {/* Actions Column */}
+                {/* Actions Column *\/}
                 <td className="px-4 py-2">
                   <div className="flex gap-2 justify-center">
                     {showEditButton && (
@@ -636,6 +689,7 @@ export const ScrewTable: React.FC<ScrewTableProps> = ({
       </table>
     </div>
   );
+  */
 };
 
 // Legacy card component kept for compatibility

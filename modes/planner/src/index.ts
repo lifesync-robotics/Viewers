@@ -577,7 +577,8 @@ export const modeInstance = {
     routes: [
       plannerRoute
     ],
-    hangingProtocol: 'primaryAxialWith3D',
+    // hangingProtocol: 'primaryAxialWith3D',
+    hangingProtocol: 'fourUpMesh',
     extensions: extensionDependencies,
     onModeEnter: plannerOnModeEnter,
     onModeExit: plannerOnModeExit,

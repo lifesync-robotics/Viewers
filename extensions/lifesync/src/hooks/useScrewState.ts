@@ -88,20 +88,32 @@ export function useScrewState(): {
       if (removedSub) subscriptions.push(removedSub);
 
       // Listen to MODEL_UPDATED events
+      // Skip transform updates to avoid reloading during screw dragging
       const updatedSub = modelStateService.subscribe(
         modelStateService.EVENTS?.MODEL_UPDATED || 'MODEL_UPDATED',
-        () => {
+        (eventData: any) => {
+          // Skip reload for transform updates (position, rotation, transform)
+          if (eventData?.property === 'position' || 
+              eventData?.property === 'rotation' || 
+              eventData?.property === 'transform') {
+            return;
+          }
           refreshScrews();
         }
       );
       if (updatedSub) subscriptions.push(updatedSub);
+      
+      // Subscriptions are working - no need for polling
+      return () => {
+        subscriptions.forEach(sub => sub?.unsubscribe?.());
+      };
     }
 
-    // Also set up an interval to poll for changes (as a fallback)
+    // Polling as fallback only if subscriptions don't work
+    console.warn('[useScrewState] Event subscriptions not available - using polling fallback');
     const intervalId = setInterval(refreshScrews, 2000);
 
     return () => {
-      subscriptions.forEach(sub => sub?.unsubscribe?.());
       clearInterval(intervalId);
     };
   }, [servicesManager, refreshScrews]);

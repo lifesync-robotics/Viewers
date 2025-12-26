@@ -1059,7 +1059,11 @@ class ModelStateService extends PubSubService {
       // console.log('🔧 [ModelStateService] Adding actor to renderer');
       vtkRenderer.addActor(loadedModel.actor);
 
-      // console.log('🔧 [ModelStateService] Resetting camera');
+      // ═══════════════════════════════════════════════════════════════════════════
+      // DIAGNOSTIC: Log VTK resetCamera() calls to detect auto-framing
+      // ═══════════════════════════════════════════════════════════════════════════
+      console.log('[VTK_DEBUG] 🎥 Calling vtkRenderer.resetCamera() - this centers camera on all actors');
+      console.trace('[VTK_DEBUG] Stack trace:');
       vtkRenderer.resetCamera();
 
       // console.log('🔧 [ModelStateService] Rendering viewport');

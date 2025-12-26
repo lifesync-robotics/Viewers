@@ -38,6 +38,8 @@ import { jumpToPosition } from '../Registration/utils/fiducialUtils';
 import { ToolGroupManager, addTool, state as cornerstoneToolsState } from '@cornerstonejs/tools';
 import ScrewInteractionTool from '../../tools/ScrewInteractionTool';
 import { vec3 } from 'gl-matrix';
+import { findAdjacentScrew, createTransformWithAdjacentOrientation } from './adjacentScrewFinder';
+import { parseVertebralLevel } from '../../utils/vertebralLevelUtils';
 
 // Register ScrewInteractionTool globally (only once)
 let screwToolRegistered = false;
@@ -90,7 +92,7 @@ try {
   console.log('⚠️ [ScrewManagement] Early registration failed (will retry later):', e.message);
 }
 
-export default function ScrewManagementPanel({ servicesManager }) {
+export default function ScrewManagementPanel({ servicesManager, commandsManager, extensionManager }) {
   const { viewportStateService, modelStateService, planeCutterService } = servicesManager.services;
 
   // Get caseId from URL parameters
@@ -362,8 +364,27 @@ export default function ScrewManagementPanel({ servicesManager }) {
 
     const updateSubscription = modelStateService.subscribe(
       modelStateService.EVENTS.MODEL_UPDATED,
-      () => {
+      (eventData: any) => {
         console.log('[ScrewManagement] Model updated - refreshing screws');
+        console.log('[SCREW_UPDATE_DEBUG] Event data:', eventData);
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // BUG FIX: Don't reload screws during screw position/rotation updates
+        // ═══════════════════════════════════════════════════════════════════════════
+        // When ScrewInteractionTool drags a screw, it updates the model transform
+        // This triggers MODEL_UPDATED, which would reload ALL screws and jump camera
+        // to each one (with the last screw winning the camera position)
+        //
+        // Solution: Only reload for non-transform updates (color, opacity, etc.)
+        if (eventData?.property === 'position' || 
+            eventData?.property === 'rotation' || 
+            eventData?.property === 'transform') {
+          console.log('[SCREW_UPDATE_DEBUG] Skipping screw reload for transform update');
+          console.log('[SCREW_UPDATE_DEBUG] User is actively dragging/moving screw - camera should stay put!');
+          return;
+        }
+        
+        // For other updates (color, opacity, etc.), reload normally
         if (sessionId) loadScrews(sessionId);
       }
     );
@@ -985,6 +1006,166 @@ export default function ScrewManagementPanel({ servicesManager }) {
   };
 
   /**
+   * Reset crosshairs and viewports to anatomical default
+   * 
+   * Simplified version - just skip this step if it fails.
+   * When no adjacent screw is found, the standard transform construction
+   * from crosshairs/viewport will be used anyway.
+   * 
+   * @returns True if reset successful, false otherwise
+   */
+  const resetCrosshairsToAnatomical = (): boolean => {
+    try {
+      console.log('ℹ️ [ScrewManagement] Resetting view to anatomical (optional)');
+
+      // Check if commandsManager is available
+      if (!commandsManager) {
+        console.warn('⚠️ CommandsManager not available - skipping reset');
+        console.warn('   This is OK - will use current crosshair orientation');
+        return false;
+      }
+
+      // Find the MPR tool group and temporarily enable Crosshairs for reset
+      const allToolGroups = ToolGroupManager.getAllToolGroups();
+      let mprToolGroup = null;
+      let crosshairsWasDisabled = false;
+      
+      // Find MPR tool group with Crosshairs
+      for (const tg of allToolGroups) {
+        try {
+          const crosshairsTool = tg.getToolInstance('Crosshairs');
+          if (crosshairsTool && tg.id === 'mpr') {
+            mprToolGroup = tg;
+            const toolOptions = tg.getToolOptions('Crosshairs');
+            crosshairsWasDisabled = toolOptions?.mode === 'Disabled';
+            break;
+          }
+        } catch (e) {
+          // Not in this group
+        }
+      }
+
+      // Temporarily enable Crosshairs in MPR group for reset to work
+      if (mprToolGroup && crosshairsWasDisabled) {
+        try {
+          mprToolGroup.setToolActive('Crosshairs');
+        } catch (error) {
+          console.warn('⚠️ Could not activate Crosshairs:', error.message);
+        }
+      }
+
+      // Temporarily disable ScrewInteractionTool if it exists
+      const toolGroupsWithScrewTool = [];
+      
+      for (const toolGroup of allToolGroups) {
+        try {
+          const screwTool = toolGroup.getToolInstance('ScrewInteraction');
+          if (screwTool) {
+            const toolOptions = toolGroup.getToolOptions('ScrewInteraction');
+            const wasActive = toolOptions?.mode === 'Active';
+            
+            if (wasActive) {
+              toolGroup.setToolDisabled('ScrewInteraction');
+              toolGroupsWithScrewTool.push(toolGroup);
+            }
+          }
+        } catch (error) {
+          // Tool not in this group - that's fine
+        }
+      }
+
+      // Try to reset viewport (should now work with Crosshairs active)
+      try {
+        commandsManager.runCommand('resetViewport');
+      } catch (resetError) {
+        console.warn('⚠️ Reset command failed:', resetError.message);
+      }
+
+      // Restore Crosshairs to Disabled if it was disabled before
+      if (mprToolGroup && crosshairsWasDisabled) {
+        try {
+          mprToolGroup.setToolDisabled('Crosshairs');
+        } catch (error) {
+          console.warn('⚠️ Could not restore Crosshairs state:', error.message);
+        }
+      }
+
+      // Re-enable ScrewInteractionTool if it was active
+      for (const toolGroup of toolGroupsWithScrewTool) {
+        try {
+          toolGroup.setToolActive('ScrewInteraction', {
+            bindings: [{ mouseButton: 1 }]
+          });
+        } catch (error) {
+          // Ignore re-enable errors
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.warn('⚠️ Error resetting view:', error.message);
+      console.warn('   Continuing with current crosshair orientation');
+      return false;
+    }
+  };
+
+  /**
+   * Construct screw transform with optional orientation from adjacent screw
+   * 
+   * If adjacent screw is provided, copies its orientation (rotation matrix)
+   * while using the current crosshair position as the entry point.
+   * 
+   * If no adjacent screw, uses standard constructScrewTransform().
+   * 
+   * @param adjacentTransform - Optional transform matrix from adjacent screw
+   * @returns Float32Array(16) - 4x4 transform matrix in row-major order, or null if data unavailable
+   */
+  const constructScrewTransformWithAdjacentOrientation = (
+    adjacentTransform?: number[]
+  ): Float32Array | null => {
+    try {
+      // Get current crosshair center (entry point for new screw)
+      crosshairsHandler.clearCache();
+      const crosshairCenter = crosshairsHandler.getCrosshairCenter();
+
+      if (!crosshairCenter) {
+        console.warn('⚠️ Crosshair center is not available');
+        return null;
+      }
+
+      // If adjacent transform provided, use its orientation with new entry point
+      if (adjacentTransform && adjacentTransform.length === 16) {
+        console.log('═══════════════════════════════════════════════════════');
+        console.log('🔧 [ScrewManagement] CONSTRUCTING TRANSFORM WITH ADJACENT ORIENTATION');
+        console.log('═══════════════════════════════════════════════════════');
+        console.log(`📍 Entry point (crosshair): [${crosshairCenter.map(v => v.toFixed(2)).join(', ')}]`);
+        console.log('📐 Copying orientation from adjacent screw');
+
+        const newTransform = createTransformWithAdjacentOrientation(
+          adjacentTransform,
+          crosshairCenter as [number, number, number]
+        );
+
+        console.log('✅ Transform constructed with adjacent orientation:');
+        console.log('  Row 0:', [newTransform[0], newTransform[1], newTransform[2], newTransform[3]]);
+        console.log('  Row 1:', [newTransform[4], newTransform[5], newTransform[6], newTransform[7]]);
+        console.log('  Row 2:', [newTransform[8], newTransform[9], newTransform[10], newTransform[11]]);
+        console.log('  Row 3:', [newTransform[12], newTransform[13], newTransform[14], newTransform[15]]);
+        console.log('═══════════════════════════════════════════════════════');
+
+        return newTransform;
+      }
+
+      // No adjacent transform - use standard construction from viewport cameras
+      console.log('ℹ️ No adjacent screw - using standard transform construction');
+      return constructScrewTransform();
+    } catch (error) {
+      console.error('❌ Error constructing screw transform with adjacent orientation:', error);
+      return null;
+    }
+  };
+
+  /**
    * Get only screw body models, excluding cap models
    * Cap models are identified by modelName ending with "-Cap" or being "Screw Cap"
    */
@@ -1079,17 +1260,215 @@ export default function ScrewManagementPanel({ servicesManager }) {
         }
       }
 
-      // If no existing model or couldn't get transform, use crosshair or specified position
+      // ═════════════════════════════════════════════════════════
+      // STEP: ADJACENT SCREW ORIENTATION COPYING
+      // ═════════════════════════════════════════════════════════
+      // If no existing model, try to find adjacent screw for orientation copying
+      let adjacentScrew = null;
+      let adjacentScrewTransform = null;
+      
       if (!transformMatrix) {
-        transformMatrix = position
-          ? constructScrewTransformAtPosition(position)
-          : constructScrewTransform();
+        console.log('═══════════════════════════════════════════════════════');
+        console.log('🔍 [saveScrew] ADJACENT SCREW SEARCH - START');
+        console.log('═══════════════════════════════════════════════════════');
+        console.log(`📝 New screw label: "${screwLabel}"`);
+        
+        // Parse vertebral level and side from screw label
+        const { level, side } = parseLevelAndSideFromLabel(screwLabel);
+        console.log(`📊 Parsed: level="${level}", side="${side}"`);
+        
+        // Debug: Show all existing screws
+        console.log(`📋 Total existing screws in state: ${screws.length}`);
+        if (screws.length > 0) {
+          console.log('   Existing screws:');
+          screws.forEach((s, idx) => {
+            const sLevel = s.vertebral_level || s.vertebralLevel || 'N/A';
+            const sSide = s.side || 'N/A';
+            const sLabel = s.screw_label || s.name || s.screw_id || 'N/A';
+            const hasTransform = (s.transform_matrix && s.transform_matrix.length === 16) ? '✅' : '❌';
+            console.log(`   ${idx + 1}. ${sLabel} - ${sLevel} (${sSide}) - transform:${hasTransform}`);
+          });
+        } else {
+          console.log('   ⚠️ No existing screws in state!');
+        }
+        
+        // Only attempt adjacent screw search if we have valid level and side
+        if (level && level !== 'Unknown' && side && side !== 'unknown') {
+          console.log('───────────────────────────────────────────────────────');
+          console.log('🔍 Searching for adjacent screw...');
+          console.log(`   Target: ${level} (${side})`);
+          console.log(`   Looking for: ${level}±1 on same side`);
+          
+          // Find adjacent screw (level ±1, same side)
+          adjacentScrew = findAdjacentScrew(level, side, screws);
+          
+          if (adjacentScrew) {
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('✅✅✅ ADJACENT SCREW FOUND! ✅✅✅');
+            console.log('═══════════════════════════════════════════════════════');
+            console.log(`   Adjacent screw ID: ${adjacentScrew.screw_id}`);
+            console.log(`   Adjacent screw label: ${adjacentScrew.screw_label}`);
+            console.log(`   Adjacent screw level: ${adjacentScrew.vertebralLevel} (${adjacentScrew.side})`);
+            
+            // 🎯 CRITICAL: Get transform from 3D model, NOT from backend!
+            // Backend may have wrong/identity transform, but 3D model has the correct one
+            console.log('   🔍 Looking for 3D model to get actual transform...');
+            const allModels = modelStateService.getAllModels();
+            const adjacentModel = allModels.find(
+              (m: any) => m.metadata.name === adjacentScrew.screw_label || 
+                         m.metadata.id === adjacentScrew.screw_id
+            );
+            
+            if (adjacentModel) {
+              console.log(`   ✅ Found 3D model: ${adjacentModel.metadata.id}`);
+              const modelTransform = modelStateService.getScrewTransform(adjacentModel.metadata.id);
+              if (modelTransform && modelTransform.length === 16) {
+                adjacentScrewTransform = modelTransform;
+                console.log('   ✅ Using transform from 3D model (REAL orientation)');
+              } else {
+                console.warn('   ⚠️ Could not get transform from 3D model, falling back to backend');
+                adjacentScrewTransform = adjacentScrew.transform_matrix;
+              }
+            } else {
+              console.warn('   ⚠️ 3D model not found in scene, using backend transform');
+              console.warn('      This may be identity/placeholder if screw was just loaded');
+              adjacentScrewTransform = adjacentScrew.transform_matrix;
+            }
+            
+            if (adjacentScrewTransform && adjacentScrewTransform.length === 16) {
+              console.log('   ');
+              console.log('   📐 ADJACENT SCREW ROTATION MATRIX (3x3):');
+              console.log(`      [${adjacentScrewTransform[0].toFixed(4)}, ${adjacentScrewTransform[1].toFixed(4)}, ${adjacentScrewTransform[2].toFixed(4)}]`);
+              console.log(`      [${adjacentScrewTransform[4].toFixed(4)}, ${adjacentScrewTransform[5].toFixed(4)}, ${adjacentScrewTransform[6].toFixed(4)}]`);
+              console.log(`      [${adjacentScrewTransform[8].toFixed(4)}, ${adjacentScrewTransform[9].toFixed(4)}, ${adjacentScrewTransform[10].toFixed(4)}]`);
+              console.log('   ');
+              console.log('   📍 Adjacent entry point: ' + 
+                `[${adjacentScrewTransform[3].toFixed(2)}, ${adjacentScrewTransform[7].toFixed(2)}, ${adjacentScrewTransform[11].toFixed(2)}]`);
+              console.log('   ');
+              console.log('   🎯 WILL COPY THIS ROTATION TO NEW SCREW');
+            } else {
+              console.warn('   ⚠️ Adjacent screw has invalid transform matrix!');
+              console.warn('   Transform:', adjacentScrewTransform);
+              adjacentScrewTransform = null;
+            }
+            console.log('═══════════════════════════════════════════════════════');
+          } else {
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('❌ NO ADJACENT SCREW FOUND');
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('ℹ️ Will reset to anatomical default and use crosshairs');
+            // Reset crosshairs to anatomical default for consistent placement
+            resetCrosshairsToAnatomical();
+          }
+        } else {
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('⚠️ CANNOT PARSE VERTEBRAL LEVEL/SIDE FROM LABEL');
+          console.log(`   Label: "${screwLabel}"`);
+          console.log(`   Parsed level: "${level}"`);
+          console.log(`   Parsed side: "${side}"`);
+          console.log('   Using standard workflow (crosshairs only)');
+          console.log('═══════════════════════════════════════════════════════');
+        }
+      } else {
+        console.log('ℹ️ Using existing model transform - skipping adjacent screw search');
+      }
+
+      // If no existing model or couldn't get transform, construct new transform
+      if (!transformMatrix) {
+        console.log('═══════════════════════════════════════════════════════');
+        console.log('🔧 [saveScrew] TRANSFORM CONSTRUCTION');
+        console.log('═══════════════════════════════════════════════════════');
+        
+        // PRIORITY 1: If adjacent screw exists, use its orientation (regardless of position parameter)
+        if (adjacentScrewTransform) {
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('🎯🎯🎯 COPYING ORIENTATION FROM ADJACENT SCREW 🎯🎯🎯');
+          console.log('═══════════════════════════════════════════════════════');
+          
+          // Determine entry point: use provided position OR get from crosshair
+          let entryPoint: [number, number, number];
+          if (position) {
+            entryPoint = position as [number, number, number];
+            console.log(`   Entry point: PROVIDED [${entryPoint[0].toFixed(2)}, ${entryPoint[1].toFixed(2)}, ${entryPoint[2].toFixed(2)}]`);
+          } else {
+            const crosshairPos = crosshairsHandler.getCrosshairCenter();
+            if (!crosshairPos) {
+              console.error('   ❌ No position provided and no crosshair - cannot construct transform');
+              transformMatrix = null;
+            } else {
+              entryPoint = crosshairPos as [number, number, number];
+              console.log(`   Entry point: CROSSHAIR [${entryPoint[0].toFixed(2)}, ${entryPoint[1].toFixed(2)}, ${entryPoint[2].toFixed(2)}]`);
+            }
+          }
+          
+          if (entryPoint) {
+            console.log('   Method: createTransformWithAdjacentOrientation()');
+            console.log('   Input: Adjacent rotation matrix + new entry point');
+            
+            transformMatrix = createTransformWithAdjacentOrientation(adjacentScrewTransform, entryPoint);
+            
+            if (transformMatrix) {
+              console.log('✅ Transform constructed with adjacent orientation!');
+              console.log('   ');
+              console.log('   🔍 VERIFICATION - ROTATION MATRIX COMPARISON:');
+              console.log('   ');
+              console.log('   📐 SOURCE (Adjacent):');
+              console.log(`      [${adjacentScrewTransform[0].toFixed(4)}, ${adjacentScrewTransform[1].toFixed(4)}, ${adjacentScrewTransform[2].toFixed(4)}]`);
+              console.log(`      [${adjacentScrewTransform[4].toFixed(4)}, ${adjacentScrewTransform[5].toFixed(4)}, ${adjacentScrewTransform[6].toFixed(4)}]`);
+              console.log(`      [${adjacentScrewTransform[8].toFixed(4)}, ${adjacentScrewTransform[9].toFixed(4)}, ${adjacentScrewTransform[10].toFixed(4)}]`);
+              console.log('   ');
+              console.log('   📐 TARGET (New Screw):');
+              console.log(`      [${transformMatrix[0].toFixed(4)}, ${transformMatrix[1].toFixed(4)}, ${transformMatrix[2].toFixed(4)}]`);
+              console.log(`      [${transformMatrix[4].toFixed(4)}, ${transformMatrix[5].toFixed(4)}, ${transformMatrix[6].toFixed(4)}]`);
+              console.log(`      [${transformMatrix[8].toFixed(4)}, ${transformMatrix[9].toFixed(4)}, ${transformMatrix[10].toFixed(4)}]`);
+              console.log('   ');
+              
+              // Check if matrices match
+              const tolerance = 0.0001;
+              let matricesMatch = true;
+              const indices = [0,1,2,4,5,6,8,9,10]; // Rotation matrix indices
+              for (const idx of indices) {
+                if (Math.abs(adjacentScrewTransform[idx] - transformMatrix[idx]) > tolerance) {
+                  matricesMatch = false;
+                  break;
+                }
+              }
+              
+              if (matricesMatch) {
+                console.log('   ✅✅✅ ROTATION MATRICES MATCH! ✅✅✅');
+              } else {
+                console.error('   ❌❌❌ ROTATION MATRICES DO NOT MATCH! ❌❌❌');
+                console.error('   This means orientation copying FAILED!');
+              }
+              console.log('   ');
+              console.log('   📍 New entry point: ' + 
+                `[${transformMatrix[3].toFixed(2)}, ${transformMatrix[7].toFixed(2)}, ${transformMatrix[11].toFixed(2)}]`);
+            } else {
+              console.error('❌ Failed to construct transform with adjacent orientation!');
+            }
+          }
+          console.log('═══════════════════════════════════════════════════════');
+        }
+        // PRIORITY 2: No adjacent screw - use position if provided
+        else if (position) {
+          console.log('📍 No adjacent screw - using specified position with crosshair orientation');
+          transformMatrix = constructScrewTransformAtPosition(position);
+        }
+        // PRIORITY 3: No adjacent screw, no position - use standard crosshair
+        else {
+          console.log('📐 No adjacent screw, no position - using standard crosshair construction');
+          transformMatrix = constructScrewTransform();
+        }
+        console.log('═══════════════════════════════════════════════════════');
       }
 
       if (transformMatrix) {
-        console.log('🔍 [saveScrew] Transform matrix constructed:');
-        console.log(`   Translation: [${transformMatrix[3].toFixed(2)}, ${transformMatrix[7].toFixed(2)}, ${transformMatrix[11].toFixed(2)}]`);
-        console.log(`   Coronal (Y-axis): [${transformMatrix[1].toFixed(3)}, ${transformMatrix[5].toFixed(3)}, ${transformMatrix[9].toFixed(3)}]`);
+        console.log('═══════════════════════════════════════════════════════');
+        console.log('✅ FINAL TRANSFORM MATRIX READY');
+        console.log('═══════════════════════════════════════════════════════');
+        console.log(`   Entry point: [${transformMatrix[3].toFixed(2)}, ${transformMatrix[7].toFixed(2)}, ${transformMatrix[11].toFixed(2)}]`);
+        console.log('   Rotation matrix validated above ↑');
+        console.log('═══════════════════════════════════════════════════════');
       }
 
       if (!transformMatrix) {
@@ -1198,6 +1577,20 @@ export default function ScrewManagementPanel({ servicesManager }) {
       const { level, side } = parseLevelAndSideFromLabel(screwLabel);
       console.log(`🏷️ Parsed from label "${screwLabel}": level=${level}, side=${side}`);
 
+      // ═════════════════════════════════════════════════════════
+      // TRAJECTORY ANGLES: Copy from adjacent screw if available
+      // ═════════════════════════════════════════════════════════
+      let convergenceAngle = 0;
+      let cephaladAngle = 0;
+      
+      if (adjacentScrew && adjacentScrew.trajectory) {
+        convergenceAngle = adjacentScrew.trajectory.convergenceAngle ?? 0;
+        cephaladAngle = adjacentScrew.trajectory.cephaladAngle ?? 0;
+        console.log(`📐 Copying trajectory angles: convergence=${convergenceAngle}°, cephalad=${cephaladAngle}°`);
+      } else {
+        console.log(`📐 Using default trajectory angles: convergence=0°, cephalad=0°`);
+      }
+
       let savedScrewId = null;
       try {
         const response = await planningBackendService.addScrew({
@@ -1216,8 +1609,8 @@ export default function ScrewManagementPanel({ servicesManager }) {
             trajectory: {
               direction: direction,    // Now extracted from transform matrix
               insertionDepth: lengthValue,
-              convergenceAngle: 0,
-              cephaladAngle: 0
+              convergenceAngle: convergenceAngle,  // From adjacent screw or 0
+              cephaladAngle: cephaladAngle         // From adjacent screw or 0
             },
             notes: notes,
             transformMatrix: transform,
@@ -3332,3 +3725,4 @@ export default function ScrewManagementPanel({ servicesManager }) {
     </ScrewManagementContainer>
   );
 }
+

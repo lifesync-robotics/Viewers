@@ -16,10 +16,11 @@ import { useSystem } from '@ohif/core';
 import { getRenderingEngine } from '@cornerstonejs/core';
 import { vec3 } from 'gl-matrix';
 import { planningBackendService } from '../../services';
-import { ScrewTable, ScrewDimensionSlider } from '../ScrewManagement/ScrewManagementUI';
+import { ScrewDimensionSlider } from '../ScrewManagement/ScrewManagementUI';
 import { useScrewOperations } from '../../hooks';
 import { jumpToPosition } from '../Registration/utils/fiducialUtils';
 import { getScrewColor } from '../../utils/screwColorScheme';
+import { ScrewUpdateEventType } from '../../types/screwEvents';
 
 interface ScrewEditorActionMenuProps {
   viewportId: string;
@@ -173,8 +174,25 @@ export function ScrewEditorActionMenu({
 
     const updateSubscription = modelStateService.subscribe(
       modelStateService.EVENTS.MODEL_UPDATED,
-      () => {
+      (eventData: any) => {
         console.log('[ScrewEditor] Model updated - refreshing screws');
+        console.log('[SCREW_UPDATE_DEBUG] Event data:', eventData);
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // BUG FIX: Don't reload screws during screw position/rotation updates
+        // ═══════════════════════════════════════════════════════════════════════════
+        // When ScrewInteractionTool drags a screw, it updates the model transform
+        // This triggers MODEL_UPDATED, which would reload ALL screws
+        //
+        // Solution: Only reload for non-transform updates (color, opacity, etc.)
+        if (eventData?.property === 'position' || 
+            eventData?.property === 'rotation' || 
+            eventData?.property === 'transform') {
+          console.log('[SCREW_UPDATE_DEBUG] Skipping screw reload for transform update');
+          return;
+        }
+        
+        // For other updates (color, opacity, etc.), reload normally
         loadScrews();
       }
     );
@@ -211,7 +229,44 @@ export function ScrewEditorActionMenu({
   }, [screws]);
 
   /**
-   * Update screw diameter - updates backend and paired screw with 3D model reload
+   * Handle diameter drag (in-progress) - visual feedback only, no model reload
+   */
+  const handleDragDiameter = useCallback(async (screwData: any, newDiameter: number) => {
+    const screwId = screwData.screw_id || screwData.id;
+    if (!screwId) return;
+
+    try {
+      const newRadius = newDiameter / 2;
+      
+      // Update main screw with SLIDER_DRAG event (no model reload)
+      await screwOps.updateScrewDimensions(
+        screwData, 
+        newRadius, 
+        undefined,
+        ScrewUpdateEventType.SLIDER_DRAG
+      );
+
+      // Update paired screw ONLY if linkage is enabled
+      if (linkScrews) {
+        const pairedScrew = findPairedScrew(screwData);
+        if (pairedScrew) {
+          await screwOps.updateScrewDimensions(
+            pairedScrew, 
+            newRadius, 
+            undefined,
+            ScrewUpdateEventType.SLIDER_DRAG
+          );
+        }
+      }
+
+      console.log(`🔄 [ScrewEditor] Dragging diameter for screw ${screwId} (preview only)`);
+    } catch (error) {
+      console.error('[ScrewEditor] Error during diameter drag:', error);
+    }
+  }, [screwOps, findPairedScrew, linkScrews]);
+
+  /**
+   * Update screw diameter - commits change with backend sync and 3D model reload
    * Uses shared hook for consistency
    * Respects linkage checkbox state
    */
@@ -223,14 +278,24 @@ export function ScrewEditorActionMenu({
     try {
       const newRadius = newDiameter / 2;
       
-      // Update main screw using shared hook
-      await screwOps.updateScrewDimensions(screwData, newRadius, undefined);
+      // Update main screw using shared hook with SLIDER_COMMIT event
+      await screwOps.updateScrewDimensions(
+        screwData, 
+        newRadius, 
+        undefined,
+        ScrewUpdateEventType.SLIDER_COMMIT
+      );
 
       // Update paired screw ONLY if linkage is enabled
       if (linkScrews) {
         const pairedScrew = findPairedScrew(screwData);
         if (pairedScrew) {
-          await screwOps.updateScrewDimensions(pairedScrew, newRadius, undefined);
+          await screwOps.updateScrewDimensions(
+            pairedScrew, 
+            newRadius, 
+            undefined,
+            ScrewUpdateEventType.SLIDER_COMMIT
+          );
         }
       }
 
@@ -247,7 +312,42 @@ export function ScrewEditorActionMenu({
   }, [screwOps, findPairedScrew, loadScrews, linkScrews]);
 
   /**
-   * Update screw length - updates backend and paired screw with 3D model reload
+   * Handle length drag (in-progress) - visual feedback only, no model reload
+   */
+  const handleDragLength = useCallback(async (screwData: any, newLength: number) => {
+    const screwId = screwData.screw_id || screwData.id;
+    if (!screwId) return;
+
+    try {
+      // Update main screw with SLIDER_DRAG event (no model reload)
+      await screwOps.updateScrewDimensions(
+        screwData, 
+        undefined, 
+        newLength,
+        ScrewUpdateEventType.SLIDER_DRAG
+      );
+
+      // Update paired screw ONLY if linkage is enabled
+      if (linkScrews) {
+        const pairedScrew = findPairedScrew(screwData);
+        if (pairedScrew) {
+          await screwOps.updateScrewDimensions(
+            pairedScrew, 
+            undefined, 
+            newLength,
+            ScrewUpdateEventType.SLIDER_DRAG
+          );
+        }
+      }
+
+      console.log(`🔄 [ScrewEditor] Dragging length for screw ${screwId} (preview only)`);
+    } catch (error) {
+      console.error('[ScrewEditor] Error during length drag:', error);
+    }
+  }, [screwOps, findPairedScrew, linkScrews]);
+
+  /**
+   * Update screw length - commits change with backend sync and 3D model reload
    * Uses shared hook for consistency
    * Respects linkage checkbox state
    */
@@ -257,14 +357,24 @@ export function ScrewEditorActionMenu({
 
     setUpdatingScrewId(screwId);
     try {
-      // Update main screw using shared hook
-      await screwOps.updateScrewDimensions(screwData, undefined, newLength);
+      // Update main screw using shared hook with SLIDER_COMMIT event
+      await screwOps.updateScrewDimensions(
+        screwData, 
+        undefined, 
+        newLength,
+        ScrewUpdateEventType.SLIDER_COMMIT
+      );
 
       // Update paired screw ONLY if linkage is enabled
       if (linkScrews) {
         const pairedScrew = findPairedScrew(screwData);
         if (pairedScrew) {
-          await screwOps.updateScrewDimensions(pairedScrew, undefined, newLength);
+          await screwOps.updateScrewDimensions(
+            pairedScrew, 
+            undefined, 
+            newLength,
+            ScrewUpdateEventType.SLIDER_COMMIT
+          );
         }
       }
 
@@ -652,24 +762,125 @@ export function ScrewEditorActionMenu({
         </div>
       </div>
 
-      {/* Screw Table - using ScrewTable component with sliders */}
+      {/* Screw Table - Inline implementation with sliders */}
       <div className="max-h-[320px] overflow-y-auto">
-        <ScrewTable
-          screws={screws}
-          displayInfoGetter={getScrewDisplayInfo}
-          isRestoring={isRestoring}
-          onView={handleViewScrew}
-          onEdit={handleEditScrew}
-          onDelete={handleDeleteScrew}
-          showEditButton={false}
-          onUpdateDiameter={handleUpdateDiameter}
-          onUpdateLength={handleUpdateLength}
-          availableDiameters={availableDiameters}
-          availableLengths={availableLengths}
-          updatingScrewId={updatingScrewId}
-          showDescription={false}
-          useSliders={true}
-        />
+        <div className="overflow-x-auto rounded-lg border border-gray-700">
+          <table className="w-full text-sm text-left">
+            {/* Table Header */}
+            <thead className="text-xs uppercase bg-gray-800 text-gray-300 border-b border-gray-700">
+              <tr>
+                <th scope="col" className="px-4 py-2 font-semibold">Name</th>
+                <th scope="col" className="px-4 py-2 font-semibold text-center">Diameter (mm)</th>
+                <th scope="col" className="px-4 py-2 font-semibold text-center">Length (mm)</th>
+                <th scope="col" className="px-4 py-2 font-semibold text-center">Actions</th>
+              </tr>
+            </thead>
+
+            {/* Table Body */}
+            <tbody>
+              {screws.map((screw, index) => {
+                let displayInfo;
+                try {
+                  displayInfo = getScrewDisplayInfo(screw);
+                } catch (error) {
+                  // Render error row
+                  return (
+                    <tr key={screw.screw_id || index} className="border-b border-gray-700 bg-red-900 bg-opacity-20">
+                      <td className="px-4 py-2 text-red-300" colSpan={3}>
+                        ⚠️ Invalid Screw Data: {error.message}
+                      </td>
+                      <td className="px-4 py-2 text-center">
+                        <button
+                          onClick={() => handleDeleteScrew(screw)}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition"
+                          title="Delete Invalid Screw"
+                        >
+                          🗑️
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                const diameter = displayInfo.radius * 2;
+                const screwId = screw.screw_id || screw.id || index;
+                const isUpdating = updatingScrewId === screwId;
+
+                return (
+                  <tr
+                    key={screwId}
+                    className="border-b border-gray-700 bg-gray-800 bg-opacity-30 hover:bg-gray-700 hover:bg-opacity-40 transition"
+                  >
+                    {/* Name Column - Clickable */}
+                    <td className="px-4 py-2">
+                      <button
+                        onClick={() => handleViewScrew(screw)}
+                        disabled={isRestoring}
+                        className="text-left w-full hover:text-blue-400 transition disabled:cursor-not-allowed"
+                        title={isRestoring ? 'Loading...' : `Click to view "${displayInfo.label}"`}
+                      >
+                        <p className="font-medium text-white text-sm truncate">
+                          {isRestoring ? '⏳ ' : ''}{displayInfo.label}
+                        </p>
+                      </button>
+                    </td>
+
+                    {/* Diameter Column */}
+                    <td className="px-4 py-2 text-center">
+                      {availableDiameters.length > 0 ? (
+                        <ScrewDimensionSlider
+                          value={diameter}
+                          options={availableDiameters}
+                          onChange={(newDiameter) => handleUpdateDiameter(screw, newDiameter)}
+                          onDrag={handleDragDiameter ? (newDiameter) => handleDragDiameter(screw, newDiameter) : undefined}
+                          onCommit={(newDiameter) => handleUpdateDiameter(screw, newDiameter)}
+                          label="diameter"
+                          isUpdating={isUpdating}
+                        />
+                      ) : (
+                        <span className="inline-block px-2 py-1 bg-blue-900 bg-opacity-50 border border-blue-700 rounded text-sm text-blue-200 font-semibold">
+                          ⌀ {diameter.toFixed(1)}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Length Column */}
+                    <td className="px-4 py-2 text-center">
+                      {availableLengths.length > 0 ? (
+                        <ScrewDimensionSlider
+                          value={displayInfo.length}
+                          options={availableLengths}
+                          onChange={(newLength) => handleUpdateLength(screw, newLength)}
+                          onDrag={handleDragLength ? (newLength) => handleDragLength(screw, newLength) : undefined}
+                          onCommit={(newLength) => handleUpdateLength(screw, newLength)}
+                          label="length"
+                          isUpdating={isUpdating}
+                        />
+                      ) : (
+                        <span className="inline-block px-2 py-1 bg-green-900 bg-opacity-50 border border-green-700 rounded text-sm text-green-200 font-semibold">
+                          ↕ {displayInfo.length.toFixed(1)}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Actions Column */}
+                    <td className="px-4 py-2">
+                      <div className="flex gap-2 justify-center">
+                        <button
+                          onClick={() => handleDeleteScrew(screw)}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition"
+                          title={`Delete "${displayInfo.label}"`}
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Footer hint */}

@@ -103,12 +103,15 @@ export function ScrewEditorActionMenuWrapper(
     refreshScrewCount();
 
     const modelStateService = (servicesManager.services as any).modelStateService;
+    
+    // Only use polling if subscriptions are not available
     if (!modelStateService?.subscribe) {
-      // Fallback: poll for changes
+      console.warn('[ScrewEditorMenuWrapper] Event subscriptions not available - using polling fallback');
       const intervalId = setInterval(refreshScrewCount, 2000);
       return () => clearInterval(intervalId);
     }
 
+    // Use event subscriptions (much more efficient)
     const subscriptions: Array<{ unsubscribe: () => void }> = [];
 
     const addedSub = modelStateService.subscribe(
@@ -123,9 +126,18 @@ export function ScrewEditorActionMenuWrapper(
     );
     if (removedSub) subscriptions.push(removedSub);
 
+    // Skip transform updates to avoid refreshing during screw dragging
     const updatedSub = modelStateService.subscribe(
       modelStateService.EVENTS?.MODEL_UPDATED || 'MODEL_UPDATED',
-      refreshScrewCount
+      (eventData: any) => {
+        // Skip refresh for transform updates (position, rotation, transform)
+        if (eventData?.property === 'position' || 
+            eventData?.property === 'rotation' || 
+            eventData?.property === 'transform') {
+          return;
+        }
+        refreshScrewCount();
+      }
     );
     if (updatedSub) subscriptions.push(updatedSub);
 
